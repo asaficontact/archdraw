@@ -26,7 +26,7 @@ const target = join(root, 'docs', 'index.html');
  * What the page is allowed to reach: the pipeline, what it needs to report an
  * error, and the line scanner behind the editor's syntax coloring.
  */
-const EXPOSED = ['compile', 'SourceError', 'highlightLine'];
+const EXPOSED = ['compile', 'SourceError', 'highlightLine', 'THEME_NAMES', 'DEFAULT_THEME'];
 
 // The examples the page offers, in the order the buttons appear. Every construct
 // in the language is demonstrated by one of these files and by nothing else the

@@ -3,13 +3,16 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { SourceError } from './errors.js';
 import { compile } from './index.js';
+import { THEME_NAMES, THEMES } from './themes.js';
 
 const USAGE = `reladraw — render a diagram from stated placement
 
-  reladraw <input.reladraw> [-o <output.svg>]
+  reladraw <input.reladraw> [-o <output.svg>] [--theme <name>]
 
   -o, --out   where to write the SVG. Defaults to the input path with
               its extension replaced by .svg. Use - for standard output.
+  --theme     render in this theme, whatever the file's \`diagram theme:\`
+              says. One of ${THEME_NAMES.join(', ')}.
   -h, --help  print this.
 `;
 
@@ -21,6 +24,7 @@ async function main(argv: string[]): Promise<number> {
 
   let input: string | undefined;
   let out: string | undefined;
+  let theme: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -28,6 +32,19 @@ async function main(argv: string[]): Promise<number> {
       out = argv[i + 1];
       if (out === undefined) {
         process.stderr.write('reladraw: -o needs a path\n');
+        return 1;
+      }
+      i += 1;
+    } else if (arg === '--theme') {
+      theme = argv[i + 1];
+      if (theme === undefined) {
+        process.stderr.write(`reladraw: --theme needs a name: ${THEME_NAMES.join(', ')}\n`);
+        return 1;
+      }
+      if (THEMES[theme] === undefined) {
+        process.stderr.write(
+          `reladraw: there is no theme called "${theme}" — the themes are ${THEME_NAMES.join(', ')}\n`,
+        );
         return 1;
       }
       i += 1;
@@ -51,7 +68,7 @@ async function main(argv: string[]): Promise<number> {
 
   let svg: string;
   try {
-    svg = compile(source);
+    svg = compile(source, theme === undefined ? {} : { theme: THEMES[theme]! });
   } catch (error) {
     if (error instanceof SourceError) {
       process.stderr.write(`${error.format(input)}\n`);

@@ -2,8 +2,6 @@
 // the stretch where it is passing them. Before and after, it goes wherever its
 // ends take it.
 
-diagram background: #111111
-
 style channel  fill: #191920  border: #25242f
 
 // North and South are apart vertically, so that is the gap. Both edges start

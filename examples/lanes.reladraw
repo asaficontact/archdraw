@@ -1,8 +1,6 @@
 // Several edges between the same two sides nest instead of crossing. The lanes
 // are as wide as the texts riding in them.
 
-diagram background: #111111
-
 style plain  fill: #191728  border: #4f5367
 
 // A reciprocal pair around a corner. Further left along Gateway's bottom is

@@ -1,8 +1,6 @@
 // A deck draws offset copies behind a node to say "there are several of these
 // and they are the same". Only the front copy shows its contents.
 
-diagram  background: #111111
-
 style plain  fill: #191728  border: #4f5367
 
 // The usual case: a container with rows, and two more like it behind. Each

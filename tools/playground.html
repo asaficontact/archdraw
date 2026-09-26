@@ -131,6 +131,21 @@
         border-color: var(--muted);
       }
 
+      select {
+        font: 12px/1 var(--mono);
+        color: var(--muted);
+        background: var(--diagram);
+        border: 1px solid var(--edge);
+        border-radius: 3px;
+        padding: 4px 6px;
+        cursor: pointer;
+      }
+
+      select:hover {
+        color: var(--ink);
+        border-color: var(--muted);
+      }
+
       button[aria-pressed='true'] {
         color: var(--ink);
         border-color: var(--muted);
@@ -433,7 +448,9 @@
               <code>edge <i>a</i> -&gt; <i>b</i> <i>["text"]</i> <i>[key: value …]</i></code>
               &nbsp;<i>(<code>&lt;-</code> to write the target first, <code>&lt;-&gt;</code> for both ends)</i><br />
               <code>style <i>name</i> <i>key: value …</i></code><br />
-              <code>diagram background: #111111</code>
+              <code>diagram theme: nord  background: #1e2229  text: (color: #e0e0e0)</code><br />
+              <code>default node|leaf|container|edge <i>key: value …</i></code>
+              &nbsp;<i>(a style every one of that kind wears; the more specific wins)</i>
             </dd>
 
             <dt>Labels</dt>
@@ -532,6 +549,7 @@
         <div class="bar">
           <h2>Diagram</h2>
           <div>
+            <select id="theme" aria-label="Theme" title="Writes a diagram theme: line into the source"></select>
             <button id="zoom" type="button" aria-pressed="false">Actual size</button>
             <button id="copy" type="button">Copy SVG</button>
             <button id="download" type="button">Download</button>
@@ -574,6 +592,7 @@
         var error = document.getElementById('error');
         var examples = document.getElementById('examples');
         var zoom = document.getElementById('zoom');
+        var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
         var download = document.getElementById('download');
 
@@ -715,8 +734,44 @@
           }
           drawn = svg;
           diagram.innerHTML = svg;
+          // The pane around the drawing takes the drawing's own page color, so a
+          // light theme is not a white card floating on black.
+          var page = /<rect [^>]*fill="([^"]+)"/.exec(svg);
+          diagram.style.background = page ? page[1] : '';
+          theme.value = themeOf(source.value) || reladraw.DEFAULT_THEME;
           show(null);
         }
+
+        /* ---- the theme picker writes the source, so the text says what is shown ---- */
+
+        var DIAGRAM_LINE = /^([ \t]*diagram\b)(.*)$/m;
+
+        function themeOf(text) {
+          var line = DIAGRAM_LINE.exec(text);
+          var named = line && /(?:^|\s)theme:\s*(\S+)/.exec(line[2]);
+          return named ? named[1] : null;
+        }
+
+        function withTheme(text, name) {
+          var line = DIAGRAM_LINE.exec(text);
+          if (!line) return 'diagram theme: ' + name + '\n\n' + text;
+          var rest = /(?:^|\s)theme:\s*\S+/.test(line[2])
+            ? line[2].replace(/((?:^|\s)theme:\s*)\S+/, '$1' + name)
+            : ' theme: ' + name + (line[2].trim() ? ' ' + line[2] : '');
+          return text.replace(DIAGRAM_LINE, line[1] + rest);
+        }
+
+        reladraw.THEME_NAMES.forEach(function (name) {
+          var option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          theme.appendChild(option);
+        });
+
+        theme.addEventListener('change', function () {
+          var text = withTheme(source.value, theme.value);
+          load(text, named(text));
+        });
 
         function mark(name) {
           for (var i = 0; i < examples.children.length; i++) {

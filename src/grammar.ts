@@ -66,7 +66,7 @@ export interface Span {
  * it. A word missing here is a word that draws in the plain color, which is a
  * dull page rather than a wrong one.
  */
-export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram'] as const;
+export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram', 'default'] as const;
 
 /** Statements whose second word declares a name. `diagram` has none. */
 const DECLARES_NAME = ['node', 'style'];

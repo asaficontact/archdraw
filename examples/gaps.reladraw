@@ -1,7 +1,5 @@
 // Gaps: on a placement, on a node, and what happens when both ends ask.
 
-diagram background: #111111
-
 style plain  fill: #191728  border: #4f5367
 
 node left_wall  "Left wall"   style: plain

@@ -6,8 +6,6 @@
 // `contents: (widths: …, align: …)`. The two are independent: equal widths
 // ranged left is a real arrangement, and so is natural widths centered.
 
-diagram background: #111111
-
 style plain  fill: #191728  border: #4f5367
 
 // Nothing said. Natural widths, and the column sits against the left.

@@ -2,8 +2,6 @@
 // own in the brackets after it; a style, having no text of its own, says it as
 // `text: (color: …)`.
 
-diagram background: #111111
-
 // All three parts of a node.
 style dim  text: (color: muted)
 

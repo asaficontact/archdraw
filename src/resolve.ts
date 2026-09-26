@@ -8,6 +8,7 @@ import type {
   OffsetPlacement,
   OnPlacement,
   Placement,
+  DefaultTarget,
   Document,
   Stmt,
 } from './ast.js';
@@ -74,12 +75,13 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
 
   const styles = collectStyles(doc.statements);
   checkStyleKeys(doc.statements);
-  const { nodes, byName, roots } = buildTree(doc.statements, styles);
+  const defaults = collectDefaults(doc.statements, styles);
+  const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults);
 
   // Edges are resolved to nodes before anything is sized, because a labeled
   // edge claims room in the gap it crosses and so has to be in hand while the
   // gaps are being worked out. Nothing here reads geometry.
-  const edges = buildEdges(doc.statements, byName, styles);
+  const edges = buildEdges(doc.statements, byName, styles, defaults);
 
   const local = new Map<LayoutNode, { x: number; y: number }>();
   for (const root of roots) sizeNode(root, edges, measurer, fontSize, local);
@@ -115,6 +117,46 @@ function collectStyles(statements: Stmt[]): Map<string, Attrs> {
   return styles;
 }
 
+/**
+ * Each kind's default, with any style it names already folded in beneath its
+ * own words, so a default arrives at a node as one flat bundle. The same kind
+ * written twice is refused, as a second `diagram` is: nothing says which was
+ * meant.
+ */
+function collectDefaults(
+  statements: Stmt[],
+  styles: Map<string, Attrs>,
+): Map<DefaultTarget, Attrs> {
+  const defaults = new Map<DefaultTarget, Attrs>();
+  const seen = new Map<DefaultTarget, number>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'default') continue;
+    const earlier = seen.get(stmt.target);
+    if (earlier !== undefined) {
+      throw new SourceError(
+        `default ${stmt.target} is written twice, here and on line ${earlier} — keep one`,
+        stmt.line,
+      );
+    }
+    seen.set(stmt.target, stmt.line);
+    const { style: _named, ...flat } = appearanceOf(stmt.attrs, styles, stmt.line);
+    defaults.set(stmt.target, flat);
+  }
+  return defaults;
+}
+
+/**
+ * One bundle laid over a weaker one, key by key — except the body, which is
+ * one thing said by either of two words. A default's `shape: cylinder` under
+ * a style's `icon: disk` is not a node with two bodies; the style said what
+ * this node is drawn as, and that settles it.
+ */
+function over(base: Attrs, top: Attrs): Attrs {
+  if (top['shape'] === undefined && top['icon'] === undefined) return { ...base, ...top };
+  const { shape: _shape, icon: _icon, ...rest } = base;
+  return { ...rest, ...top };
+}
+
 /** A file holds one diagram, so a second `diagram` statement is a mistake. */
 function collectDiagram(statements: Stmt[]): Attrs {
   let found: Attrs | undefined;
@@ -126,12 +168,29 @@ function collectDiagram(statements: Stmt[]): Attrs {
   return found ?? {};
 }
 
-function buildTree(statements: Stmt[], styles: Map<string, Attrs>) {
+function buildTree(
+  statements: Stmt[],
+  styles: Map<string, Attrs>,
+  defaults: Map<DefaultTarget, Attrs>,
+) {
   const nodes: LayoutNode[] = [];
   const byName = new Map<string, LayoutNode>();
   const roots: LayoutNode[] = [];
   /** Each badge child's name, and the node whose `badge:` it was written out from. */
   const badges = new Map<string, string>();
+
+  // Which nodes will hold children has to be known before any node is built,
+  // because it decides which default a node wears, and its children are
+  // declared after it. A child is a dotted name, or a badge the node's own
+  // line or styles give it; a default cannot give a leaf a badge, so what
+  // the defaults say cannot change the answer.
+  const parents = new Set<string>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'node') continue;
+    const cut = stmt.name.lastIndexOf('.');
+    if (cut !== -1) parents.add(stmt.name.slice(0, cut));
+    if (appearanceOf(stmt.attrs, styles, stmt.line)['badge'] !== undefined) parents.add(stmt.name);
+  }
 
   for (const stmt of statements) {
     if (stmt.kind !== 'node') continue;
@@ -148,7 +207,12 @@ function buildTree(statements: Stmt[], styles: Map<string, Attrs>) {
       throw new SourceError(`"${stmt.name}" is declared twice`, stmt.line);
     }
 
-    const appearance = appearanceOf(stmt.attrs, styles, stmt.line);
+    // Weakest first: every node's default, then the leaf's or the container's,
+    // then the node's own styles and words over both.
+    const appearance = over(
+      over(defaults.get('node') ?? {}, defaults.get(parents.has(stmt.name) ? 'container' : 'leaf') ?? {}),
+      appearanceOf(stmt.attrs, styles, stmt.line),
+    );
     const body = bodyFor(stmt.attrs, appearance, stmt.line);
     const kind = KIND_OF_BODY[body.kind];
     // A node with no text of its own is labelled with its name, because the
@@ -360,6 +424,15 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
       );
     }
 
+    // A word only the whole drawing takes, such as a theme.
+    if (belongTo(key).length === 0) {
+      throw new SourceError(
+        `"${name}" is ${article(KIND_WORD[kind])} and has ${wrote}. \`${key}:\` is said about the ` +
+          `whole drawing — write \`diagram ${key}: ${shown}\``,
+        line,
+      );
+    }
+
     // Anything else names no part, so what the kind is made of explains
     // nothing. What does explain it is where the word *does* belong, which is
     // also the more useful thing to be told: the author has usually written a
@@ -481,6 +554,7 @@ function buildEdges(
   statements: Stmt[],
   byName: Map<string, LayoutNode>,
   styles: Map<string, Attrs>,
+  defaults: Map<DefaultTarget, Attrs>,
 ): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
   for (const stmt of statements) {
@@ -508,7 +582,7 @@ function buildEdges(
       }) as [LayoutNode, LayoutNode],
       ...(stmt.between.axis !== undefined ? { axis: stmt.between.axis } : {}),
     };
-    const appearance = appearanceOf(stmt.attrs, styles, stmt.line);
+    const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
     const what = `${stmt.from} -> ${stmt.to}`;
     checkAttrs('edge', what, stmt.attrs, stmt.line);
     checkStyleUse('edge', what, stmt.attrs, styles, stmt.line);

@@ -7,8 +7,6 @@ style backup     border: #d2904e  line: #d2904e
 style dump       fill: #460000  border: #4e4e4e  shape: document
 style invisible  fill: none  border: none
 
-diagram  background: #111111
-
 
 // --- The hub and its four machines ------------------------------------------
 // The cluster is wrapped in an invisible container so things outside it can be

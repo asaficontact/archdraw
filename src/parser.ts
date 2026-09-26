@@ -3,6 +3,8 @@ import type {
   NodeStmt,
   Side,
   Placement,
+  DefaultStmt,
+  DefaultTarget,
   DiagramStmt,
   Document,
   EdgeStmt,
@@ -14,6 +16,8 @@ import type {
 } from './ast.js';
 import {
   COLOR_KEYS,
+  DEFAULT_KEYS,
+  DEFAULT_TARGETS,
   DIAGRAM_KEYS,
   DIRECTIONS,
   describePlacement,
@@ -35,6 +39,7 @@ import {
 } from './ast.js';
 import { SourceError } from './errors.js';
 import { isAttrKey, tokenizeLine, type Token } from './lexer.js';
+import { THEME_NAMES, THEMES } from './themes.js';
 
 /** Parse a whole source file. One statement per line; blanks and comments drop out. */
 export function parse(source: string): Document {
@@ -65,6 +70,8 @@ function parseStatement(tokens: Token[], line: number): Stmt {
       return parseStyle(tokens, line);
     case 'diagram':
       return parseDiagram(tokens, line);
+    case 'default':
+      return parseDefault(tokens, line);
     default:
       throw new SourceError(substitution(keyword.text, tokens), line);
   }
@@ -637,6 +644,19 @@ function parseDiagram(head: Token[], line: number): DiagramStmt {
     throw new SourceError('diagram sets nothing', line);
   }
   for (const key of Object.keys(attrs)) {
+    if (key.startsWith('text.')) {
+      // The theme has one text color, shared by everything, and that is all
+      // the diagram's text sets. A size or a wrap is about one kind of text.
+      if (key !== 'text.color') {
+        const inner = key.slice('text.'.length);
+        throw new SourceError(
+          `diagram text: sets only a color — \`${inner}\` is about one kind of text, so write ` +
+            `\`text: (${inner}: ${attrs[key]})\` on a \`default node\` or \`default edge\``,
+          line,
+        );
+      }
+      continue;
+    }
     if (!(DIAGRAM_KEYS as readonly string[]).includes(key)) {
       throw new SourceError(
         `diagram has no "${key}" — it takes ${DIAGRAM_KEYS.join(', ')}`,
@@ -644,7 +664,71 @@ function parseDiagram(head: Token[], line: number): DiagramStmt {
       );
     }
   }
+  if (attrs['text'] !== undefined) {
+    throw new SourceError('diagram text: takes a bracket — `text: (color: #e0e0e0)`', line);
+  }
+  const theme = attrs['theme'];
+  if (theme !== undefined && THEMES[theme] === undefined) {
+    throw new SourceError(
+      `there is no theme called "${theme}" — the themes are ${THEME_NAMES.join(', ')}`,
+      line,
+    );
+  }
   return { kind: 'diagram', attrs, line };
+}
+
+/**
+ * `default <node | leaf | container | edge> <attributes>` — a style every thing
+ * of that kind wears without naming it. It is strict about kind where a style
+ * is permissive, because it names the kind it is for: a word that kind has no
+ * use for can only be a mistake.
+ */
+function parseDefault(head: Token[], line: number): DefaultStmt {
+  const target = head[1];
+  if (!target || target.quoted || !(DEFAULT_TARGETS as readonly string[]).includes(target.text)) {
+    throw new SourceError(
+      `default needs the kind it is for — ${DEFAULT_TARGETS.join(', ')}` +
+        (target && !isAttrKey(target) ? `, not "${target.text}"` : ''),
+      line,
+    );
+  }
+  const kind = target.text as DefaultTarget;
+  const subject = `default ${kind}`;
+  // `default leaf node` reads naturally and says nothing `default leaf` does not.
+  const extra = head[2];
+  if (extra && !extra.quoted && !isAttrKey(extra) && extra.text === 'node' && kind !== 'node') {
+    throw new SourceError(`write \`default ${kind}\` — a ${kind} is already a node`, line);
+  }
+  const attrs = attrsOnly(head, 2, line, subject);
+  if (Object.keys(attrs).length === 0) {
+    throw new SourceError(`${subject} sets nothing`, line);
+  }
+  const allowed = DEFAULT_KEYS[kind];
+  for (const key of new Set(Object.keys(attrs).map((k) => k.split('.')[0]!))) {
+    if (allowed.includes(key)) continue;
+    throw new SourceError(`${subject} has ${key}:, ${defaultRefusal(kind, key)}`, line);
+  }
+  return { kind: 'default', target: kind, attrs, line };
+}
+
+/** Why a default cannot carry a word, and what to write instead. */
+function defaultRefusal(kind: DefaultTarget, key: string): string {
+  const takes = `it takes ${DEFAULT_KEYS[kind].map((k) => `${k}:`).join(', ')}`;
+  if (key === 'url') return `and a destination belongs to one thing rather than to every one of a kind`;
+  if (key === 'badge') {
+    return 'and a badge is a child, so every leaf given one would become a container. ' +
+      'Put the badge in a style, or write `default container  badge:`';
+  }
+  if (key === 'icon') {
+    return 'and a picture cannot hold children, so an icon is a leaf\'s word — write `default leaf  icon:`';
+  }
+  if (kind === 'edge' && (key === 'fill' || key === 'border')) {
+    return `which an edge does not have — an edge is colored by line: and text: (color: …)`;
+  }
+  if (kind !== 'edge' && key === 'line') {
+    return `which is an edge's — a node is colored by fill:, border: and text: (color: …)`;
+  }
+  return `which a default does not set — ${takes}`;
 }
 
 function requireName(token: Token | undefined, keyword: string, line: number): string {

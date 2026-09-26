@@ -2,8 +2,6 @@
 // pixel-pushing. The middle node is what holds the two ends apart — delete its
 // line and they close up.
 
-diagram background: #111111
-
 style tool  fill: #191728  border: #4f5367
 style here  fill: #142814  border: #486544
 style dim   text: (color: muted)

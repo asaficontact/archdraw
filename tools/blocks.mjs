@@ -15,7 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { parse } from '../dist/index.js';
 
-const KEYWORDS = ['node', 'note', 'edge', 'deck', 'style', 'diagram', '//'];
+const KEYWORDS = ['node', 'note', 'edge', 'deck', 'style', 'diagram', 'default', '//'];
 
 function blocksIn(source) {
   const lines = source.split(/\r?\n/);

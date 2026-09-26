@@ -18,6 +18,7 @@ import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import type { Layout, LayoutEdge, LayoutNode } from './model.js';
+import { DARK_THEME, THEMES, type Theme } from './themes.js';
 import { plain, type Line, type Run } from './text.js';
 
 export interface RenderOptions {
@@ -26,45 +27,6 @@ export interface RenderOptions {
   theme?: Theme;
 }
 
-export interface Theme {
-  background: string;
-  boxFill: string;
-  boxStroke: string;
-  containerFill: string;
-  /** A container is a region rather than a thing, so its outline is quieter. */
-  containerStroke: string;
-  text: string;
-  mutedText: string;
-  edge: string;
-  /** An icon's drawn line. */
-  iconInk: string;
-  /** The body an icon's lines enclose. */
-  iconShade: string;
-}
-
-/**
- * Sampled out of `examples/reference/arch.png` rather than invented,
- * so the benchmark render and the drawing it is measured against differ by
- * geometry and typography alone. A container is a shade off the page and barely
- * outlined; a leaf is the navy that carries the diagram's weight.
- */
-export const DARK_THEME: Theme = {
-  background: '#111111',
-  boxFill: '#191728',
-  boxStroke: '#4f5367',
-  containerFill: '#191920',
-  containerStroke: '#25242f',
-  text: '#d9d9d9',
-  mutedText: '#8b8b8b',
-  edge: '#5c5c7c',
-  // Both sampled off the reference's machine glyphs. Note that the reference
-  // gives each icon its own hue — the drive is gray, the laptop periwinkle, the
-  // workstation violet — which is a drawing tool's per-shape default and not a
-  // system. One pair for the whole set is the deliberate difference: an icon
-  // should read as part of the diagram's palette, not as clip art dropped in.
-  iconInk: '#8d8d8e',
-  iconShade: '#3e3d58',
-};
 
 const CORNER = 8;
 
@@ -80,11 +42,18 @@ interface Extent {
 export function render(layout: Layout, options: RenderOptions = {}): string {
   const measurer = options.measurer ?? monospaceMeasurer();
   const fontSize = options.fontSize ?? DEFAULT_FONT_SIZE;
-  // `diagram background:` is the author overruling the theme for this one
-  // drawing, so it is folded in here and everything downstream sees one theme.
-  const base = options.theme ?? DARK_THEME;
-  const stated = layout.diagram['background'];
-  const theme = stated === undefined ? base : { ...base, background: stated };
+  // A theme passed in — the command line's `--theme` — beats the one the file
+  // names, so one source renders in either. `diagram background:` and `text:`
+  // are the author overruling a color of whichever theme that is, and a color
+  // written by hand wins over any theme, so they are folded in afterwards and
+  // everything downstream sees one theme.
+  const named = layout.diagram['theme'];
+  const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
+  const theme: Theme = {
+    ...base,
+    ...(layout.diagram['background'] !== undefined && { background: layout.diagram['background'] }),
+    ...(layout.diagram['text.color'] !== undefined && { text: layout.diagram['text.color'] }),
+  };
 
   const body: string[] = [];
   for (const root of layout.roots) {

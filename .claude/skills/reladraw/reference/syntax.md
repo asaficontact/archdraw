@@ -630,7 +630,7 @@ Every attribute, and what takes one. The kinds here are what a node's **body** i
 | `line` | | | | ✓ | color |
 | `url` | ✓ | ✓ | ✓ | ✓ | a destination to open when the thing is clicked |
 
-The `diagram` statement has a vocabulary of its own — `background`, and so far nothing else — which is checked the same way. Writing `background:` on a node is an error that points at `fill:`.
+The `diagram` statement has a vocabulary of its own — `theme`, `background` and `text` — which is checked the same way. Writing `background:` on a node is an error that points at `fill:`, and `theme:` on one points at `diagram theme:`. A `default` takes a narrower list for each kind; see "Defaults".
 
 **A word this table does not give the kind is an error.** The two ways of being wrong get different answers, because they have different remedies. A word that is an attribute nowhere is a misspelling, and the error lists what the kind does take. A word that is an attribute *somewhere else* is usually a real statement written on the wrong half of the diagram, so the error says where it belongs:
 
@@ -762,12 +762,66 @@ diagram <attributes>
 Settings that belong to the drawing as a whole rather than to anything in it. There is no name, because a file holds one diagram, and a second `diagram` statement is an error rather than a second opinion.
 
 ```
-diagram  background: #111111
+diagram  theme: nord  background: #1e2229  text: (color: #e0e0e0)
 ```
 
-One attribute so far. `background` takes a color the same way `fill` does, and it colors the page behind everything, including the strip an edge text knocks out of whatever it crosses. Say nothing and the theme's own background stands.
+Three attributes:
 
-An unknown key is refused by name — `diagram has no "backround" — it takes background` — rather than quietly ignored, the same as every other attribute. See "Attributes".
+- `theme` names the theme that supplies every color the file does not state. See "Themes" below.
+- `background` takes a color the same way `fill` does, and it colors the page behind everything, including the strip an edge text knocks out of whatever it crosses. Say nothing and the theme's own background stands.
+- `text: (color: …)` sets the color of every text, on nodes and edges alike. It takes a color and nothing else; a text size is about one kind of text and belongs on a `default`.
+
+An unknown key is refused by name — `diagram has no "backround" — it takes theme, background, text` — rather than quietly ignored, the same as every other attribute. See "Attributes".
+
+### Themes
+
+```
+diagram  theme: solarized-dark
+```
+
+| theme | |
+|---|---|
+| `dark` | the default: the palette of the benchmark drawing |
+| `light` | the same roles on a white page |
+| `solarized-dark`, `solarized-light` | [Solarized](https://ethanschoonover.com/solarized/) |
+| `gruvbox-dark`, `gruvbox-light` | [Gruvbox](https://github.com/morhetz/gruvbox) |
+| `catppuccin-mocha`, `catppuccin-latte` | [Catppuccin](https://catppuccin.com) |
+| `nord` | [Nord](https://www.nordtheme.com) |
+| `dracula` | [Dracula](https://draculatheme.com) |
+| `high-contrast-dark`, `high-contrast-light` | no fills to lean on, every line at full strength |
+| `print` | a white page, black lines and no fills, for paper |
+
+The borrowed palettes were made for code, where a color marks a keyword or a string. A diagram needs a page, a box, a border, text and a line, so each theme is its scheme read as a diagram rather than a copy of it. Their licenses are in `NOTICE`.
+
+A theme only ever supplies a color, so changing it never moves anything. A color you write yourself — `fill: #14532d`, or a style's — stays that color under every theme, which means a hand-picked color can clash with a theme it was not chosen against. `muted` is the one word that follows the theme.
+
+An unknown name is an error that lists the themes.
+
+The command line can render a file in another theme without editing it — `reladraw arch.reladraw --theme light` — and the flag wins over the file's `theme:`. That is how one source becomes a light and a dark image for a README that shows whichever matches the reader's settings. The file's own `background:` and `text:` still win over the flag's theme, as a hand-written color wins over any theme.
+
+### Defaults
+
+```
+default node       border: #4a8a5c
+default leaf       fill: #2e5d3a
+default container  fill: #1a2620  border: #2a3a30
+default edge       line: #7a8a99  text: (color: #9aa5b1, size: small)
+```
+
+A default is a style that every thing of one kind wears without naming it. `node` covers every node; `leaf` a node with no children, and `container` a node with some — the same "has children" the theme's quieter backdrop colors follow, so setting a leaf's fill leaves containers looking like containers. `edge` covers every edge.
+
+The more specific word wins, all the way down:
+
+1. the theme
+2. `diagram`
+3. `default node`
+4. `default leaf` or `default container`, or `default edge`
+5. the thing's styles, a later one winning where two set the same key
+6. what the thing's own line says
+
+A default takes the words a style does, and may name a style of its own with `style:`, which it lays beneath its own words. Unlike a style, it is strict about kind: it names the kind it is for, so a word that kind has no use for can only be a mistake. `default edge  fill: red` is refused and points at `line:`. `badge:` is refused on `default leaf` and `default node`, since a badge is a child and would make every leaf a container, and `icon:` is a leaf's alone, since a picture cannot hold children. A `url:` belongs to one thing, never to a kind.
+
+Each kind is written at most once. `default leaf` twice is an error naming both lines, and `default leaf node` is refused with `default leaf` — a leaf is already a node.
 
 ## What the language refuses
 
@@ -831,6 +885,12 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- Named themes: `diagram theme: nord`, one of thirteen, and `--theme` on the command line to render a file in another without editing it. The playground has a theme picker, which writes the `theme:` line into the source.
+- `diagram text: (color: …)` sets every text's color at once.
+- `default node | leaf | container | edge` sets what every thing of that kind looks like unless it says otherwise.
 
 **0.4.0**
 

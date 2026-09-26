@@ -31,6 +31,11 @@ Commands:
                                  go stale against its SVG. The name comes from
                                  the source, so one .reladraw has exactly one pair
                                  and there is never a question which to open.
+  themes <file>                 Render one file in every theme, into
+                                 examples/out/themes/<basename>-<theme>.png,
+                                 plus <basename>-all.png: every theme side by
+                                 side and labelled, for judging the palettes
+                                 against each other. Wants ImageMagick.
   look <file> [out.png]         Render, then screenshot at the SVG's own size.
                                  This is the one to use when you want to see a
                                  diagram; it needs no dimensions from you.
@@ -266,6 +271,29 @@ case "$cmd" in
     screenshot "$svg" "$png" "$(svg_size "$svg")" ffffff
     echo "$svg"
     echo "$png"
+    ;;
+  themes)
+    in="${1:?input .reladraw path required}"
+    base="$(basename "$in" .reladraw)"
+    dir="examples/out/themes"
+    mkdir -p "$dir"
+    tiles=()
+    for theme in $(node -e "import('./dist/themes.js').then((m) => console.log(m.THEME_NAMES.join(' ')))"); do
+      svg="$dir/$base-$theme.svg"
+      png="$dir/$base-$theme.png"
+      node dist/cli.js "$in" -o "$svg" --theme "$theme" >/dev/null
+      screenshot "$svg" "$png" "$(svg_size "$svg")" ffffff
+      tiles+=(-label "$theme" "$png")
+    done
+    # montage is its own binary in ImageMagick 6 and a subcommand in 7.
+    if command -v magick >/dev/null 2>&1; then montage=(magick montage); else montage=(montage); fi
+    # ImageMagick finds no default font on a Mac, so the labels need one named.
+    font=()
+    for f in /System/Library/Fonts/Supplemental/Arial.ttf /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf; do
+      if [ -f "$f" ]; then font=(-font "$f"); break; fi
+    done
+    "${montage[@]}" "${tiles[@]}" "${font[@]}" -tile 2x -geometry +12+12 -pointsize 22 -background '#808080' "$dir/$base-all.png"
+    echo "$dir/$base-all.png"
     ;;
   look)
     in="${1:?input .reladraw path required}"

@@ -406,8 +406,46 @@ export interface DiagramStmt {
   line: number;
 }
 
-/** The attributes a `diagram` statement understands. */
-export const DIAGRAM_KEYS = ['background'] as const;
+/**
+ * The attributes a `diagram` statement understands. `text` takes a bracket,
+ * `text: (color: …)`, and sets the text color of everything at once — the
+ * theme has one text color, shared by nodes and edges, and this is that.
+ */
+export const DIAGRAM_KEYS = ['theme', 'background', 'text'] as const;
+
+/**
+ * `default leaf  fill: #2e5d3a` — a style that applies to every thing of one
+ * kind without being named. The more specific wins: `node` covers every node,
+ * `leaf` and `container` beat it for the nodes they cover, and a thing's own
+ * styles and words beat any default.
+ */
+export interface DefaultStmt {
+  kind: 'default';
+  target: DefaultTarget;
+  attrs: Attrs;
+  line: number;
+}
+
+export const DEFAULT_TARGETS = ['node', 'leaf', 'container', 'edge'] as const;
+export type DefaultTarget = (typeof DEFAULT_TARGETS)[number];
+
+/**
+ * What each default may say. A default carries a style's vocabulary, less the
+ * words that would contradict the kind it is written for:
+ *
+ * - A default names its kind, so it is strict where a style is permissive —
+ *   `default edge  fill:` can only be a mistake.
+ * - `badge:` gives a box a child, which makes it a container, so every leaf
+ *   given one by `default leaf` or `default node` would stop being a leaf.
+ * - `icon:` draws a picture, and a picture cannot hold children, so it is a
+ *   leaf's word and not a container's or every node's.
+ */
+export const DEFAULT_KEYS: Record<DefaultTarget, readonly string[]> = {
+  node: ['style', 'shape', 'fill', 'border', 'text'],
+  leaf: ['style', 'shape', 'icon', 'fill', 'border', 'text'],
+  container: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
+  edge: ['style', 'line', 'text'],
+};
 
 /**
  * The attributes whose value is a color rather than text. A color is written
@@ -513,7 +551,7 @@ export interface StyleStmt {
   line: number;
 }
 
-export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt;
+export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt;
 
 export interface Document {
   statements: Stmt[];

@@ -11,8 +11,6 @@
 // outside is away from it. `inside right` is `left of`, `inside top-right` is
 // `below-left of`, and nobody writes a table.
 
-diagram  background: #111111
-
 style mark   shape: none  text: (color: #8b8b8b)
 style spacer  fill: none  border: none
 style link  shape: none  text: (color: #6fa8dc)

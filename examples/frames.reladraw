@@ -4,8 +4,6 @@
 // anywhere: there is one when something sits below the text, and not when
 // everything sits beside it or against the frame.
 
-diagram  background: #111111
-
 style mark  fill: #cdb96f  border: #8f7a3a  text: (color: #111111)
 
 // Four children in the four corners, and nothing below the text, so there is

@@ -6,7 +6,8 @@ export * from './measure.js';
 export * from './model.js';
 export { parse } from './parser.js';
 export { resolve, type ResolveOptions } from './resolve.js';
-export { render, DARK_THEME, type RenderOptions, type Theme } from './render.js';
+export { render, type RenderOptions } from './render.js';
+export { DARK_THEME, DEFAULT_THEME, THEMES, THEME_NAMES, type Theme } from './themes.js';
 
 import { parse } from './parser.js';
 import { render, type RenderOptions } from './render.js';

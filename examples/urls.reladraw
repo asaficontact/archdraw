@@ -6,8 +6,6 @@
 // The value is quoted. Without the quotes everything from the `//` onwards is a
 // comment, which is why the error for the bare form talks about punctuation.
 
-diagram background: #111111
-
 style plain  fill: #191728  border: #4f5367
 
 node docs "Documentation"  style: plain  url: "https://example.com/docs"
