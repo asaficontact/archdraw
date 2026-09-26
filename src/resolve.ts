@@ -1588,7 +1588,21 @@ interface Corridor {
   to: Target;
   /** Room the text needs in a gap on each axis, clearance included. */
   need: Record<Axis, number>;
+  /**
+   * Where the named sides point the two ends away from each other along an
+   * axis, and which order of the two ends makes them do it. Such an edge goes
+   * around its row rather than across the gap, so its text is not in the gap.
+   */
+  away?: { axis: Axis; fromFirst: boolean };
 }
+
+/** The pairs of named sides that face away from each other when `from` comes first. */
+const AWAY: Record<string, { axis: Axis; fromFirst: boolean }> = {
+  'left right': { axis: 'x', fromFirst: true },
+  'right left': { axis: 'x', fromFirst: false },
+  'top bottom': { axis: 'y', fromFirst: true },
+  'bottom top': { axis: 'y', fromFirst: false },
+};
 
 /**
  * Where a node sits within the group being solved: which member holds it, and
@@ -1646,7 +1660,13 @@ function corridorsIn(
     const extent = (axis: Axis): number =>
       textExtent(edge.lines!, edge.textAttrs, axis, measurer, fontSize, edge.line) +
       (TEXT_CLEARANCE + ARROW_LENGTH) * 2;
-    corridors.push({ edge, from, to, need: { x: extent('x'), y: extent('y') } });
+    corridors.push({
+      edge,
+      from,
+      to,
+      need: { x: extent('x'), y: extent('y') },
+      away: AWAY[`${edge.attrs['from']} ${edge.attrs['to']}`],
+    });
   }
   return corridors;
 }
@@ -2041,7 +2061,7 @@ function room(
 ): boolean {
   let added = false;
 
-  for (const [index, { from, to, need }] of corridors.entries()) {
+  for (const [index, { from, to, need, away }] of corridors.entries()) {
     const clear = (axis: Axis): { before: Target; after: Target } | undefined => {
       const at = (end: Target): number => solved[axis][end.index]! + end.offset[axis];
       const size = (end: Target): number => (axis === 'x' ? end.width : end.height);
@@ -2053,6 +2073,10 @@ function room(
     const open = AXES.filter((axis) => clear(axis));
     if (open.length !== 1) continue;
     const axis = open[0]!;
+    // Ends facing away along the only open axis mean the boxes share a row, and
+    // the renderer takes the line over the top with its text — see `planLoops`.
+    // Widening the gap would make room where the text never goes.
+    if (away?.axis === axis && (clear(axis)!.before === from) === away.fromFirst) continue;
     // Given already, and a minimum stays met: asking again would widen
     // nothing and only keep the caller looking.
     if (made.has(`${index}:${axis}`)) continue;

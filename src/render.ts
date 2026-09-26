@@ -7,6 +7,7 @@ import {
   ICON_LINES,
   LINE_WIDTH,
   PAD,
+  SEPARATION_GAP,
   fontSizeFor,
   textExtent,
   textStyleFor,
@@ -67,6 +68,7 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   // is ordered by where its ends turned out to be.
   const ends = planEndpoints(layout.edges, measurer, fontSize);
   const corridors = planCorridors(layout.edges, ends, measurer, fontSize);
+  planLoops(layout.edges, layout.nodes, ends, corridors, measurer, fontSize);
   aimFreeEnds(layout.edges, ends, corridors);
   for (const edge of layout.edges) {
     const drawn = drawEdge(edge, ends.get(edge)!, corridors.get(edge), theme, measurer, fontSize, layout.markup);
@@ -1201,6 +1203,11 @@ interface Corridor {
   /** Where the run begins and ends on the other axis, in the order the edge travels. */
   enter: number;
   leave: number;
+  /**
+   * The edge turns back on itself to reach the run, rather than curving into
+   * it — the channel of an edge that goes around its row. See `planLoops`.
+   */
+  loop?: boolean;
 }
 
 interface Point {
@@ -1375,6 +1382,132 @@ function planCorridors(
 }
 
 /**
+ * Route every edge that has to go around its own two boxes.
+ *
+ * An edge leaving the left of one box for the right of another, with the second
+ * box further right, has to turn back on itself, and a single curve can only
+ * do that by crossing its own boxes. In a row it flattened into a straight line
+ * through both; stepped down, even by a `normal` gap, it still doubled back
+ * across the first box. So such an edge runs along a channel instead, turning
+ * back at each end: in the gap between its two boxes if that holds the line
+ * and its text, and otherwise over the top of everything between its ends,
+ * with its text on the top, where it cannot land on a box.
+ *
+ * Over the top, always, and round the right for a column. Nothing here weighs
+ * one way round against the other: the shorter way ties in the case that
+ * seemed to argue for it, and a default that flips on one box's height is
+ * harder to predict than one that never does. The run is placed the way a
+ * `between` channel is, measured off where the boxes landed.
+ */
+function planLoops(
+  edges: LayoutEdge[],
+  nodes: LayoutNode[],
+  ends: Map<LayoutEdge, EdgeEnds>,
+  corridors: Map<LayoutEdge, Corridor>,
+  measurer: Measurer,
+  fontSize: number,
+): void {
+  for (const edge of edges) {
+    if (corridors.has(edge)) continue;
+    const { start, end } = ends.get(edge)!;
+    if (start.side === undefined || end.side === undefined) continue;
+    // The two ends point opposite ways along one axis, each away from the other.
+    if (start.tx !== -end.tx || start.ty !== -end.ty) continue;
+    const run: Axis = start.tx !== 0 ? 'x' : 'y';
+    const across: Axis = run === 'x' ? 'y' : 'x';
+    const outward = run === 'x' ? start.tx : start.ty;
+    if (outward * (end[run] - start[run]) >= 0) continue;
+    const a = faceOf(edge.from);
+    const b = faceOf(edge.to);
+
+    // Far enough out that the line reads as passing, and that half the text,
+    // centered on the line, still clears the box beside it.
+    const clear = Math.max(
+      SEPARATION_GAP,
+      laneExtent(edge, across, measurer, fontSize) / 2 + ATTACH_MARGIN,
+    );
+    const from = Math.min(lo(a, run), lo(b, run));
+    const to = Math.max(hi(a, run), hi(b, run));
+    const inWay = nodes.filter(
+      (node) => !(contains(node, edge.from) && contains(node, edge.to)),
+    );
+    const blocked = (low: number, high: number): boolean =>
+      inWay.some((node) => {
+        const face = faceOf(node);
+        return (
+          lo(face, run) < to && hi(face, run) > from &&
+          lo(face, across) < high && hi(face, across) > low
+        );
+      });
+
+    // Boxes apart across the axis have a gap between them, and a line that
+    // fits in it turns back through that — the shortest way, and the one a
+    // single curve was reaching for.
+    const [upper, lower] = lo(a, across) <= lo(b, across) ? [a, b] : [b, a];
+    const gap = { lo: hi(upper, across), hi: lo(lower, across) };
+    const middle = (gap.lo + gap.hi) / 2;
+    if (gap.hi - gap.lo >= clear * 2 && !blocked(middle - clear, middle + clear)) {
+      corridors.set(edge, {
+        axis: across,
+        lane: middle,
+        enter: start[run],
+        leave: end[run],
+        loop: true,
+      });
+      continue;
+    }
+
+    // Otherwise over the top. Measured as distance outward — up for a row,
+    // right for a column — so one loop serves both.
+    const sign = across === 'y' ? -1 : 1;
+    const out = (box: Box): [number, number] => {
+      const [p, q] = [sign * lo(box, across), sign * hi(box, across)];
+      return [Math.min(p, q), Math.max(p, q)];
+    };
+    const inner = Math.min(sign * start[across], sign * end[across]);
+    // A box that shares the stretch and reaches into the band the line needs
+    // pushes the line out past it, which can bring another into the band.
+    let lane = Math.max(out(a)[1], out(b)[1]) + clear;
+    for (let moved = true; moved; ) {
+      moved = false;
+      for (const node of inWay) {
+        const face = faceOf(node);
+        if (lo(face, run) >= to || hi(face, run) <= from) continue;
+        const [near, far] = out(face);
+        if (far + clear > lane && near < lane + clear && far > inner) {
+          lane = far + clear;
+          moved = true;
+        }
+      }
+    }
+
+    corridors.set(edge, {
+      axis: across,
+      lane: sign * lane,
+      enter: start[run],
+      leave: end[run],
+      loop: true,
+    });
+  }
+}
+
+function lo(box: Box, axis: Axis): number {
+  return axis === 'x' ? box.x : box.y;
+}
+
+function hi(box: Box, axis: Axis): number {
+  return axis === 'x' ? box.x + box.width : box.y + box.height;
+}
+
+/** Whether `inner` is `outer` or sits somewhere inside it. */
+function contains(outer: LayoutNode, inner: LayoutNode): boolean {
+  for (let node: LayoutNode | undefined = inner; node; node = node.parent) {
+    if (node === outer) return true;
+  }
+  return false;
+}
+
+/**
  * An end whose side the author did not name aims at the far box's center, which
  * is the wrong thing to aim at once the line has been told to go somewhere else
  * on the way. Point those ends at the corridor instead.
@@ -1443,11 +1576,12 @@ function corridorPath(
   // of the straight stretch — it enters the gap already going where the gap goes.
   const rt = plan.axis === 'y' ? { tx: forward, ty: 0 } : { tx: 0, ty: forward };
 
-  const r1 = corridorReach(start, p1, plan.axis);
+  const reach = plan.loop ? loopReach : corridorReach;
+  const r1 = reach(start, p1, plan.axis);
   const c1 = { x: start.x + start.tx * r1, y: start.y + start.ty * r1 };
   const c2 = { x: p1.x - rt.tx * r1, y: p1.y - rt.ty * r1 };
 
-  const r2 = corridorReach(p2, end, plan.axis);
+  const r2 = reach(p2, end, plan.axis);
   const c3 = { x: p2.x + rt.tx * r2, y: p2.y + rt.ty * r2 };
   const c4 = { x: end.x + end.tx * r2, y: end.y + end.ty * r2 };
 
@@ -1476,6 +1610,16 @@ function corridorReach(from: Point, to: Point, axis: Axis): number {
   const run = Math.abs(axis === 'y' ? to.x - from.x : to.y - from.y);
   const distance = Math.hypot(to.x - from.x, to.y - from.y);
   return Math.min(140, Math.max(8, Math.min(distance * 0.4, run / 2)));
+}
+
+/**
+ * How far the handles reach on the turn at either end of a loop. The turn
+ * leaves heading one way and joins the run heading the other, over the depth
+ * between the side and the run, so it is a half circle on that depth — and a
+ * cubic comes closest to a half circle with handles two thirds of its diameter.
+ */
+function loopReach(from: Point, to: Point, axis: Axis): number {
+  return (Math.abs(axis === 'y' ? to.y - from.y : to.x - from.x) * 2) / 3;
 }
 
 function sideAttr(edge: LayoutEdge, key: 'from' | 'to'): AttachSide | undefined {

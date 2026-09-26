@@ -422,6 +422,19 @@ You name a side and never a point on it. Alone on a side, an edge lands at its c
 
 The space it leaves is deliberately small, and shrinks further if the side is too short to hold the whole group. On a side short enough, it shrinks to nothing and the attachments coincide. Their texts still come apart, because the lines bow in the middle to make up what the side could not give them, but the arrowheads themselves land on one point and nothing warns you — so a small node with several edges arriving on one side is worth a look.
 
+#### Ends that face away from each other
+
+```
+node parser "Parser"
+node resolver "Resolver"  right of parser
+node renderer "Renderer"  right of resolver
+edge parser -> renderer  "test edge"  from: left  to: right
+```
+
+That line leaves Parser heading left and has to arrive at Renderer from the right, so it must turn back on itself somewhere. It turns back in the gap between its two nodes when there is one wide enough to hold the line and its text, and otherwise it goes over the top: out of its side, along the top of the row clear of the tallest node between its ends, and down into the far side. The text rides on that top stretch, so it never sits on a node. The same goes for `from: top  to: bottom` in a column, which goes round the right, and for an edge from a node back to itself.
+
+Over the top is the rule, not a guess the tool makes each time — it does not look for the shorter way round. There is not yet a way to ask for underneath or the left.
+
 #### Several edges between the same two sides
 
 Edges that run between the *same* pair of sides are a case of their own, because "where the far ends sit" cannot order them: every one of them goes to the same node.
@@ -882,9 +895,15 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 ~~An edge text ignored the line break.~~ Fixed. ` / ` split a node's text and was never applied to an edge's, so the marker came out as a literal slash on an arrow and the benchmark's two-line captions had to be flattened to one. The measurer had always returned the split lines; the renderer was handing it the raw string and drawing that instead. The block now centers on the point the text already occupied, so a one-line text sits exactly where it did.
 
+~~An edge whose ends faced away from each other was drawn through its own nodes.~~ Fixed. `from: left  to: right` with the far node further right was one curve bending out at both ends, and with the two nodes in a row it flattened into a straight line through both of them and anything between, its text landing on whatever was in the middle. It was not a matter of exact alignment: a node stepped down a little drew a tilted version of the same line. Such an edge now turns back in the gap between its nodes if there is room, and goes over the top of the row if not. See "Ends that face away from each other".
+
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- An edge whose ends face away from each other, such as `from: left  to: right` with the far node to the right, goes around instead of through its own nodes: through the gap between them if there is room, over the top of the row if not.
 
 **0.5.0**
 
