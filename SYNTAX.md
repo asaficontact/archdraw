@@ -1,4 +1,4 @@
-# Syntax reference — 0.4.0
+# Syntax reference — 0.5.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -886,7 +886,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.5.0**
 
 - Named themes: `diagram theme: nord`, one of thirteen, and `--theme` on the command line to render a file in another without editing it. The playground has a theme picker, which writes the `theme:` line into the source.
 - `diagram text: (color: …)` sets every text's color at once.
