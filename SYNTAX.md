@@ -433,6 +433,10 @@ edge parser -> renderer  "test edge"  from: left  to: right
 
 That line leaves Parser heading left and has to arrive at Renderer from the right, so it must turn back on itself somewhere. It turns back in the gap between its two nodes when there is one wide enough to hold the line and its text, and otherwise it goes over the top: out of its side, along the top of the row clear of the tallest node between its ends, and down into the far side. The text rides on that top stretch, so it never sits on a node. The same goes for `from: top  to: bottom` in a column, which goes round the right, and for an edge from a node back to itself.
 
+Several such lines over the same row take a lane each, the shorter inside the longer, so they nest instead of drawing on top of one another.
+
+Sides at right angles can face away too. `from: left  to: top` with the far node to the right leaves heading away from it, so the line steps out of the left, goes up past both nodes, runs along above them and comes straight down into the top. The side named at the far end says which way round: `to: bottom` takes it underneath instead.
+
 Over the top is the rule, not a guess the tool makes each time — it does not look for the shorter way round. To send the line underneath or round the left, say which side of a node it passes: `below resolver`. See "Passing on one side of a node".
 
 #### Several edges between the same two sides
@@ -975,7 +979,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 
 **Unreleased**
 
-- An edge whose ends face away from each other, such as `from: left  to: right` with the far node to the right, goes around instead of through its own nodes: through the gap between them if there is room, over the top of the row if not.
+- An edge whose ends face away from each other, such as `from: left  to: right` with the far node to the right, goes around instead of through its own nodes: through the gap between them if there is room, over the top of the row if not. Several over one row take a lane each. Sides at right angles, such as `from: left  to: top`, go around the same way when one faces away.
 - `above`, `below`, `left of` and `right of` on an edge say which side of a node the line passes: `edge a -> b  below c`. Any number, one per node; one naming several nodes covers the stretch between them too. One edge may mix the two kinds, `below m  left of n`, and the line turns between them as often as they need. Clauses that cannot all be drawn are refused with the reason.
 
 **0.5.0**

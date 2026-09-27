@@ -1612,20 +1612,35 @@ interface Corridor {
   /** Room the text needs in a gap on each axis, clearance included. */
   need: Record<Axis, number>;
   /**
-   * Where the named sides point the two ends away from each other along an
-   * axis, and which order of the two ends makes them do it. Such an edge goes
-   * around its row rather than across the gap, so its text is not in the gap.
+   * Where a named side points its end away from the other along an axis, and
+   * which order of the two ends makes it do so. Such an edge goes around its
+   * boxes rather than across the gap, so its text is not in the gap.
    */
-  away?: { axis: Axis; fromFirst: boolean };
+  away: { axis: Axis; fromFirst: boolean }[];
 }
 
-/** The pairs of named sides that face away from each other when `from` comes first. */
-const AWAY: Record<string, { axis: Axis; fromFirst: boolean }> = {
-  'left right': { axis: 'x', fromFirst: true },
-  'right left': { axis: 'x', fromFirst: false },
-  'top bottom': { axis: 'y', fromFirst: true },
-  'bottom top': { axis: 'y', fromFirst: false },
-};
+/**
+ * The ways named sides can face away from the other end. Opposite sides face
+ * away together or not at all (`left right` with `from` first); sides at right
+ * angles each may, and either is enough (`left top` with `from` first, where
+ * the edge turns back over the top, or with `to` below, where it goes round).
+ */
+function facingAway(fromSide: unknown, toSide: unknown): { axis: Axis; fromFirst: boolean }[] {
+  // The axis a side is on, and whether it faces away when its own end is first.
+  const SIDES: Record<string, { axis: Axis; first: boolean }> = {
+    left: { axis: 'x', first: true },
+    right: { axis: 'x', first: false },
+    top: { axis: 'y', first: true },
+    bottom: { axis: 'y', first: false },
+  };
+  const f = SIDES[String(fromSide)];
+  const t = SIDES[String(toSide)];
+  if (!f || !t) return [];
+  const byFrom = { axis: f.axis, fromFirst: f.first };
+  const byTo = { axis: t.axis, fromFirst: !t.first };
+  if (f.axis !== t.axis) return [byFrom, byTo];
+  return byFrom.fromFirst === byTo.fromFirst ? [byFrom] : [];
+}
 
 /**
  * Where a node sits within the group being solved: which member holds it, and
@@ -1690,7 +1705,7 @@ function corridorsIn(
       from,
       to,
       need: { x: extent('x'), y: extent('y') },
-      away: AWAY[`${edge.attrs['from']} ${edge.attrs['to']}`],
+      away: facingAway(edge.attrs['from'], edge.attrs['to']),
     });
   }
   return corridors;
@@ -2101,7 +2116,7 @@ function room(
     // Ends facing away along the only open axis mean the boxes share a row, and
     // the renderer takes the line over the top with its text — see `planLoops`.
     // Widening the gap would make room where the text never goes.
-    if (away?.axis === axis && (clear(axis)!.before === from) === away.fromFirst) continue;
+    if (away.some((way) => way.axis === axis && (clear(axis)!.before === from) === way.fromFirst)) continue;
     // Given already, and a minimum stays met: asking again would widen
     // nothing and only keep the caller looking.
     if (made.has(`${index}:${axis}`)) continue;

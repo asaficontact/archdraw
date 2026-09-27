@@ -2823,7 +2823,7 @@ function render(layout, options = {}) {
     const ends = planEndpoints(layout.edges, measurer, fontSize);
     const corridors = planCorridors(layout.edges, ends, measurer, fontSize);
     const routes = planRoutes(layout.edges, layout.nodes, ends, measurer, fontSize);
-    planLoops(layout.edges, layout.nodes, ends, corridors, measurer, fontSize);
+    planLoops(layout.edges, layout.nodes, ends, corridors, routes, measurer, fontSize);
     aimFreeEnds(layout.edges, ends, corridors);
     for (const edge of layout.edges) {
         const drawn = drawEdge(edge, ends.get(edge), corridors.get(edge), routes.get(edge), theme, measurer, fontSize, layout.markup);
@@ -3817,13 +3817,24 @@ function planCorridors(edges, ends, measurer, fontSize) {
  * harder to predict than one that never does. The run is placed the way a
  * `between` channel is, measured off where the boxes landed.
  */
-function planLoops(edges, nodes, ends, corridors, measurer, fontSize) {
+function planLoops(edges, nodes, ends, corridors, routes, measurer, fontSize) {
+    // Loops over the top, gathered so that two sharing a stretch can take a lane
+    // each rather than drawing on top of one another.
+    const tops = [];
     for (const edge of edges) {
         if (corridors.has(edge) || edge.passes)
             continue;
         const { start, end } = ends.get(edge);
         if (start.side === undefined || end.side === undefined)
             continue;
+        // Sides at right angles, one facing away from the other end.
+        if (start.tx * end.tx + start.ty * end.ty === 0) {
+            const inWay = nodes.filter((node) => !(contains(node, edge.from) && contains(node, edge.to)));
+            const plan = turnBack(edge, start, end, inWay, routes, measurer, fontSize);
+            if (plan)
+                tops.push(plan);
+            continue;
+        }
         // The two ends point opposite ways along one axis, each away from the other.
         if (start.tx !== -end.tx || start.ty !== -end.ty)
             continue;
@@ -3871,7 +3882,97 @@ function planLoops(edges, nodes, ends, corridors, measurer, fontSize) {
         const inner = Math.min(sign * start[across], sign * end[across]);
         // A box that shares the stretch and reaches into the band the line needs
         // pushes the line out past it, which can bring another into the band.
-        let lane = Math.max(out(a)[1], out(b)[1]) + clear;
+        const pushOut = (start) => {
+            let lane = start;
+            for (let moved = true; moved;) {
+                moved = false;
+                for (const node of inWay) {
+                    const face = faceOf(node);
+                    if (lo(face, run) >= to || hi(face, run) <= from)
+                        continue;
+                    const [near, far] = out(face);
+                    if (far + clear > lane && near < lane + clear && far > inner) {
+                        lane = far + clear;
+                        moved = true;
+                    }
+                }
+            }
+            return lane;
+        };
+        tops.push({
+            edge,
+            across,
+            sign,
+            lane: pushOut(Math.max(out(a)[1], out(b)[1]) + clear),
+            loop: true,
+            from,
+            to,
+            height: sign * start[across] + sign * end[across],
+            pushOut,
+            place: (lane) => corridors.set(edge, { axis: across, lane: sign * lane, enter: start[run], leave: end[run], loop: true }),
+        });
+    }
+    // Lines over one stretch nest so they do not cross. A turn-back goes inside
+    // any loop, because it comes in to a box from the side the loops pass over;
+    // otherwise the shorter goes inside, and of two the same length, the one
+    // whose ends sit further out. Each lane is as far from the one inside it as
+    // the lanes of a named gap are.
+    tops.sort((p, q) => Number(p.loop) - Number(q.loop) || p.to - p.from - (q.to - q.from) || q.height - p.height);
+    const placed = [];
+    for (const top of tops) {
+        for (let moved = true; moved;) {
+            moved = false;
+            for (const other of placed) {
+                if (other.across !== top.across || other.sign !== top.sign)
+                    continue;
+                if (other.from >= top.to || top.from >= other.to)
+                    continue;
+                const step = Math.max(ATTACH_STEP, laneExtent(top.edge, top.across, measurer, fontSize), laneExtent(other.edge, other.across, measurer, fontSize));
+                if (Math.abs(top.lane - other.lane) < step - 0.5) {
+                    top.lane = top.pushOut(other.lane + step);
+                    moved = true;
+                }
+            }
+        }
+        placed.push(top);
+        top.place(top.lane);
+    }
+}
+/**
+ * A route for an edge whose named sides are at right angles and one of which
+ * faces away from the other end: `from: left  to: top` with the far node to
+ * the right. A single curve leaving that side can only turn back across its
+ * own box. So the line steps out of the side facing away, goes out past both
+ * boxes the way the other side faces, runs along there, and comes straight in
+ * to the other side. Undefined when neither side faces away, where the curve
+ * already reads right. The route is recorded in `routes` once its lane is
+ * settled against any other line running outside the same boxes.
+ */
+function turnBack(edge, start, end, inWay, routes, measurer, fontSize) {
+    const facesAway = (from, to) => from.tx * (to.x - from.x) + from.ty * (to.y - from.y) < 0;
+    const startAway = facesAway(start, end);
+    if (!startAway && !facesAway(end, start))
+        return undefined;
+    // Planned from the end facing away, and turned round if that is the far end.
+    const [away, other] = startAway ? [start, end] : [end, start];
+    const [awayBox, otherBox] = (startAway ? [edge.from, edge.to] : [edge.to, edge.from]).map(faceOf);
+    const run = away.tx !== 0 ? 'x' : 'y';
+    const across = run === 'x' ? 'y' : 'x';
+    const make = axesAcross(across).make;
+    // The way the other side faces, which is the way the line goes out.
+    const sign = across === 'y' ? other.ty : other.tx;
+    const clear = Math.max(SEPARATION_GAP, laneExtent(edge, across, measurer, fontSize) / 2 + ATTACH_MARGIN);
+    const stub = away[run] + (run === 'x' ? away.tx : away.ty) * ROUTE_STUB;
+    const from = Math.min(stub, other[run], lo(awayBox, run), lo(otherBox, run));
+    const to = Math.max(stub, other[run], hi(awayBox, run), hi(otherBox, run));
+    // Measured as distance outward, the way the line goes.
+    const out = (box) => {
+        const [p, q] = [sign * lo(box, across), sign * hi(box, across)];
+        return [Math.min(p, q), Math.max(p, q)];
+    };
+    const inner = Math.min(sign * away[across], sign * other[across]);
+    const pushOut = (start) => {
+        let level = start;
         for (let moved = true; moved;) {
             moved = false;
             for (const node of inWay) {
@@ -3879,20 +3980,47 @@ function planLoops(edges, nodes, ends, corridors, measurer, fontSize) {
                 if (lo(face, run) >= to || hi(face, run) <= from)
                     continue;
                 const [near, far] = out(face);
-                if (far + clear > lane && near < lane + clear && far > inner) {
-                    lane = far + clear;
+                if (far + clear > level && near < level + clear && far > inner) {
+                    level = far + clear;
                     moved = true;
                 }
             }
         }
-        corridors.set(edge, {
-            axis: across,
-            lane: sign * lane,
-            enter: start[run],
-            leave: end[run],
-            loop: true,
-        });
-    }
+        return level;
+    };
+    return {
+        edge,
+        across,
+        sign,
+        lane: pushOut(Math.max(out(awayBox)[1], out(otherBox)[1]) + clear),
+        loop: false,
+        from,
+        to,
+        height: sign * away[across] + sign * other[across],
+        pushOut,
+        place: (lane) => {
+            const at = sign * lane;
+            // A shallow turn steps out no further than half its depth, the half
+            // circle a loop's turn makes, so it stays inside any loop turning
+            // round the same box.
+            const outward = run === 'x' ? away.tx : away.ty;
+            const step = away[run] + outward * Math.min(ROUTE_STUB, Math.abs(at - away[across]) / 2);
+            const points = tidyRoute([away, make(step, away[across]), make(step, at), make(other[run], at), other]);
+            // The text rides on the longest piece, which is the run outside the
+            // boxes unless the two ends are nearly level.
+            let mid = make((stub + other[run]) / 2, at);
+            let best = -1;
+            for (let index = 0; index + 1 < points.length; index += 1) {
+                const [p, q] = [points[index], points[index + 1]];
+                const length = Math.hypot(q.x - p.x, q.y - p.y);
+                if (length > best) {
+                    best = length;
+                    mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+                }
+            }
+            routes.set(edge, { points: startAway ? points : points.reverse(), mid });
+        },
+    };
 }
 /** The most a route's corner is rounded by. */
 const ROUTE_RADIUS = 20;
@@ -6058,13 +6186,30 @@ const AXIS_WORD = { x: 'horizontally', y: 'vertically' };
 function memberOn(target, axis) {
     return target.byAxis ? target.byAxis[axis] : target.index;
 }
-/** The pairs of named sides that face away from each other when `from` comes first. */
-const AWAY = {
-    'left right': { axis: 'x', fromFirst: true },
-    'right left': { axis: 'x', fromFirst: false },
-    'top bottom': { axis: 'y', fromFirst: true },
-    'bottom top': { axis: 'y', fromFirst: false },
-};
+/**
+ * The ways named sides can face away from the other end. Opposite sides face
+ * away together or not at all (`left right` with `from` first); sides at right
+ * angles each may, and either is enough (`left top` with `from` first, where
+ * the edge turns back over the top, or with `to` below, where it goes round).
+ */
+function facingAway(fromSide, toSide) {
+    // The axis a side is on, and whether it faces away when its own end is first.
+    const SIDES = {
+        left: { axis: 'x', first: true },
+        right: { axis: 'x', first: false },
+        top: { axis: 'y', first: true },
+        bottom: { axis: 'y', first: false },
+    };
+    const f = SIDES[String(fromSide)];
+    const t = SIDES[String(toSide)];
+    if (!f || !t)
+        return [];
+    const byFrom = { axis: f.axis, fromFirst: f.first };
+    const byTo = { axis: t.axis, fromFirst: !t.first };
+    if (f.axis !== t.axis)
+        return [byFrom, byTo];
+    return byFrom.fromFirst === byTo.fromFirst ? [byFrom] : [];
+}
 /**
  * Where a node sits within the group being solved: which member holds it, and
  * where inside that member. An edge may name anything at any depth, so its ends
@@ -6120,7 +6265,7 @@ function corridorsIn(edges, locate, measurer, fontSize) {
             from,
             to,
             need: { x: extent('x'), y: extent('y') },
-            away: AWAY[`${edge.attrs['from']} ${edge.attrs['to']}`],
+            away: facingAway(edge.attrs['from'], edge.attrs['to']),
         });
     }
     return corridors;
@@ -6480,7 +6625,7 @@ function room(corridors, constraints, solved, solveAll, made) {
         // Ends facing away along the only open axis mean the boxes share a row, and
         // the renderer takes the line over the top with its text — see `planLoops`.
         // Widening the gap would make room where the text never goes.
-        if (away?.axis === axis && (clear(axis).before === from) === away.fromFirst)
+        if (away.some((way) => way.axis === axis && (clear(axis).before === from) === way.fromFirst))
             continue;
         // Given already, and a minimum stays met: asking again would widen
         // nothing and only keep the caller looking.
