@@ -3,9 +3,9 @@
 // `text: (color: …)`.
 
 // All three parts of a node.
-style dim  text: (color: muted)
+style dim  text: (color: theme-muted)
 
-node ledger "Ledger / [dim]append only[/dim]" (color: #cfe8c4)  fill: #142814  border: #486544
+node ledger "Ledger / [dim]append only[/dim]"  fill: theme-primary-subtle  border: theme-primary
 
 // Text on its own.
 node plain "Plain" (color: #ff9d4d)  right of ledger (gap: wide)
@@ -28,4 +28,4 @@ edge worker -> queue  "inherits the line"  style: traced  from: right  to: left
 
 node reader "Reader"  below worker (gap: wide)
 node cache  "Cache"   right of reader (gap: wide)  level with reader
-edge reader -> cache  "says its own" (color: #d9d9d9)  line: #ff9d4d  from: right  to: left
+edge reader -> cache  "says its own" (color: theme-text)  line: #ff9d4d  from: right  to: left

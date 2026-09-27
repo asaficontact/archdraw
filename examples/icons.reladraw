@@ -2,7 +2,7 @@
 
 // A style can carry a badge, so every store in a diagram looks alike without
 // anyone typing the word twice.
-style store  fill: #142814  border: #486544  badge: database
+style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 
 node row1 ""  fill: none  border: none
 node row1.disk     "Spinning disk"     badge: disk

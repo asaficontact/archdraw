@@ -1,6 +1,6 @@
 // An edge with text widens the gap it crosses.
 
-style plain  fill: #191728  border: #4f5367
+style plain  fill: theme-fill  border: theme-border
 
 // Nothing here says how far apart these two sit. The default gap is sized for
 // two nodes to breathe, not to hold a word, so the text opens it.
@@ -39,7 +39,7 @@ edge high -> low  "diagonal"
 // and `align` is how its lines range against each other once it is there.
 // Neither implies the other.
 
-style dim  text: (color: muted)
+style dim  text: (color: theme-muted)
 
 node shelf "Shelf" (at: bottom-right, align: right)  below roomy (gap: wide)  style: plain
 node shelf.one "first"   style: plain
@@ -64,4 +64,4 @@ node literal "sizes \[small, normal, large]"  below aside  gap: tight  shape: no
 
 // An edge's text takes the same brackets, less `at`. A size may be a number of
 // pixels as well as a name.
-edge tall -> aside  "carried" (color: muted, size: 12)  from: right  to: left
+edge tall -> aside  "carried" (color: theme-muted, size: 12)  from: right  to: left

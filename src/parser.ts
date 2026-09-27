@@ -42,7 +42,7 @@ import {
 } from './ast.js';
 import { SourceError } from './errors.js';
 import { isAttrKey, tokenizeLine, type Token } from './lexer.js';
-import { THEME_NAMES, THEMES } from './themes.js';
+import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
 /** Parse a whole source file. One statement per line; blanks and comments drop out. */
 export function parse(source: string): Document {
@@ -201,7 +201,7 @@ const BRACKET_KEYS: Record<string, readonly string[]> = {
 
 /** How each bracketed key's error quotes itself back, and what it is about. */
 const BRACKET_ABOUT: Record<string, { kind: string; example: string }> = {
-  text: { kind: 'a text', example: 'color: muted' },
+  text: { kind: 'a text', example: 'color: theme-muted' },
   contents: { kind: 'a `contents:` bracket', example: 'widths: match' },
   line: { kind: 'a line', example: 'path: square' },
 };
@@ -261,7 +261,7 @@ function readAttr(
   const key = keyToken.text.slice(0, -1);
   const bracketKeys = BRACKET_KEYS[key];
   if (bracketKeys !== undefined && follows(tokens, at + 1, '(')) {
-    // `text: (color: muted)` — the whole bracket belongs to one part, and it is
+    // `text: (color: theme-muted)` — the whole bracket belongs to one part, and it is
     // stored under dotted keys so that a style merges into a node exactly the
     // way every other attribute does.
     const read = readBracket(tokens, at + 1, bracketKeys, {
@@ -393,7 +393,7 @@ function readAttr(
     // says what is quiet where it is quiet, and reaches a word in the middle of
     // a line, which the slice never could.
     throw new SourceError(
-      '`subtext:` has been replaced by markup in the text — write `style dim  text: (color: muted)` ' +
+      '`subtext:` has been replaced by markup in the text — write `style dim  text: (color: theme-muted)` ' +
         'and mark the quiet words as `"Dropbox / [dim]synced[/dim]"`',
       line,
     );
@@ -457,6 +457,7 @@ function readAttr(
       line,
     );
   }
+  if ((COLOR_KEYS as readonly string[]).includes(key)) checkColorWord(valueToken.text, subject, line);
   setOnce(attrs, key, valueToken.text, subject, line);
   return at + 2;
 }
@@ -587,7 +588,7 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     subject,
     what: 'the text',
     kind: "an edge's text",
-    example: 'color: muted',
+    example: 'color: theme-muted',
     line,
   });
   at = bracket.next;
@@ -1072,6 +1073,7 @@ function readBracket(
     // the comma are the same statement.
     const value = valueToken.text;
     const clean = value.endsWith(',') && value.length > 1 ? value.slice(0, -1) : value;
+    if (key === 'color') checkColorWord(clean, about.subject, about.line);
     const had = values[key];
     if (had !== undefined) {
       throw new SourceError(
@@ -1084,6 +1086,27 @@ function readBracket(
   }
 
   return { values, next: i + 1 };
+}
+
+/**
+ * A color is any CSS color, which cannot be checked, or a `theme-` word, which
+ * can. So a `theme-` word the theme does not define is refused rather than
+ * handed to the viewer as a color that draws nothing, and `muted`, the one
+ * theme word from before the prefix, is refused with its new name.
+ */
+function checkColorWord(value: string, subject: string, line: number): void {
+  if (value === 'muted') {
+    throw new SourceError(
+      `${subject}: \`muted\` is now \`theme-muted\` — every color that follows the theme begins \`theme-\``,
+      line,
+    );
+  }
+  if (value.startsWith('theme-') && !THEME_COLORS.includes(value)) {
+    throw new SourceError(
+      `${subject}: there is no theme color "${value}" — the theme colors are ${THEME_COLORS.join(', ')}`,
+      line,
+    );
+  }
 }
 
 function follows(tokens: Token[], at: number, word: string): boolean {

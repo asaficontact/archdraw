@@ -1,10 +1,10 @@
 // Transcribed from a draw.io diagram.
 
 // --- Styles -----------------------------------------------------------------
-style synced     fill: #142814  border: #486544  line: #486544
-style dim        text: (color: muted)
+style synced     fill: theme-primary-subtle  border: theme-primary  line: theme-primary
+style dim        text: (color: theme-muted)
 style backup     border: #d2904e  line: #d2904e
-style dump       fill: #460000  border: #4e4e4e  shape: document
+style dump       fill: theme-secondary-subtle  border: theme-border  shape: document
 style invisible  fill: none  border: none
 
 

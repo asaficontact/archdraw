@@ -1,7 +1,7 @@
 // A diagram that states no color of its own, so every color in it is the
 // theme's. Render it in all of them with `./dev.sh themes examples/themes.reladraw`.
 
-style quiet  text: (color: muted, size: small)
+style quiet  text: (color: theme-muted, size: small)
 
 node web     "Web app"  badge: laptop
 node api     "API server"                          right of web  gap: wide

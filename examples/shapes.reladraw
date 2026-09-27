@@ -1,7 +1,7 @@
 // What a node is drawn as. `shape:` is the outline it is drawn with; `icon:` is
 // a picture it is drawn as, with no box at all.
 
-style artifact  fill: #460000  border: #4e4e4e  shape: document
+style artifact  fill: theme-secondary-subtle  border: theme-border  shape: document
 
 // The fold is a fixed size rather than a fraction of the box, so it looks the
 // same on all three of these.

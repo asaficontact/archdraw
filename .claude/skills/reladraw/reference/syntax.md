@@ -116,18 +116,18 @@ They are bracketed onto the text rather than written among the node's attributes
 An edge's text takes the same brackets, less `at`: a node's text sits somewhere in a box and an edge's rides at the middle of its line, so there is no position to name.
 
 ```
-edge a -> b  "rclone" (color: muted, size: small)
+edge a -> b  "rclone" (color: theme-muted, size: small)
 ```
 
 A **style** has no text of its own for a bracket to hang off, so it hangs the bracket off a key instead:
 
 ```
-style aside  text: (size: small, color: muted)
+style aside  text: (size: small, color: theme-muted)
 ```
 
 Bundling a text's properties into a style is how they come to mean something: `style aside` applied to several nodes says those are the same kind of remark, which `(size: small)` written out at each of them does not.
 
-`color` takes a color written as the viewer will receive it — `#8b8b8b`, or any CSS color — or the one reserved word `muted`, which means the theme's secondary text color and so survives a change of theme.
+`color` takes a color written as the viewer will receive it — `#8b8b8b`, or any CSS color — or a theme color such as `theme-muted`, the theme's secondary text color, which survives a change of theme. See "Theme colors".
 
 `size: small | normal | large` sets how big the text is set, and so does a plain number of pixels, `size: 22`. The names are the default and the preferred form: they follow the document's size if it is ever set differently, where `22` stays 22. A number says nothing about *why* one text is bigger than another, so bundle it into a style that does. `14px` is refused, since the number is already in pixels, and so is zero or less. Every kind of text has a default and `size` overrides it, exactly as `fill:` overrides the theme's color; only `shape: none` defaults to anything but `normal`, and it defaults to `small`.
 
@@ -144,7 +144,7 @@ Where the node is exactly the size of what it holds — which is most leaves, si
 A word or a stretch of a text can borrow the look of a style:
 
 ```
-style dim  text: (color: muted)
+style dim  text: (color: theme-muted)
 
 node pc.files "shared folder / [dim]synced[/dim]"
 ```
@@ -395,7 +395,7 @@ edge <from> <-> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] 
 
 Endpoints may be nested (`desktop1.files`). An edge never says where a node goes and routing is the renderer's problem, with one exception: an edge with text claims room in the gap it crosses, which is the next section.
 
-An edge's text breaks on ` / ` exactly as a node's does, and the block centers on the point the text would otherwise have occupied, so ``"run `deploy` / shell command"`` stacks its two lines around the midpoint of the line rather than running off along it. An edge's text takes the same brackets a node's does, less `at`, so `(wrap: 20)` folds it and `(color: muted)` quiets it.
+An edge's text breaks on ` / ` exactly as a node's does, and the block centers on the point the text would otherwise have occupied, so ``"run `deploy` / shell command"`` stacks its two lines around the midpoint of the line rather than running off along it. An edge's text takes the same brackets a node's does, less `at`, so `(wrap: 20)` folds it and `(color: theme-muted)` quiets it.
 
 ### A text makes room for itself
 
@@ -872,19 +872,19 @@ A color is never written in quotes, and a quoted one is refused. There is nothin
 
 There is no list of color words the tool knows. An earlier version had one, and it was wrong in the way such lists always are: `dark-green` existed only because somebody added it to a map in the renderer, and the next color a diagram wanted would have needed a code change to say. Writing the color directly removes both the list and the reason to grow it. `green` still works, because it is a CSS color, not because this tool has heard of it.
 
-A style carrying `text: (color: muted)` is what a marked-up word borrows from, which is how a node carries a name with a quieter qualifier under it:
+A style carrying `text: (color: theme-muted)` is what a marked-up word borrows from, which is how a node carries a name with a quieter qualifier under it:
 
 ```
 style synced  fill: #142814  border: #486544
-style dim     text: (color: muted)
+style dim     text: (color: theme-muted)
 node pc.files "shared folder / [dim]synced[/dim]"  style: synced
 ```
 
 **Removed: `subtext`.** It colored every text line after the first, which is a positional slice: the rule lived in a style elsewhere in the file and was applied by counting, so a reader of `"shared folder / synced"` could not see that the second line was quiet. The mark says what is quiet where it is quiet, and reaches a word in the middle of a line, which the slice never could. An older file carrying it gets an error naming the mark to write instead.
 
-`badge`, `icon` and `shape` belong in a style for the same reason a color does: they say what kind of thing this is, and a kind wants to look alike everywhere it appears. `style artifact  fill: #460000  shape: document` puts the folded corner on every dump in the diagram, and the use site stays one word.
+`badge`, `icon` and `shape` belong in a style for the same reason a color does: they say what kind of thing this is, and a kind wants to look alike everywhere it appears. `style artifact  fill: theme-secondary-subtle  shape: document` puts the folded corner on every dump in the diagram, and the use site stays one word.
 
-`muted` is the one reserved word left, and it earns the exception: it means the theme's secondary text color rather than a fixed one, so a quiet line stays readable when the theme changes. Writing `#8b8b8b` instead would pin it to one theme. Say nothing and every line of a text reads alike, which is what most texts want — `Computer 1 / Ubuntu` is two lines of one name, not a name and a qualifier, and the distinction is the author's to make rather than the renderer's to guess.
+`theme-muted` means the theme's secondary text color rather than a fixed one, so a quiet line stays readable when the theme changes. Writing `#8b8b8b` instead would pin it to one theme. Say nothing and every line of a text reads alike, which is what most texts want — `Computer 1 / Ubuntu` is two lines of one name, not a name and a qualifier, and the distinction is the author's to make rather than the renderer's to guess.
 
 ## The diagram itself
 
@@ -926,9 +926,43 @@ diagram  theme: solarized-dark
 
 The borrowed palettes were made for code, where a color marks a keyword or a string. A diagram needs a page, a box, a border, text and a line, so each theme is its scheme read as a diagram rather than a copy of it. Their licenses are in `NOTICE`.
 
-A theme only ever supplies a color, so changing it never moves anything. A color you write yourself — `fill: #14532d`, or a style's — stays that color under every theme, which means a hand-picked color can clash with a theme it was not chosen against. `muted` is the one word that follows the theme.
+A theme only ever supplies a color, so changing it never moves anything. A color you write yourself — `fill: #14532d`, or a style's — stays that color under every theme, which means a hand-picked color can clash with a theme it was not chosen against. To color something and have it follow the theme, name a theme color instead.
 
 An unknown name is an error that lists the themes.
+
+### Theme colors
+
+Every theme defines the same set of colors, and any attribute that takes a color takes their names. All of them begin `theme-`, so a color that follows the theme says so, and no CSS color name is taken: `red` is still CSS red.
+
+The theme's own color for each part — what a box or a line gets when the file says nothing:
+
+| color | is |
+|---|---|
+| `theme-page` | the page |
+| `theme-text` | text |
+| `theme-muted` | quieter, secondary text |
+| `theme-fill` | a box's fill |
+| `theme-border` | a box's outline |
+| `theme-line` | a line |
+
+And its two accents, each at two strengths, with the text that reads on it:
+
+| color | is |
+|---|---|
+| `theme-primary` | the theme's signature color — Dracula's purple, Solarized's blue |
+| `theme-primary-subtle` | the same mixed toward the page: dark on a dark theme, pale on a light one |
+| `theme-on-primary` | text that reads on a solid `theme-primary` |
+| `theme-secondary`, `theme-secondary-subtle`, `theme-on-secondary` | the same for its second color |
+
+```
+style synced  fill: theme-primary-subtle  border: theme-primary
+style live    fill: theme-primary
+style dim     text: (color: theme-muted)
+```
+
+A subtle fill is how a box is set apart: its text is the theme's ordinary text, and it reads in every theme. A solid fill is a badge. A box with a theme fill and no text color of its own gets text that reads on that fill, so `style live` above needs no `text:` — its text is `theme-on-primary`. A hand-picked fill gets no such help; its text is the theme's, as before.
+
+A `theme-` name the theme does not define is refused with the list above.
 
 The command line can render a file in another theme without editing it — `reladraw arch.reladraw --theme light` — and the flag wins over the file's `theme:`. That is how one source becomes a light and a dark image for a README that shows whichever matches the reader's settings. The file's own `background:` and `text:` still win over the flag's theme, as a hand-written color wins over any theme.
 
@@ -1020,6 +1054,13 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- Theme colors: `theme-page`, `theme-text`, `theme-muted`, `theme-fill`, `theme-border` and `theme-line` name the theme's own color for each part, and `theme-primary` and `theme-secondary`, with `-subtle` and `theme-on-` forms, name its two accents. Any attribute that takes a color takes them, and they follow the theme when it changes, so a diagram colored with them reads in light and dark themes alike. See "Theme colors".
+- A box with a theme fill and no text color of its own gets text that reads on that fill.
+- **Breaking:** `muted` is now `theme-muted`. `color: muted` is refused with the new name.
+- The examples use theme colors where they used to hand-pick colors for a dark page, so they read in every theme.
 
 **0.8.1**
 

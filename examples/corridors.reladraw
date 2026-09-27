@@ -2,7 +2,7 @@
 // the stretch where it is passing them. Before and after, it goes wherever its
 // ends take it.
 
-style channel  fill: #191920  border: #25242f
+style channel  fill: theme-page  border: theme-fill
 
 // North and South are apart vertically, so that is the gap. Both edges start
 // well to the left, climb into the channel, run along it and leave for East.

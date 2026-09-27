@@ -83,15 +83,15 @@ Everything a text says about *itself* goes in brackets after it, never among the
 ```
 node docker "Docker" (at: bottom-center, align: center)  below deploy
 node aside  "a longer remark that folds" (size: small, wrap: 30)  shape: none
-edge a -> b "rclone" (color: muted)
+edge a -> b "rclone" (color: theme-muted)
 ```
 
-An edge's text takes the same keys less `at`. A **style** has no text of its own, so it hangs the bracket off a key: `style aside  text: (size: small, color: muted)`.
+An edge's text takes the same keys less `at`. A **style** has no text of its own, so it hangs the bracket off a key: `style aside  text: (size: small, color: theme-muted)`.
 
 A stretch of a text can borrow a style's text color, which is how a node carries a quieter qualifier:
 
 ```
-style dim  text: (color: muted)
+style dim  text: (color: theme-muted)
 node grinder "Grinder / [dim]medium-fine[/dim]"
 ```
 
@@ -194,17 +194,17 @@ This is not containment: a dotted name puts something *in* a box and widens it, 
 ### Styles
 
 ```
-style store  fill: #142814  border: #486544  badge: database
+style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 node records "Records"  style: store
 ```
 
-Colors are written directly — any hex or CSS color, or `none`. There is no list of color words the tool knows.
+Prefer theme colors, which follow the theme so the diagram reads in light and dark alike: `theme-primary` and `theme-secondary` are the theme's two accents, `-subtle` is an accent softened toward the page (the one to fill a box with), and `theme-muted` is quieter text. `theme-page`, `theme-text`, `theme-fill`, `theme-border` and `theme-line` are the theme's own colors for each part. A hex or CSS color also works, or `none`, but stays fixed in every theme — a dark fill chosen on a dark page is unreadable on a light one.
 
 ## A complete small file
 
 ```
 // A request path, left to right.
-style store  fill: #142814  border: #486544  badge: database
+style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 
 node browser  "Browser"
 node api      "API server"  right of browser

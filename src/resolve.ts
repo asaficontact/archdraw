@@ -511,7 +511,7 @@ function checkStyleKeys(statements: Stmt[]): void {
 
 /**
  * The attribute a key belongs to. A bracketed value arrives under dotted keys —
- * `text: (color: muted)` is stored as `text.color` — so that a style merges into
+ * `text: (color: theme-muted)` is stored as `text.color` — so that a style merges into
  * a node exactly the way every other attribute does; every check above asks
  * about the part, which is the half before the dot.
  */

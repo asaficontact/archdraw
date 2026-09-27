@@ -345,7 +345,7 @@ export function describeAxis(axis: Axis): string {
 export type Attrs = Record<string, string>;
 
 /**
- * What a text's brackets may say: `"Docker" (at: bottom-center, color: muted)`.
+ * What a text's brackets may say: `"Docker" (at: bottom-center, color: theme-muted)`.
  *
  * They are bracketed onto the text rather than written among the node's
  * attributes for the same reason a gap is bracketed onto its placement — they
@@ -354,7 +354,7 @@ export type Attrs = Record<string, string>;
  * `shape`, `icon`, `fill`, `border`, `gap`, `overlap`, `style`.
  *
  * In a style, which has no string for a bracket to hang off, the bracket hangs
- * off the key instead: `style synced  text: (color: muted)`.
+ * off the key instead: `style synced  text: (color: theme-muted)`.
  *
  * `at` and `align` are independent and neither implies the other. `at` is where
  * the block of text sits in the node — one of the nine named positions — and

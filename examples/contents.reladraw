@@ -6,7 +6,7 @@
 // `contents: (widths: …, align: …)`. The two are independent: equal widths
 // ranged left is a real arrangement, and so is natural widths centered.
 
-style plain  fill: #191728  border: #4f5367
+style plain  fill: theme-fill  border: theme-border
 
 // Nothing said. Natural widths, and the column sits against the left.
 node ragged "Ingestion and enrichment pipeline" (at: top-center, align: center)

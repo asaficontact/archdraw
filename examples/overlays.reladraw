@@ -11,14 +11,14 @@
 // outside is away from it. `inside right` is `left of`, `inside top-right` is
 // `below-left of`, and nobody writes a table.
 
-style mark   shape: none  text: (color: #8b8b8b)
+style mark   shape: none  text: (color: theme-muted)
 style spacer  fill: none  border: none
 style link  shape: none  text: (color: #6fa8dc)
 
 // All nine points at once. The board is held open by six invisible children
 // with nothing in them, which is also the point being made: a box is sized by
 // what it *holds*, and the nine marks stamped on it are not held by anything.
-node board ""  fill: #191728  border: #4f5367
+node board ""  fill: theme-fill  border: theme-border
 node board.nw ""  style: spacer
 node board.n  ""  style: spacer  right of board.nw  gap: wide
 node board.ne ""  style: spacer  right of board.n   gap: wide

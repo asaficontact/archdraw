@@ -2,9 +2,9 @@
 // pixel-pushing. The middle node is what holds the two ends apart — delete its
 // line and they close up.
 
-style tool  fill: #191728  border: #4f5367
-style here  fill: #142814  border: #486544
-style dim   text: (color: muted)
+style tool  fill: theme-fill  border: theme-border
+style here  fill: theme-primary-subtle  border: theme-primary
+style dim   text: (color: theme-muted)
 
 node auto "Auto-layout / [dim]placement is / an output[/dim]" (at: top-center, align: center)  contents: (widths: match)
 node auto.mermaid  "Mermaid.js"  style: tool

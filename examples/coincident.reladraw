@@ -2,7 +2,7 @@
 // line is shifted sideways off the one a single edge would draw, so they stay
 // parallel and each end lands wherever its own line crosses the border.
 
-style plain  fill: #191728  border: #4f5367
+style plain  fill: theme-fill  border: theme-border
 
 // Level nodes, so the run is horizontal and the lanes fan out vertically.
 node a "A"  style: plain

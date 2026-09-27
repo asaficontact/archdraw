@@ -21,7 +21,7 @@ import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LineLook } from './model.js';
-import { DARK_THEME, THEMES, type Theme } from './themes.js';
+import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
 import { plain, type Line, type Run } from './text.js';
 
 export interface RenderOptions {
@@ -52,10 +52,12 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   // everything downstream sees one theme.
   const named = layout.diagram['theme'];
   const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
+  const page = layout.diagram['background'];
+  const words = layout.diagram['text.color'];
   const theme: Theme = {
     ...base,
-    ...(layout.diagram['background'] !== undefined && { background: layout.diagram['background'] }),
-    ...(layout.diagram['text.color'] !== undefined && { text: layout.diagram['text.color'] }),
+    ...(page !== undefined && { background: themeColor(page, base) }),
+    ...(words !== undefined && { text: themeColor(words, base) }),
   };
 
   const body: string[] = [];
@@ -123,7 +125,7 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     height: Math.ceil(ink.maxY) - Math.floor(ink.minY),
   };
 
-  const arrowColors = new Set(layout.edges.map((edge) => lineOf(edge.appearance, theme.edge)));
+  const arrowColors = new Set(layout.edges.map((edge) => lineOf(edge.appearance, theme, theme.edge)));
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
@@ -269,11 +271,13 @@ function nodeSvg(
   // including a lone badge beside its text. Every rule that tried to tell a
   // badge from contents was a guess; this one is visible in the source.
   const container = node.children.length > 0;
-  const border = borderOf(node.appearance, container ? theme.containerStroke : theme.boxStroke);
-  const fill = fillOf(node.appearance, container ? theme.containerFill : theme.boxFill);
+  const border = borderOf(node.appearance, theme, container ? theme.containerStroke : theme.boxStroke);
+  const fill = fillOf(node.appearance, theme, container ? theme.containerFill : theme.boxFill);
   // A box is the one kind with two inkable parts, which is why its text needs
-  // a word of its own — `border:` cannot stand in for it.
-  const text = textColorOf(node.textAttrs, theme, theme.text);
+  // a word of its own — `border:` cannot stand in for it. Left unsaid on a
+  // theme fill, it is whatever reads on that fill: `fill: theme-primary` alone
+  // makes a badge whose text is legible in every theme.
+  const text = textColorOf(node.textAttrs, theme, textOnFill(node.appearance['fill'] ?? '', theme) ?? theme.text);
 
   // Deck copies sit behind the front face, furthest back drawn first.
   for (let depth = node.deckTexts.length; depth >= 1; depth -= 1) {
@@ -447,7 +451,7 @@ function drawEdge(
   markup: Record<string, string>,
 ): DrawnEdge {
   const { start, end } = ends;
-  const color = lineOf(edge.appearance, theme.edge);
+  const color = lineOf(edge.appearance, theme, theme.edge);
   const stroke = strokeOf(color, edge.look);
 
   const markerEnd = ` marker-end="url(#${markerId(color)})"`;
@@ -577,7 +581,7 @@ function drawEdge(
           {
             // A colored edge carries its meaning into its text; an uncolored
             // one leaves the words to read as ordinary text.
-            color: textColorOf(edge.textAttrs, theme, lineOf(edge.appearance, theme.text)),
+            color: textColorOf(edge.textAttrs, theme, lineOf(edge.appearance, theme, theme.text)),
             align: 'middle',
             ink: (run, own) => runInk(run, own, markup, theme),
           },
@@ -3356,42 +3360,41 @@ function runInk(
   theme: Theme,
 ): string {
   if (run.style === undefined) return own;
-  return namedColor(markup[run.style]!, theme);
+  return themeColor(markup[run.style]!, theme);
 }
 
 /**
- * A text's own color. `muted` is the one reserved word: it defers to the theme,
- * so a quiet line stays readable when the theme changes. Anything else is a
- * color, the same as `fill:` and `border:` take.
+ * A text's own color, the same words `fill:` and `border:` take — so
+ * `theme-muted` is a quiet line that stays readable when the theme changes.
  */
 function textColorOf(textAttrs: Attrs, theme: Theme, fallback: string): string {
   const value = textAttrs['color'];
-  return value === undefined ? fallback : namedColor(value, theme);
-}
-
-function namedColor(value: string, theme: Theme): string {
-  return value === 'muted' ? theme.mutedText : value;
+  return value === undefined ? fallback : themeColor(value, theme);
 }
 
 /**
  * A color is written as the viewer will receive it — `#14532d`, or any CSS
- * color. The renderer keeps no list of color words of its own, so a diagram
- * is never limited to the ones somebody remembered to add here.
+ * color — or as one of the `theme-` words, which the theme answers. The
+ * renderer keeps no list of color words of its own, so a diagram is never
+ * limited to the ones somebody remembered to add here.
  *
  * Each names the part it colors, so each reads exactly one key. The word these
  * replaced, `stroke:`, named no part and meant a different one on every kind,
  * which is why a box's text could not be colored at all until `text:`.
  */
-function borderOf(appearance: Record<string, string>, fallback: string): string {
-  return appearance['border'] ?? fallback;
+function borderOf(appearance: Record<string, string>, theme: Theme, fallback: string): string {
+  const value = appearance['border'];
+  return value === undefined ? fallback : themeColor(value, theme);
 }
 
-function lineOf(appearance: Record<string, string>, fallback: string): string {
-  return appearance['line'] ?? fallback;
+function lineOf(appearance: Record<string, string>, theme: Theme, fallback: string): string {
+  const value = appearance['line'];
+  return value === undefined ? fallback : themeColor(value, theme);
 }
 
-function fillOf(appearance: Record<string, string>, fallback: string): string {
-  return appearance['fill'] ?? fallback;
+function fillOf(appearance: Record<string, string>, theme: Theme, fallback: string): string {
+  const value = appearance['fill'];
+  return value === undefined ? fallback : themeColor(value, theme);
 }
 
 function round(value: number): number {
