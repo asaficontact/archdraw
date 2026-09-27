@@ -72,7 +72,7 @@ node server.worker "Worker"
 
 A container with `""` and `fill: none  border: none` draws nothing and takes no room of its own, which is how you make a group that can be placed against as one shape.
 
-Node attributes: `style`, `fill` and `border` (each a color), `shape`, `icon`, `badge`, `gap`, `overlap: allow`, `url` (a quoted destination), and `contents:` on a container.
+Node attributes: `style`, `fill` and `border` (each a color), `shape`, `icon`, `badge`, `gap`, `overlap: allow`, `url` (a quoted destination), `deck` (a stack of copies behind the box, one quoted text each: `deck: "Drive 2" "Drive 3"`), and `contents:` on a container.
 
 `contents: (widths: match, align: center)` says how a container's children sit when its title is wider than they are. `widths:` takes `natural`, `match` (all as wide as the widest) or `fill` (all as wide as the band); `align:` takes `left`, `center` or `right`.
 
@@ -171,15 +171,25 @@ node <name> "<text>" (wrap: 30)  shape: none  <placement> ...
 
 There is no `note` statement — an annotation is a node with no body, anchored to a node so it travels with it. **Always give one a `(wrap: n)`** — without one a sentence is drawn as one very long line across whatever is beside it.
 
-### On a box
+### Against a part of a box
 
 ```
-node <name> "<text>"  on <node> at <position>
+inside <node> <part>
+outside <node> <part>
+on <node> <part>
 ```
 
-Holds a node on another's box at one of nine named points — `top-left`, `top-center`, `top-right`, `left-center`, `center`, `right-center`, `bottom-left`, `bottom-center`, `bottom-right` — inset from that corner or edge and overlapping it on purpose. `(gap: none)` puts it hard against the edge.
+A placement may target a *part* of a node: its `text`, a side (`top`, `bottom`, `left`, `right`), or one of nine points — `top-left`, `top-center`, `top-right`, `left-center`, `center`, `right-center`, `bottom-left`, `bottom-center`, `bottom-right`. A bare side is the whole edge; the `-center` point is its midpoint.
 
-This is not containment: a dotted name puts something *inside* a box and widens it, an overlay is stamped *on* it and changes nothing. Use it for a mark, a count, or a link line at the bottom of a box.
+`inside` tucks the node within the box against that part, inset `tight` unless `(gap: …)` says otherwise; `(gap: none)` puts it hard against the edge. `outside` puts it wholly beyond that part. `on` centers it on the part, so a node on a corner straddles it.
+
+```
+node bob      "Bob the builder"
+node bob_link "bob.example.com"  inside bob bottom-center
+node count    "3"                on bob top-right
+```
+
+This is not containment: a dotted name puts something *in* a box and widens it, while a node placed against a part is stamped on it and changes nothing. Use it for a mark, a count, or a link line at the bottom of a box.
 
 ### Styles
 

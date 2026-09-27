@@ -1,0 +1,38 @@
+# reladraw
+
+> reladraw is a text language for diagrams where you say where things go. A file states the arrangement in relative terms — `right of api`, `below worker`, `between web and db` — and the tool works out only the distances, producing a standalone SVG. There are no coordinates and no auto-layout.
+
+Most models have not seen reladraw in training, and its syntax is not Mermaid's, Graphviz's or D2's. Read the full documentation below before writing a file rather than guessing at syntax. Things to know first:
+
+- One statement per line. The statements are `node`, `edge`, `style`, `diagram` and `default`. `//` starts a comment; `#` opens a hex color.
+- Anything the file leaves ambiguous is refused with an error naming the statement, never guessed. Read the error, fix the file, render again.
+- Render with `reladraw diagram.reladraw -o diagram.svg`, or `npx reladraw` without installing.
+- These pages describe the main branch, which can run ahead of the release on npm. If the installed tool refuses a construct documented here, check the changelog at the end of the syntax reference.
+
+A small file:
+
+```
+node app "Web app"
+node app.ui  "Interface"
+node app.api "API"  below app.ui
+
+node store "Database"  right of app  level with app
+
+edge app.api -> store  "queries"  from: right  to: left
+```
+
+## Docs
+
+- [Full documentation](https://reladraw.github.io/reladraw/llms-full.txt): the guide to writing reladraw followed by the complete syntax reference, in one file. Read this one.
+- [Syntax reference](https://raw.githubusercontent.com/reladraw/reladraw/main/SYNTAX.md): the complete syntax reference on its own, with the changelog.
+- [Agent skill](https://raw.githubusercontent.com/reladraw/reladraw/main/.claude/skills/reladraw/SKILL.md): the guide to writing reladraw on its own. Installable into agents that support skills with `npx skills add reladraw/reladraw`.
+
+## Tools
+
+- [Playground](https://reladraw.github.io/reladraw/): write reladraw in the browser and see the picture as you type.
+- [npm package](https://www.npmjs.com/package/reladraw): the `reladraw` command-line tool and library.
+
+## Optional
+
+- [README](https://raw.githubusercontent.com/reladraw/reladraw/main/README.md): why the language exists and how it compares with Mermaid and draw.io.
+- [Examples](https://github.com/reladraw/reladraw/tree/main/examples): one `.reladraw` file per construct.

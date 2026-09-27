@@ -20,7 +20,9 @@ const root = resolvePath(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
 const examples = join(root, 'examples');
 const template = join(root, 'tools', 'playground.html');
-const target = join(root, 'docs', 'index.html');
+// A path argument writes the page somewhere else, which is how `./dev.sh stale`
+// compares a fresh build against the committed one.
+const target = process.argv[2] ? resolvePath(process.argv[2]) : join(root, 'docs', 'index.html');
 
 /**
  * What the page is allowed to reach: the pipeline, what it needs to report an

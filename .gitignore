@@ -26,6 +26,10 @@ scratch/
 # Local agent settings. .claude/skills/ ships; this does not.
 .claude/settings.local.json
 
+# The maintainer's docs-upkeep skill. Kept out of .claude/skills/ on GitHub so
+# `npx skills add reladraw/reladraw` offers only the skill for writing diagrams.
+.claude/skills/reladraw-upkeep/
+
 # draw.io's own lock and backup files, written beside an open drawing.
 .$*.bkp
 .$*.dtmp

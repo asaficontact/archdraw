@@ -68,6 +68,23 @@ Commands:
                                  its reference. Re-run after editing SYNTAX.md,
                                  or the skill teaches an older language than
                                  the tool accepts.
+  llms                          Regenerate docs/llms-full.txt, the skill's guide
+                                 and SYNTAX.md joined into one page for a
+                                 language model to read at one URL. Re-run after
+                                 editing either. docs/llms.txt, the short index
+                                 that points at it, is written by hand.
+  snippets [file.md ...]        Parse every reladraw snippet in the hand-written
+                                 docs and name the ones the parser now refuses.
+                                 Defaults to README.md, SYNTAX.md, CONTRIBUTING.md,
+                                 the skill and docs/llms.txt.
+  stale                         Rebuild every generated copy into a scratch
+                                 directory and name each committed one that
+                                 differs — the skill's syntax, llms-full.txt, the
+                                 playground, the README pictures — then check the
+                                 version numbers and snippets, and end with the
+                                 questions only a reader can answer. Run before
+                                 committing a change to the language or the
+                                 examples; the local pre-commit hook runs it too.
   page [out.png] [WxH] [fragment]
                                  Screenshot the built playground page. `page dom
                                  [fragment]` prints the DOM after its scripts
@@ -244,6 +261,47 @@ render_quietly() {
   fi
 }
 
+# The README's pictures, rendered into the given directory. examples/out/ is
+# gitignored, so anything the front page shows needs a tracked copy of its own.
+readme_images() {
+  local dir="$1" pair name out svg
+  mkdir -p "$dir"
+  for pair in "arch:arch-render.png" "gap:gap.png"; do
+    name="${pair%%:*}"
+    out="$dir/${pair#*:}"
+    svg="$(tmp_path readme svg)"
+    render_quietly "examples/$name.reladraw" "$svg"
+    screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
+    rm -f "$svg"
+    echo "$out"
+  done
+}
+
+# docs/llms-full.txt: the skill's guide and SYNTAX.md as one page, written to the
+# given path. The skill's frontmatter is for skill loaders and is dropped.
+llms_full() {
+  {
+    cat <<'EOF'
+# reladraw — the full documentation, for language models
+
+Generated from the repository's agent skill and SYNTAX.md; do not edit by hand.
+It describes the language on the main branch, which can run ahead of the release
+on npm.
+
+Part 1 is the guide to writing reladraw. Where it says `reference/syntax.md`, it
+means Part 2, the complete syntax reference.
+
+# Part 1 — writing reladraw
+
+EOF
+    awk 'n >= 2 { print } /^---$/ && n < 2 { n++ }' .claude/skills/reladraw/SKILL.md
+    printf '\n# Part 2 — the syntax reference\n\n'
+    cat SYNTAX.md
+  } > "$1"
+}
+
+SNIPPET_DOCS=(README.md SYNTAX.md CONTRIBUTING.md .claude/skills/reladraw/SKILL.md docs/llms.txt)
+
 case "$cmd" in
   install)
     npm install
@@ -318,16 +376,7 @@ case "$cmd" in
     # page shows needs a tracked copy of its own. Regenerate them whenever the
     # examples or the renderer change, or the front page stops being a picture
     # of this code.
-    mkdir -p docs
-    for pair in "arch:docs/arch-render.png" "gap:docs/gap.png"; do
-      name="${pair%%:*}"
-      out="${pair#*:}"
-      svg="$(tmp_path readme svg)"
-      render_quietly "examples/$name.reladraw" "$svg"
-      screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
-      rm -f "$svg"
-      echo "$out"
-    done
+    readme_images docs
     ;;
   playground)
     # docs/index.html is generated: the page from tools/playground.html with the
@@ -393,6 +442,11 @@ case "$cmd" in
       || { echo "SYNTAX.md: the changelog still has an **Unreleased** entry" >&2; bad=1; }
     cmp -s SYNTAX.md .claude/skills/reladraw/reference/syntax.md \
       || { echo "the skill's copy of SYNTAX.md is stale: run ./dev.sh skill" >&2; bad=1; }
+    llms="$(tmp_path llms txt)"
+    llms_full "$llms"
+    cmp -s "$llms" docs/llms-full.txt \
+      || { echo "docs/llms-full.txt is stale: run ./dev.sh llms" >&2; bad=1; }
+    rm -f "$llms"
     if [ "$bad" = 1 ]; then
       echo "not releasing $v — update these, commit, then run npm version again" >&2
       exit 1
@@ -412,6 +466,81 @@ case "$cmd" in
       cp SYNTAX.md "$dest"
       echo "$dest regenerated from SYNTAX.md"
     fi
+    ;;
+  llms)
+    # The llms.txt convention: a site says what it is at /llms.txt, and a model
+    # given that one URL can learn the tool without crawling. llms.txt is the
+    # short hand-written index; this is the everything-in-one-file companion it
+    # links to, generated so it cannot drift from the two documents it joins.
+    llms_full docs/llms-full.txt
+    echo "docs/llms-full.txt regenerated from the skill and SYNTAX.md"
+    ;;
+  snippets)
+    [ -f dist/index.js ] || npx tsc
+    if [ "$#" -gt 0 ]; then
+      node tools/snippets.mjs "$@"
+    else
+      node tools/snippets.mjs "${SNIPPET_DOCS[@]}"
+    fi
+    ;;
+  stale)
+    # Every generated file the repository tracks, rebuilt from the working tree
+    # and compared with what is there. Each of these went stale silently at least
+    # once, because regenerating it was a separate step nobody was prompted for.
+    # Reports and never rewrites: the fix is the named command, run on purpose.
+    npx tsc
+    t="$(mktemp -d)"
+    found=0
+    stale() { echo "  STALE  $1 — run ./dev.sh $2"; found=1; }
+    fresh() { echo "  ok     $1"; }
+
+    cmp -s SYNTAX.md .claude/skills/reladraw/reference/syntax.md \
+      && fresh "skill's copy of SYNTAX.md" || stale "skill's copy of SYNTAX.md" skill
+    llms_full "$t/llms-full.txt"
+    cmp -s "$t/llms-full.txt" docs/llms-full.txt \
+      && fresh docs/llms-full.txt || stale docs/llms-full.txt llms
+    node tools/playground.mjs "$t/index.html" >/dev/null
+    cmp -s "$t/index.html" docs/index.html \
+      && fresh docs/index.html || stale "docs/index.html (the playground)" playground
+    readme_images "$t" >/dev/null
+    for png in arch-render.png gap.png; do
+      cmp -s "$t/$png" "docs/$png" \
+        && fresh "docs/$png" || stale "docs/$png (a README picture)" readme-image
+    done
+
+    # Between releases every one of these names the last release; mid-release,
+    # README and SYNTAX.md name the next one until `npm version` catches up.
+    v="$(node -p 'require("./package.json").version')"
+    readme_v="$(grep -oE '^Version [0-9.]+' README.md | cut -d' ' -f2 | sed 's/\.$//')"
+    syntax_v="$(head -1 SYNTAX.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')"
+    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ]; then
+      fresh "version $v in package.json, README.md and SYNTAX.md"
+    else
+      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none} — expected only mid-release"
+      found=1
+    fi
+
+    if said="$(node tools/snippets.mjs "${SNIPPET_DOCS[@]}")"; then
+      fresh "snippets in the hand-written docs ($(tail -1 <<< "$said" | cut -d' ' -f1) parsed)"
+    else
+      echo "  REFUSED snippets the parser no longer accepts:"
+      sed '$d; s/^/           /' <<< "$said"
+      found=1
+    fi
+    rm -rf "$t"
+
+    cat <<'EOF'
+
+  What no script can check:
+    - Does the skill's SKILL.md still describe the language, in its prose as
+      well as its examples?
+    - Does the README still describe what the tool does, and its example still
+      show the idiomatic way to say it?
+    - Does docs/llms.txt still point at the right pages and summarize the
+      language truthfully?
+    - Does SYNTAX.md's changelog have an Unreleased entry for this change?
+EOF
+    [ "$found" = 0 ]
     ;;
   page)
     # The same headless Chrome the SVG screenshots go through, pointed at the
