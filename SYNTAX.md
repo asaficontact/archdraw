@@ -576,6 +576,41 @@ Refused, each by name:
 
 An end with no side named leaves from the side facing where the line is going.
 
+### How the line is drawn
+
+Everything about the line itself goes in its bracket:
+
+```
+edge api -> db  line: (path: square, corners: rounded)
+edge api -> cache  line: (pattern: dashed, thickness: thin)
+edge web -> api  line: (color: #d2904e, thickness: thick, crossing: arc)
+```
+
+`line: red` is short for `line: (color: red)`, and is still the way to write a color alone. Every other property needs the bracket, and `line: square` is refused with the bracket it meant. Like any attribute, the bracket may go on an edge, in a style, or on `default edge` — `default edge  line: (path: square, corners: rounded)` draws a whole diagram with right angles.
+
+| property | takes | says |
+|---|---|---|
+| `color` | a color | as `line:` alone |
+| `path` | `curved` (the default), `square`, `straight` | how the line joins the points it has to meet |
+| `corners` | `sharp` (the default), `rounded` | how a square or straight line turns |
+| `crossing` | `none` (the default), `arc`, `gap`, `square` | how the line is drawn where it crosses an earlier one |
+| `pattern` | `solid` (the default), `dashed`, `dotted`, `dash-dot` | |
+| `thickness` | `thin`, `normal` (the default), `thick`, or a number of pixels | |
+
+**A path is the rule for joining what the file fixed**: where the line leaves and which way it heads, where it arrives and from which direction, and any sides it passes. Out of A's top and into B's left, with B up and to the right:
+
+- `curved` bends round from heading up to heading right. It is how every line was drawn before there was a choice, including the straight line an edge naming no sides has always been.
+- `square` goes up, then across into B — one right angle, because leaving upward and arriving from the left fixes which way it turns. A square line naming no sides picks them: boxes sharing a column join top to bottom, boxes sharing a row side to side, and otherwise the line goes across first, then down. An end naming no side, beside one that does, takes whichever side needs the fewest turns.
+- `straight` is one straight piece from A's top to B's left, ignoring which way each faces. Given `below c` or `between a and b`, it bends where that clause puts a point it has to pass, and nowhere else.
+
+**Corners** apply wherever a line has them: every bend in a square line, and the bends a clause puts in a straight one. A curved line has none, so `corners: rounded` written on a curved edge is refused. From a style or a default it rounds the edges that have corners and leaves curved ones alone, as a style's `fill:` lands only on the things that have an inside.
+
+**A crossing is drawn on the later line**: the edge written further down the file jumps the one written above it. `arc` is a small half-circle hop, `square` a three-sided jump, and `gap` a short break in the later line, as though it passed underneath. A line never jumps within reach of its own ends, where two lines meeting at a box are not passing each other.
+
+**A pattern is measured in thicknesses**, so dashes keep their proportions on a thick line.
+
+**A thick line takes room.** Its arrowhead grows with it, and the room an edge's text makes for itself counts the arrowhead it will actually have, so thickening a line with text between two close nodes can push them apart — the same way a larger text grows its node. Color, path, corners, crossings and pattern move nothing.
+
 ## Against a part of a node
 
 ```
@@ -716,7 +751,7 @@ Every attribute, and what takes one. The kinds here are what a node's **body** i
 | `fill` | ✓ | | | | color — see "A color names the part it colors" |
 | `border` | ✓ | | | | color |
 | `text` | ✓ | ✓ | ✓ | ✓ | the text's properties, in brackets — a style's form of what a node or an edge writes after its own words |
-| `line` | | | | ✓ | color |
+| `line` | | | | ✓ | color, or everything about the line in brackets — see "How the line is drawn" |
 | `url` | ✓ | ✓ | ✓ | ✓ | a destination to open when the thing is clicked |
 
 The `diagram` statement has a vocabulary of its own — `theme`, `background` and `text` — which is checked the same way. Writing `background:` on a node is an error that points at `fill:`, and `theme:` on one points at `diagram theme:`. A `default` takes a narrower list for each kind; see "Defaults".
@@ -976,6 +1011,10 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- `line:` takes a bracket for everything about how the line is drawn: `path: curved | square | straight`, `corners: sharp | rounded`, `crossing: none | arc | gap | square`, `pattern: solid | dashed | dotted | dash-dot` and `thickness: thin | normal | thick` or a number. `line: red` still works, as the short form of `line: (color: red)`. Every default is how lines were drawn before, so no existing file changes.
 
 **0.6.0**
 

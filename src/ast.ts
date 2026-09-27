@@ -362,6 +362,26 @@ export type Attrs = Record<string, string>;
  */
 export const TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'at'] as const;
 
+/**
+ * What an edge's line takes in its bracket: `line: (path: square, pattern:
+ * dashed)`. The line is a part in the sense the text is, so every property of
+ * it goes in one bracket, as the text's do. `line: red` stays as the short form
+ * of `line: (color: red)`, and both are stored under the bare `line` key.
+ */
+export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness'] as const;
+
+/**
+ * The words each of the line's properties takes, the default first. Thickness
+ * takes a plain number of pixels as well.
+ */
+export const LINE_VALUES = {
+  path: ['curved', 'square', 'straight'],
+  corners: ['sharp', 'rounded'],
+  crossing: ['none', 'arc', 'gap', 'square'],
+  pattern: ['solid', 'dashed', 'dotted', 'dash-dot'],
+  thickness: ['normal', 'thin', 'thick'],
+} as const;
+
 export interface NodeStmt {
   kind: 'node';
   name: string;

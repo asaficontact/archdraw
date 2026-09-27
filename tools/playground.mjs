@@ -50,6 +50,7 @@ const OFFERED = [
   'coincident',
   'corridors',
   'overhang',
+  'lines',
 ];
 
 const IMPORT = /^import\s+[\s\S]*?\s+from\s+'([^']+)';$/gm;

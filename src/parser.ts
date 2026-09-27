@@ -27,6 +27,8 @@ import {
   SIDES,
   PASSAGE_AXES,
   TEXT_KEYS,
+  LINE_KEYS,
+  LINE_VALUES,
   CONTENTS_KEYS,
   PLACEMENT_KEYS,
   BOUNDARY_PARTS,
@@ -194,13 +196,26 @@ function parseTail(
 const BRACKET_KEYS: Record<string, readonly string[]> = {
   text: TEXT_KEYS,
   contents: CONTENTS_KEYS,
+  line: LINE_KEYS,
 };
 
 /** How each bracketed key's error quotes itself back, and what it is about. */
 const BRACKET_ABOUT: Record<string, { kind: string; example: string }> = {
   text: { kind: 'a text', example: 'color: muted' },
   contents: { kind: 'a `contents:` bracket', example: 'widths: match' },
+  line: { kind: 'a line', example: 'path: square' },
 };
+
+/**
+ * Which of the line's properties a word belongs to, so that `line: square` —
+ * the color key given a shape — can be pointed at the bracket.
+ */
+function linePropertyOf(word: string): string | undefined {
+  for (const [property, words] of Object.entries(LINE_VALUES)) {
+    if ((words as readonly string[]).includes(word) && word !== 'normal') return property;
+  }
+  return undefined;
+}
 
 /**
  * The top-level keys that moved into the text's bracket in 0.3.0, and the
@@ -262,7 +277,11 @@ function readAttr(
     // Two brackets for one part are fine as long as they say different things;
     // the same property in both is the same defect as `fill:` written twice.
     for (const [inner, value] of Object.entries(read.values)) {
-      setOnce(attrs, `${key}.${inner}`, value, subject, line, { key: `${key}: (${inner}: …)`, value: (v) => v });
+      // A line's color is stored where `line: red` puts it, so the short form
+      // and the bracket are one key: a style's `line: red` merges under an
+      // edge's `line: (color: blue)`, and writing both on one line is a repeat.
+      const stored = key === 'line' && inner === 'color' ? 'line' : `${key}.${inner}`;
+      setOnce(attrs, stored, value, subject, line, { key: `${key}: (${inner}: …)`, value: (v) => v });
     }
     return read.next;
   }
@@ -334,7 +353,7 @@ function readAttr(
     });
     return next;
   }
-  if (bracketKeys !== undefined && key !== 'text') {
+  if (bracketKeys !== undefined && key !== 'text' && key !== 'line') {
     // `contents: match` names the part and then says one of its two properties
     // without saying which. The brackets are what make the level shift visible,
     // so there is no unbracketed spelling to fall back to.
@@ -389,6 +408,18 @@ function readAttr(
         : `\`text:\` takes the text's properties in brackets — write \`text: (color: ${valueToken.text})\` in a style, and \`(color: ${valueToken.text})\` in the brackets after a node's or an edge's own text`,
       line,
     );
+  }
+  if (key === 'line' && !valueToken.quoted) {
+    // `line: red` is the short form of the color, and the only one: every other
+    // property of the line needs the bracket to say which it is.
+    const property = linePropertyOf(valueToken.text) ?? (/^\d/.test(valueToken.text) ? 'thickness' : undefined);
+    if (property !== undefined) {
+      throw new SourceError(
+        `\`line: ${valueToken.text}\` — \`line:\` on its own takes a color. The line's other properties go in its bracket: ` +
+          `\`line: (${property}: ${valueToken.text})\``,
+        line,
+      );
+    }
   }
   if (key === 'align' && valueToken.text === 'widths') {
     // Removed in 0.3.0. It was a size operation wearing an alignment's name,

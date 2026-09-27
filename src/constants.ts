@@ -64,6 +64,23 @@ export const ARROW_MARKER_WIDTH = 7;
  */
 export const ARROW_LENGTH = ARROW_MARKER_WIDTH * LINE_WIDTH;
 
+/** What `thickness: thin | normal | thick` draw, in pixels. `normal` is the line as it always was. */
+export const THICKNESS: Record<string, number> = {
+  thin: 1,
+  normal: LINE_WIDTH,
+  thick: LINE_WIDTH * 2,
+};
+
+/**
+ * How much of a line of this thickness its arrowhead covers. The marker scales
+ * with the stroke, so a thick line gets a bigger head, and the room an edge's
+ * text makes for itself counts the head it will actually be drawn with — a
+ * thickness is a size, like a text's, and a size is allowed to take room.
+ */
+export function arrowLength(thickness: number): number {
+  return ARROW_MARKER_WIDTH * thickness;
+}
+
 /**
  * Line left showing between an edge's text and the box at that end of the
  * corridor it crosses.

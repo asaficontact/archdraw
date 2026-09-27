@@ -139,9 +139,24 @@ export interface LayoutEdge {
   between?: LayoutPassage;
   /** Which side of which nodes the line passes. Measured in the renderer, like `between`. */
   passes?: LayoutPass[];
+  /** What the line's bracket says, checked and with every default filled in. */
+  look: LineLook;
   attrs: Attrs;
   appearance: Attrs;
   line: number;
+}
+
+/**
+ * How an edge's line is drawn: `line: (path: square, corners: rounded, …)`.
+ * Only `thickness` takes room; the rest is appearance and moves nothing.
+ */
+export interface LineLook {
+  path: 'curved' | 'square' | 'straight';
+  corners: 'sharp' | 'rounded';
+  crossing: 'none' | 'arc' | 'gap' | 'square';
+  pattern: 'solid' | 'dashed' | 'dotted' | 'dash-dot';
+  /** In pixels. */
+  thickness: number;
 }
 
 export interface Layout {

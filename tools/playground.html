@@ -497,6 +497,17 @@
               <code>url: "https://example.com"</code>
             </dd>
 
+            <dt>Lines</dt>
+            <dd>
+              <code>line: (path: square, corners: rounded)</code> — everything about an edge's line.
+              <code>path:</code> takes <code>curved</code> <code>square</code> <code>straight</code>;
+              <code>corners:</code> <code>sharp</code> <code>rounded</code>;
+              <code>crossing:</code> <code>none</code> <code>arc</code> <code>gap</code> <code>square</code>;
+              <code>pattern:</code> <code>solid</code> <code>dashed</code> <code>dotted</code> <code>dash-dot</code>;
+              <code>thickness:</code> <code>thin</code> <code>normal</code> <code>thick</code> or a number.
+              <i><code>default edge  line: (path: square)</code> sets every edge.</i>
+            </dd>
+
             <dt>Contents</dt>
             <dd>
               <code>contents: (widths: match, align: center)</code> — how a container's

@@ -161,6 +161,8 @@ An edge whose two ends face away from each other — `from: left  to: right` wit
 
 An edge with text widens the corridor between its own two ends by what the text needs, so texts are safe to add.
 
+How the line is drawn goes in its bracket: `line: (path: square, corners: rounded, pattern: dashed, thickness: thick, crossing: arc)`. `path:` is `curved` (the default), `square` (right angles) or `straight`; it changes how the line joins its ends, never which side of anything it passes. `line: red` alone is the color. To draw a whole diagram with right angles, write `default edge  line: (path: square, corners: rounded)`.
+
 ### Annotations
 
 ```

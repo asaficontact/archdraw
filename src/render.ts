@@ -9,6 +9,7 @@ import {
   LINE_WIDTH,
   PAD,
   SEPARATION_GAP,
+  arrowLength,
   fontSizeFor,
   textExtent,
   textStyleFor,
@@ -19,7 +20,7 @@ import { describeAxis } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
-import type { Layout, LayoutEdge, LayoutNode, LayoutPass } from './model.js';
+import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LineLook } from './model.js';
 import { DARK_THEME, THEMES, type Theme } from './themes.js';
 import { plain, type Line, type Run } from './text.js';
 
@@ -72,19 +73,43 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   const routes = planRoutes(layout.edges, layout.nodes, ends, measurer, fontSize);
   planLoops(layout.edges, layout.nodes, ends, corridors, routes, measurer, fontSize);
   aimFreeEnds(layout.edges, ends, corridors);
-  for (const edge of layout.edges) {
-    const drawn = drawEdge(
+  const drawn = layout.edges.map((edge) =>
+    drawEdge(
       edge,
       ends.get(edge)!,
       corridors.get(edge),
       routes.get(edge),
+      layout.nodes,
       theme,
       measurer,
       fontSize,
       layout.markup,
-    );
-    body.push(drawn.svg);
-    ink = union(ink, grow(drawn.ink, layout.margin));
+    ),
+  );
+  // A line with a `crossing:` style is cut where it crosses an earlier one, and
+  // the jump drawn over the cut. The cut is a mask rather than a break in the
+  // path, so it works the same on a curve as on a corner, and leaves whatever
+  // lies underneath — a container's fill — showing through the gap.
+  const crossings = findCrossings(drawn);
+  const masks: { id: string; holes: Crossing[] }[] = [];
+  for (const edge of drawn) {
+    const found = crossings.get(edge);
+    const parts = [edge.line, ...edge.rest];
+    if (found) {
+      const id = `cut-${masks.length + 1}`;
+      masks.push({ id, holes: found });
+      parts[0] = edge.line.replace(/\/>$/, ` mask="url(#${id})"/>`);
+      const jumps = found
+        .map((crossing) => jumpAt(crossing, edge.edge.look.crossing))
+        .filter((d): d is string => d !== undefined)
+        .map((d) => `  <path d="${d}" fill="none"${edge.stroke}/>`);
+      parts.splice(1, 0, ...jumps);
+      for (const crossing of found) {
+        edge.ink = union(edge.ink, grow(extentOfPoints([crossing.at]), crossing.reach + edge.edge.look.thickness));
+      }
+    }
+    body.push(linked(parts.join('\n'), edge.edge.attrs['url']));
+    ink = union(ink, grow(edge.ink, layout.margin));
   }
 
   // An edge's geometry is measured rather than solved for, so the resolver sized
@@ -104,6 +129,19 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
     '  <defs>',
     ...[...arrowColors].map((color) => arrowMarker(color)),
+    // Each mask covers the whole page, in page units: the default region is the
+    // line's own bounding box, which a straight level line gives no height, and
+    // the line would vanish entirely.
+    ...masks.map(({ id, holes }) =>
+      [
+        `    <mask id="${id}" maskUnits="userSpaceOnUse" x="${canvas.x}" y="${canvas.y}" width="${canvas.width}" height="${canvas.height}">`,
+        `      <rect x="${canvas.x}" y="${canvas.y}" width="${canvas.width}" height="${canvas.height}" fill="white"/>`,
+        ...holes.map(
+          (hole) => `      <circle cx="${round(hole.at.x)}" cy="${round(hole.at.y)}" r="${round(hole.reach)}" fill="black"/>`,
+        ),
+        '    </mask>',
+      ].join('\n'),
+    ),
     '  </defs>',
     `  <rect x="${canvas.x}" y="${canvas.y}" width="${canvas.width}" height="${canvas.height}" fill="${theme.background}"/>`,
     ...body,
@@ -370,18 +408,37 @@ function drawIcon(icon: Icon, x: number, y: number, side: number, theme: Theme):
 
 // --- edges -------------------------------------------------------------------
 
+/**
+ * One edge, drawn. The line is kept apart from the rest so that the crossings,
+ * which need every line to exist first, can cut into it afterwards.
+ */
+interface DrawnEdge {
+  edge: LayoutEdge;
+  /** The line's element, closed with `/>` so a mask can be added to it. */
+  line: string;
+  /** Its text, after it. */
+  rest: string[];
+  ink: Extent;
+  /** The line as a polyline, curves flattened, for finding where lines cross. */
+  trace: Point[];
+  color: string;
+  stroke: string;
+}
+
 function drawEdge(
   edge: LayoutEdge,
   ends: EdgeEnds,
   corridor: Corridor | undefined,
   route: Route | undefined,
+  nodes: LayoutNode[],
   theme: Theme,
   measurer: Measurer,
   fontSize: number,
   markup: Record<string, string>,
-): { svg: string; ink: Extent } {
+): DrawnEdge {
   const { start, end } = ends;
   const color = lineOf(edge.appearance, theme.edge);
+  const stroke = strokeOf(color, edge.look);
 
   const markerEnd = ` marker-end="url(#${markerId(color)})"`;
   const markerStart = edge.both ? ` marker-start="url(#${markerId(color)}-back)"` : '';
@@ -390,6 +447,7 @@ function drawEdge(
   // it is drawn as a curve that actually does leave and arrive that way. With
   // neither side named there is nothing to honor and the line stays straight.
   const curved = start.side !== undefined || end.side !== undefined;
+  const bowed = ends.bow !== undefined && (ends.bow.x !== 0 || ends.bow.y !== 0);
   const parts: string[] = [];
   // What the line actually covers, so the canvas can be sized to hold it. A
   // curve leaving a `top` side rides above every box in the drawing, and the
@@ -398,9 +456,27 @@ function drawEdge(
   let midX: number;
   let midY: number;
 
-  if (route) {
+  const jointed = edge.look.path !== 'curved' && (route || corridor || curved || bowed);
+  if (jointed) {
+    // `path: square` and `path: straight` are the same fixed points — the ends,
+    // which way each faces, the run a clause asked for — joined by a different
+    // rule, and both come out as straight pieces meeting at corners.
+    const textWidth =
+      edge.lines === undefined
+        ? 0
+        : widestLine(edge.lines, measurer, fontSizeFor('edge', edge.textAttrs, fontSize, edge.line));
+    const plan = jointedLine(edge, ends, corridor, route, nodes, textWidth);
+    const d =
+      edge.look.corners === 'rounded'
+        ? roundedPath(plan.points, arrowLength(edge.look.thickness))
+        : sharpPath(plan.points);
+    parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
+    ink = union(ink, extentOfPoints(plan.points));
+    midX = plan.mid.x;
+    midY = plan.mid.y;
+  } else if (route) {
     parts.push(
-      `  <path d="${roundedPath(route.points)}" fill="none" stroke="${color}" stroke-width="${LINE_WIDTH}"${markerEnd}${markerStart}/>`,
+      `  <path d="${roundedPath(route.points)}" fill="none"${stroke}${markerEnd}${markerStart}/>`,
     );
     ink = union(ink, extentOfPoints(route.points));
     midX = route.mid.x;
@@ -409,7 +485,7 @@ function drawEdge(
     const path = corridorPath(start, end, corridor);
     ink = union(ink, path.ink);
     parts.push(
-      `  <path d="${path.d}" fill="none" stroke="${color}" stroke-width="${LINE_WIDTH}"${markerEnd}${markerStart}/>`,
+      `  <path d="${path.d}" fill="none"${stroke}${markerEnd}${markerStart}/>`,
     );
     // The text goes on the straight run rather than at the midpoint of the
     // whole path, so it sits in the gap the author asked the line to travel.
@@ -427,13 +503,13 @@ function drawEdge(
     const c1 = { x: start.x + start.tx * reach + bx, y: start.y + start.ty * reach + by };
     const c2 = { x: end.x + end.tx * reach + bx, y: end.y + end.ty * reach + by };
     parts.push(
-      `  <path d="M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}" fill="none" stroke="${color}" stroke-width="${LINE_WIDTH}"${markerEnd}${markerStart}/>`,
+      `  <path d="M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}" fill="none"${stroke}${markerEnd}${markerStart}/>`,
     );
     ink = union(ink, cubicExtent(start, c1, c2, end));
     // The point halfway along a cubic, which is where the text belongs.
     midX = (start.x + 3 * c1.x + 3 * c2.x + end.x) / 8;
     midY = (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8;
-  } else if (ends.bow && (ends.bow.x !== 0 || ends.bow.y !== 0)) {
+  } else if (ends.bow && bowed) {
     // A straight line that could not get the room it needed at its ends, so it
     // takes it in the middle. Both control points carry the same displacement,
     // which keeps the arc symmetric; a cubic's middle moves three quarters of
@@ -449,14 +525,14 @@ function drawEdge(
       y: end.y - run.y + ends.bow.y * lift,
     };
     parts.push(
-      `  <path d="M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}" fill="none" stroke="${color}" stroke-width="${LINE_WIDTH}"${markerEnd}${markerStart}/>`,
+      `  <path d="M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}" fill="none"${stroke}${markerEnd}${markerStart}/>`,
     );
     ink = union(ink, cubicExtent(start, c1, c2, end));
     midX = (start.x + 3 * c1.x + 3 * c2.x + end.x) / 8;
     midY = (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8;
   } else {
     parts.push(
-      `  <line x1="${round(start.x)}" y1="${round(start.y)}" x2="${round(end.x)}" y2="${round(end.y)}" stroke="${color}" stroke-width="${LINE_WIDTH}"${markerEnd}${markerStart}/>`,
+      `  <line x1="${round(start.x)}" y1="${round(start.y)}" x2="${round(end.x)}" y2="${round(end.y)}"${stroke}${markerEnd}${markerStart}/>`,
     );
     midX = (start.x + end.x) / 2;
     midY = (start.y + end.y) / 2;
@@ -503,7 +579,413 @@ function drawEdge(
   }
 
   // The stroke straddles the path, so half of it lies outside the geometry.
-  return { svg: linked(parts.join('\n'), edge.attrs['url']), ink: grow(ink, LINE_WIDTH / 2) };
+  const [line, ...rest] = parts;
+  return {
+    edge,
+    line: line!,
+    rest,
+    ink: grow(ink, edge.look.thickness / 2),
+    trace: traceOf(line!),
+    color,
+    stroke,
+  };
+}
+
+/**
+ * The stroke of a line: its color, its thickness and its pattern. The dashes
+ * are measured in thicknesses, so a pattern keeps its proportions on a thick
+ * line, which covers most of what a density setting would be for. A solid line
+ * of the ordinary thickness writes exactly what every line always did.
+ */
+function strokeOf(color: string, look: LineLook): string {
+  const w = look.thickness;
+  const dashes: Record<LineLook['pattern'], string> = {
+    solid: '',
+    dashed: ` stroke-dasharray="${round(w * 4)} ${round(w * 3)}"`,
+    // A zero-length dash with a round cap is a dot as wide as the line.
+    dotted: ` stroke-dasharray="0 ${round(w * 3)}" stroke-linecap="round"`,
+    'dash-dot': ` stroke-dasharray="${round(w * 5)} ${round(w * 3)} 0 ${round(w * 3)}" stroke-linecap="round"`,
+  };
+  return ` stroke="${color}" stroke-width="${w}"${dashes[look.pattern]}`;
+}
+
+/**
+ * The points of a square or straight line, and where its text sits.
+ *
+ * Both start from what the file fixed. A square line leaves each side head-on
+ * and turns only at right angles; a straight one goes directly from point to
+ * point, and bends only where a clause — `below c`, `between a and b` — puts a
+ * point it has to pass through.
+ */
+function jointedLine(
+  edge: LayoutEdge,
+  ends: EdgeEnds,
+  corridor: Corridor | undefined,
+  route: Route | undefined,
+  nodes: LayoutNode[],
+  textWidth: number,
+): { points: Point[]; mid: Point } {
+  const { start, end } = ends;
+  const square = edge.look.path === 'square';
+  const stub = ROUTE_RADIUS + arrowLength(edge.look.thickness);
+  const fromFace = faceOf(edge.from);
+  const toFace = faceOf(edge.to);
+
+  if (route) {
+    if (square) return { points: route.points, mid: route.mid };
+    const points = straighten(route.points, edge, nodes);
+    return { points, mid: textSpot(points, textWidth) };
+  }
+
+  if (corridor) {
+    const p1 = corridorPoint(corridor, corridor.enter);
+    const p2 = corridorPoint(corridor, corridor.leave);
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    if (!square) return { points: tidyRoute([start, p1, p2, end]), mid };
+    const forward = corridor.leave >= corridor.enter ? 1 : -1;
+    const run = corridor.axis === 'y' ? { x: forward, y: 0 } : { x: 0, y: forward };
+    const points = tidyRoute([
+      ...rightAngles(start, headingOf(start, fromFace), p1, { x: -run.x, y: -run.y }, stub),
+      ...rightAngles(p2, run, end, headingOf(end, toFace), stub),
+    ]);
+    return { points, mid };
+  }
+
+  const bow = ends.bow ?? { x: 0, y: 0 };
+  const bowed = bow.x !== 0 || bow.y !== 0;
+  if (!square) {
+    // A bowed line is one of a crowded group, and its middle is the only room
+    // left for its text, so it bends there.
+    const middle = { x: (start.x + end.x) / 2 + bow.x, y: (start.y + end.y) / 2 + bow.y };
+    const points = bowed ? [start, middle, end] : [start, end];
+    return { points, mid: bowed ? middle : textSpot(points, textWidth) };
+  }
+
+  const out = headingOf(start, fromFace);
+  const back = headingOf(end, toFace);
+  // A bow is room for the texts of a crowded group, taken in the middle. Between
+  // sides that face each other that middle is a run the lanes can widen along;
+  // at right angles there is none, and the text finds room on a level piece.
+  if (!bowed || (out.x !== 0) !== (back.x !== 0)) {
+    const points = tidyRoute(rightAngles(start, out, end, back, stub));
+    return { points, mid: textSpot(points, textWidth) };
+  }
+  // Out of each side, across by the bow, and joined at right angles.
+  const a = { x: start.x + out.x * stub, y: start.y + out.y * stub };
+  const b = { x: end.x + back.x * stub, y: end.y + back.y * stub };
+  const points = tidyRoute(squareUp([start, a, { x: a.x + bow.x, y: a.y + bow.y }, { x: b.x + bow.x, y: b.y + bow.y }, b, end]));
+  return { points, mid: textSpot(points, textWidth) };
+}
+
+/**
+ * Which way an end points, as one of the four directions. A named side says so;
+ * an end the renderer placed is on some side of its box, and that is the one.
+ */
+function headingOf(anchor: Anchor, face: Box): Point {
+  if (anchor.side !== undefined) return { x: anchor.tx, y: anchor.ty };
+  const candidates: [number, Point][] = [
+    [Math.abs(anchor.x - face.x), { x: -1, y: 0 }],
+    [Math.abs(anchor.x - (face.x + face.width)), { x: 1, y: 0 }],
+    [Math.abs(anchor.y - face.y), { x: 0, y: -1 }],
+    [Math.abs(anchor.y - (face.y + face.height)), { x: 0, y: 1 }],
+  ];
+  candidates.sort((p, q) => p[0] - q[0]);
+  return candidates[0]![1];
+}
+
+/**
+ * A right-angled line from `from`, leaving along `out`, to `to`, arriving
+ * against `back` — `back` points out of the far side, so the line's last piece
+ * travels the opposite way. The fewest turns that leave and arrive head-on:
+ * none when the two face each other in line, one when they are at right angles
+ * and the corner lies ahead of both, two in the middle when they face each
+ * other offset, and a way round past a stub at each end otherwise.
+ */
+function rightAngles(from: Point, out: Point, to: Point, back: Point, stub: number): Point[] {
+  const across = out.x !== 0;
+  const parallel = across === (back.x !== 0);
+  const ahead = (p: Point, q: Point, d: Point): number => (q.x - p.x) * d.x + (q.y - p.y) * d.y;
+
+  if (parallel) {
+    const facing = out.x * back.x + out.y * back.y < 0;
+    if (facing && ahead(from, to, out) > 0) {
+      if (Math.abs(across ? to.y - from.y : to.x - from.x) < 0.5) return [from, to];
+      const m = across ? (from.x + to.x) / 2 : (from.y + to.y) / 2;
+      return across
+        ? [from, { x: m, y: from.y }, { x: m, y: to.y }, to]
+        : [from, { x: from.x, y: m }, { x: to.x, y: m }, to];
+    }
+    if (!facing) {
+      // Both sides face the same way: out past whichever is further, and back.
+      const far = across
+        ? (out.x > 0 ? Math.max(from.x, to.x) : Math.min(from.x, to.x)) + out.x * stub
+        : (out.y > 0 ? Math.max(from.y, to.y) : Math.min(from.y, to.y)) + out.y * stub;
+      return across
+        ? [from, { x: far, y: from.y }, { x: far, y: to.y }, to]
+        : [from, { x: from.x, y: far }, { x: to.x, y: far }, to];
+    }
+    // Facing, but the far end is behind: out, across the middle, and in.
+    const a = { x: from.x + out.x * stub, y: from.y + out.y * stub };
+    const b = { x: to.x + back.x * stub, y: to.y + back.y * stub };
+    const m = across ? (from.y + to.y) / 2 : (from.x + to.x) / 2;
+    return across
+      ? [from, a, { x: a.x, y: m }, { x: b.x, y: m }, b, to]
+      : [from, a, { x: m, y: a.y }, { x: m, y: b.y }, b, to];
+  }
+
+  const corner = across ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
+  if (ahead(from, corner, out) > 0 && ahead(to, corner, back) > 0) return [from, corner, to];
+  // The one corner lies behind an end: step out of both sides first and join
+  // the two stubs with whichever corner does not double back.
+  const a = { x: from.x + out.x * stub, y: from.y + out.y * stub };
+  const b = { x: to.x + back.x * stub, y: to.y + back.y * stub };
+  const options = [
+    { x: b.x, y: a.y },
+    { x: a.x, y: b.y },
+  ];
+  const turn =
+    options.find((c) => ahead(a, c, out) >= 0 && ahead(b, c, back) >= 0) ?? options[across ? 1 : 0]!;
+  return [from, a, turn, b, to];
+}
+
+/** Put a right-angled corner between any two points that are not in line. */
+function squareUp(points: Point[]): Point[] {
+  const out: Point[] = [points[0]!];
+  let alongX = true;
+  for (let index = 1; index < points.length; index += 1) {
+    const a = out[out.length - 1]!;
+    const b = points[index]!;
+    const dx = Math.abs(b.x - a.x) >= 0.5;
+    const dy = Math.abs(b.y - a.y) >= 0.5;
+    if (dx && dy) {
+      out.push(alongX ? { x: b.x, y: a.y } : { x: a.x, y: b.y });
+    } else if (dx || dy) {
+      alongX = dx;
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+/**
+ * A route's points with every corner dropped that a straight piece can skip.
+ * The route already keeps each clause; a straight piece may cut a corner only
+ * where it stays clear of every box the route kept clear of, which keeps the
+ * clauses too — a piece between two points below a node, touching nothing, is
+ * below it all the way.
+ */
+function straighten(points: Point[], edge: LayoutEdge, nodes: LayoutNode[]): Point[] {
+  const own = [faceOf(edge.from), faceOf(edge.to)].map((box) => grow(extentOfBox(box), -1));
+  const others = nodes
+    .filter((node) => !contains(node, edge.from) && !contains(node, edge.to))
+    .map((node) => grow(extentOfBox(faceOf(node)), ATTACH_MARGIN / 2));
+  const clear = (a: Point, b: Point): boolean =>
+    ![...own, ...others].some((box) => segmentHits(a, b, box));
+
+  const kept = [points[0]!];
+  let at = 0;
+  while (at < points.length - 1) {
+    let next = at + 1;
+    for (let far = points.length - 1; far > at + 1; far -= 1) {
+      if (clear(points[at]!, points[far]!)) {
+        next = far;
+        break;
+      }
+    }
+    kept.push(points[next]!);
+    at = next;
+  }
+  return kept;
+}
+
+function extentOfBox(box: Box): Extent {
+  return { minX: box.x, minY: box.y, maxX: box.x + box.width, maxY: box.y + box.height };
+}
+
+/** Whether the segment from `a` to `b` passes through the inside of `box`. */
+function segmentHits(a: Point, b: Point, box: Extent): boolean {
+  if (box.maxX <= box.minX || box.maxY <= box.minY) return false;
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const edges: [number, number][] = [
+    [-dx, a.x - box.minX],
+    [dx, box.maxX - a.x],
+    [-dy, a.y - box.minY],
+    [dy, box.maxY - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q <= 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 >= t1) return false;
+  }
+  return true;
+}
+
+/**
+ * Where a jointed line's text rides: the middle of its longest level piece, if
+ * one is long enough to hold the text with line showing either side, and the
+ * middle of its longest piece otherwise. A level piece comes first because a
+ * text knocks a hole as wide as itself, which on an upright piece is a hole far
+ * wider than the line — and lines grouped on one side sit a text's height apart
+ * on their level pieces, never a text's width apart on their upright ones.
+ */
+function textSpot(points: Point[], textWidth: number): Point {
+  let best = { x: (points[0]!.x + points[points.length - 1]!.x) / 2, y: (points[0]!.y + points[points.length - 1]!.y) / 2 };
+  let level: Point | undefined;
+  let longest = -1;
+  let longestLevel = -1;
+  for (let index = 1; index < points.length; index += 1) {
+    const a = points[index - 1]!;
+    const b = points[index]!;
+    const here = Math.hypot(b.x - a.x, b.y - a.y);
+    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (here > longest + 0.5) {
+      longest = here;
+      best = middle;
+    }
+    if (Math.abs(b.y - a.y) < 0.5 && here >= textWidth + ARROW_LENGTH * 2 && here > longestLevel + 0.5) {
+      longestLevel = here;
+      level = middle;
+    }
+  }
+  return level ?? best;
+}
+
+function sharpPath(points: Point[]): string {
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${round(point.x)} ${round(point.y)}`).join(' ');
+}
+
+/**
+ * A drawn line's element read back as a polyline, curves flattened. Reading
+ * the element rather than each drawing branch keeping its own record means the
+ * crossings are found on exactly what was drawn.
+ */
+function traceOf(element: string): Point[] {
+  const line = /<line x1="([-\d.]+)" y1="([-\d.]+)" x2="([-\d.]+)" y2="([-\d.]+)"/.exec(element);
+  if (line) {
+    return [
+      { x: Number(line[1]), y: Number(line[2]) },
+      { x: Number(line[3]), y: Number(line[4]) },
+    ];
+  }
+  const d = /d="([^"]*)"/.exec(element)?.[1] ?? '';
+  const tokens = d.match(/[MLC]|-?\d+(?:\.\d+)?(?:e-?\d+)?/g) ?? [];
+  const points: Point[] = [];
+  let command = 'M';
+  for (let index = 0; index < tokens.length; ) {
+    const token = tokens[index]!;
+    if (/[MLC]/.test(token)) {
+      command = token;
+      index += 1;
+      continue;
+    }
+    const read = (): Point => {
+      const point = { x: Number(tokens[index]), y: Number(tokens[index + 1]) };
+      index += 2;
+      return point;
+    };
+    if (command === 'C') {
+      const from = points[points.length - 1]!;
+      const [c1, c2, to] = [read(), read(), read()];
+      for (let step = 1; step <= 12; step += 1) {
+        const t = step / 12;
+        const u = 1 - t;
+        points.push({
+          x: u * u * u * from.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * to.x,
+          y: u * u * u * from.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * to.y,
+        });
+      }
+    } else {
+      points.push(read());
+    }
+  }
+  return points;
+}
+
+// --- crossings ------------------------------------------------------------------
+
+/** Where one line crosses an earlier one, and which way it is heading there. */
+interface Crossing {
+  at: Point;
+  along: Point;
+  /** Half the length of line the crossing takes out. */
+  reach: number;
+}
+
+/**
+ * Where each line with a `crossing:` style crosses a line declared before it.
+ * The later line is the one that jumps, so the file's order says who goes over,
+ * and a line never jumps where it leaves or arrives — a crossing that close to
+ * an end is two lines meeting at a box, not passing each other.
+ */
+function findCrossings(drawn: DrawnEdge[]): Map<DrawnEdge, Crossing[]> {
+  const found = new Map<DrawnEdge, Crossing[]>();
+  drawn.forEach((later, index) => {
+    if (later.edge.look.crossing === 'none') return;
+    const crossings: Crossing[] = [];
+    for (const earlier of drawn.slice(0, index)) {
+      const reach = 3 + later.edge.look.thickness * 1.5 + earlier.edge.look.thickness / 2;
+      const clear = reach + arrowLength(later.edge.look.thickness);
+      const ends = [later.trace[0]!, later.trace[later.trace.length - 1]!, earlier.trace[0]!, earlier.trace[earlier.trace.length - 1]!];
+      for (let i = 1; i < later.trace.length; i += 1) {
+        const a = later.trace[i - 1]!;
+        const b = later.trace[i]!;
+        for (let j = 1; j < earlier.trace.length; j += 1) {
+          const at = intersect(a, b, earlier.trace[j - 1]!, earlier.trace[j]!);
+          if (!at) continue;
+          if (ends.some((end) => Math.hypot(end.x - at.x, end.y - at.y) < clear)) continue;
+          if (crossings.some((c) => Math.hypot(c.at.x - at.x, c.at.y - at.y) < (c.reach + reach) * 1.2)) continue;
+          const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          crossings.push({ at, along: { x: (b.x - a.x) / length, y: (b.y - a.y) / length }, reach });
+        }
+      }
+    }
+    if (crossings.length > 0) found.set(later, crossings);
+  });
+  return found;
+}
+
+/** Where two segments cross, if they do. Lines that only touch or run together do not. */
+function intersect(a: Point, b: Point, c: Point, d: Point): Point | undefined {
+  const r = { x: b.x - a.x, y: b.y - a.y };
+  const s = { x: d.x - c.x, y: d.y - c.y };
+  const denominator = r.x * s.y - r.y * s.x;
+  if (Math.abs(denominator) < 1e-9) return undefined;
+  const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / denominator;
+  const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / denominator;
+  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return undefined;
+  return { x: a.x + r.x * t, y: a.y + r.y * t };
+}
+
+/**
+ * The jump drawn over one crossing: a half circle for `arc`, three sides of a
+ * square for `square`, and nothing for `gap`, which is the cut alone. A jump
+ * rises to the same side everywhere — up, or right on a line going straight up
+ * or down — so a row of them reads as one line hopping.
+ */
+function jumpAt(crossing: Crossing, style: LineLook['crossing']): string | undefined {
+  const { at, along, reach } = crossing;
+  let normal = { x: along.y, y: -along.x };
+  if (normal.y > 1e-6 || (Math.abs(normal.y) <= 1e-6 && normal.x < 0)) normal = { x: -normal.x, y: -normal.y };
+  const a = { x: at.x - along.x * reach, y: at.y - along.y * reach };
+  const b = { x: at.x + along.x * reach, y: at.y + along.y * reach };
+  if (style === 'arc') {
+    // Which way round the arc sweeps depends on which side of the line is up.
+    const sweep = along.x * normal.y - along.y * normal.x < 0 ? 1 : 0;
+    return `M ${round(a.x)} ${round(a.y)} A ${round(reach)} ${round(reach)} 0 0 ${sweep} ${round(b.x)} ${round(b.y)}`;
+  }
+  if (style === 'square') {
+    const up = (p: Point): Point => ({ x: p.x + normal.x * reach, y: p.y + normal.y * reach });
+    return sharpPath([a, up(a), up(b), b]);
+  }
+  return undefined;
 }
 
 function union(a: Extent, b: Extent): Extent {
@@ -2309,7 +2791,7 @@ function tidyRoute(points: Point[]): Point[] {
  * piece at either end short of the arrowhead, so two corners never overlap and
  * the head always lands on a straight piece.
  */
-function roundedPath(points: Point[]): string {
+function roundedPath(points: Point[], arrow: number = ARROW_LENGTH): string {
   const parts = [`M ${round(points[0]!.x)} ${round(points[0]!.y)}`];
   const kappa = 0.5523; // a cubic's handle, as a share of the radius, for a quarter circle
   for (let index = 1; index + 1 < points.length; index += 1) {
@@ -2320,8 +2802,8 @@ function roundedPath(points: Point[]): string {
       0,
       Math.min(
         ROUTE_RADIUS,
-        index === 1 ? inward - ARROW_LENGTH : inward / 2,
-        index + 2 === points.length ? outward - ARROW_LENGTH : outward / 2,
+        index === 1 ? inward - arrow : inward / 2,
+        index + 2 === points.length ? outward - arrow : outward / 2,
       ),
     );
     const din = { x: (corner.x - before.x) / inward, y: (corner.y - before.y) / inward };
@@ -2473,7 +2955,7 @@ function loopReach(from: Point, to: Point, axis: Axis): number {
 
 function sideAttr(edge: LayoutEdge, key: 'from' | 'to'): AttachSide | undefined {
   const value = edge.attrs[key];
-  if (value === undefined) return undefined;
+  if (value === undefined) return impliedSide(edge, key);
   if (!(ATTACH_SIDES as readonly string[]).includes(value)) {
     throw new SourceError(
       `"${key}: ${value}" is not a side — use ${ATTACH_SIDES.join(', ')}`,
@@ -2481,6 +2963,59 @@ function sideAttr(edge: LayoutEdge, key: 'from' | 'to'): AttachSide | undefined 
     );
   }
   return value as AttachSide;
+}
+
+/**
+ * The side a square line leaves or arrives on when its author named none.
+ *
+ * A curved or straight line with no sides aims straight at the other box, but a
+ * square one can only leave a side head-on, so it has to pick one. Boxes that
+ * share a column join top to bottom and boxes that share a row join side to
+ * side; otherwise the line goes across first and then down, the tie the mixed
+ * passes settled. An end whose partner did name a side keeps the line to one
+ * turn where it can. Everything after this treats the side as though it had
+ * been written, so the ends are spread and bundled like any named side.
+ *
+ * An edge through a `between` gap or past a named node is routed by its clauses,
+ * and one from a node to itself or to its own container has no outside to pick
+ * from, so none of those is given a side here.
+ */
+function impliedSide(edge: LayoutEdge, key: 'from' | 'to'): AttachSide | undefined {
+  if (edge.look.path !== 'square' || edge.between || edge.passes) return undefined;
+  if (contains(edge.from, edge.to) || contains(edge.to, edge.from)) return undefined;
+  const own = faceOf(key === 'from' ? edge.from : edge.to);
+  const other = faceOf(key === 'from' ? edge.to : edge.from);
+  const partnerKey = key === 'from' ? 'to' : 'from';
+  const partner = edge.attrs[partnerKey] as AttachSide | undefined;
+  const overlapX = own.x < other.x + other.width && other.x < own.x + own.width;
+  const overlapY = own.y < other.y + other.height && other.y < own.y + own.height;
+  const across: AttachSide = centerOf(other).x >= centerOf(own).x ? 'right' : 'left';
+  const upDown: AttachSide = centerOf(other).y >= centerOf(own).y ? 'bottom' : 'top';
+  if (partner !== undefined && (ATTACH_SIDES as readonly string[]).includes(partner)) {
+    // The partner's side is fixed, so take whichever side of this box joins it
+    // in the fewest turns. The order breaks ties the way the rest of this does.
+    const theirs = anchorOn(other, partner, partner === 'top' || partner === 'bottom' ? centerOf(other).x : centerOf(other).y);
+    const order: AttachSide[] = overlapX && !overlapY ? [upDown, across] : [across, upDown];
+    const sides = [...order, ...ATTACH_SIDES.filter((side) => !order.includes(side))];
+    let best = sides[0]!;
+    let fewest = Infinity;
+    for (const side of sides) {
+      const mine = anchorOn(own, side, side === 'top' || side === 'bottom' ? centerOf(own).x : centerOf(own).y);
+      const [from, to] = key === 'from' ? [mine, theirs] : [theirs, mine];
+      const turns = tidyRoute(
+        rightAngles(from, { x: from.tx, y: from.ty }, to, { x: to.tx, y: to.ty }, ROUTE_STUB),
+      ).length;
+      if (turns < fewest) {
+        fewest = turns;
+        best = side;
+      }
+    }
+    return best;
+  }
+  if (overlapX && !overlapY) return upDown;
+  if (overlapY && !overlapX) return across;
+  // Across first, then down: the start leaves across and the end is reached down.
+  return key === 'from' ? across : upDown;
 }
 
 function arrowMarker(color: string): string {

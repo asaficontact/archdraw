@@ -20,11 +20,11 @@ import {
   COLOR_PARTS,
   CONTENT_ALIGNMENTS,
   CONTENT_WIDTHS,
+  LINE_VALUES,
   describePlacement,
   nameTarget,
 } from './ast.js';
 import {
-  ARROW_LENGTH,
   CHILD_GAP,
   DECK_STEP,
   DEFAULT_FONT_SIZE,
@@ -36,6 +36,8 @@ import {
   TEXT_CLEARANCE,
   PAD,
   SEPARATION_GAP,
+  THICKNESS,
+  arrowLength,
   fontSizeFor,
   leafTop,
   textExtent,
@@ -47,7 +49,7 @@ import { SourceError } from './errors.js';
 import { type Body, bodyFor } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, Reach } from './model.js';
+import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, LineLook, Reach } from './model.js';
 
 export interface ResolveOptions {
   measurer?: Measurer;
@@ -630,12 +632,67 @@ function buildEdges(
         : {}),
       ...(between ? { between } : {}),
       ...(passes ? { passes } : {}),
+      look: lineLook(stmt.attrs, appearance, what, stmt.line),
       attrs: stmt.attrs,
       appearance,
       line: stmt.line,
     });
   }
   return edges;
+}
+
+/**
+ * The line's bracket, checked, with a default for everything unsaid. A value is
+ * checked wherever it came from — a style's `path: squar` is as much a typo as
+ * an edge's — but `corners: rounded` is refused only when the edge itself says
+ * it on a curved line, which has no corners. From a style or a default it
+ * applies to the edges that have corners, the way a style's `fill:` lands on
+ * the nodes that have an inside.
+ */
+function lineLook(written: Attrs, appearance: Attrs, what: string, line: number): LineLook {
+  const word = <K extends keyof typeof LINE_VALUES>(property: K): (typeof LINE_VALUES)[K][number] => {
+    const value = appearance[`line.${property}`];
+    if (value === undefined) return LINE_VALUES[property][0];
+    if (!(LINE_VALUES[property] as readonly string[]).includes(value)) {
+      throw new SourceError(
+        `edge ${what}: "${property}: ${value}" is not a ${property} — use ${(property === 'thickness' ? ['thin', 'normal', 'thick'] : LINE_VALUES[property]).join(', ')}` +
+          (property === 'thickness' ? ', or a number of pixels' : ''),
+        line,
+      );
+    }
+    return value as (typeof LINE_VALUES)[K][number];
+  };
+
+  const thickness = ((): number => {
+    const value = appearance['line.thickness'];
+    if (value !== undefined && /^[0-9.]/.test(value)) {
+      if (!/^\d+(\.\d+)?$/.test(value) || Number(value) <= 0) {
+        throw new SourceError(
+          `edge ${what}: "thickness: ${value}" — a thickness is thin, normal, thick, ` +
+            'or a plain number of pixels greater than zero, such as `thickness: 3`',
+          line,
+        );
+      }
+      return Number(value);
+    }
+    return THICKNESS[word('thickness')]!;
+  })();
+
+  const look: LineLook = {
+    path: word('path'),
+    corners: word('corners'),
+    crossing: word('crossing'),
+    pattern: word('pattern'),
+    thickness,
+  };
+  if (look.path === 'curved' && written['line.corners'] === 'rounded') {
+    throw new SourceError(
+      `edge ${what}: a curved line has no corners to round — \`corners: rounded\` takes a ` +
+        '`path: square` or `path: straight` line',
+      line,
+    );
+  }
+  return look;
 }
 
 // --- pass two: sizes, bottom-up ---------------------------------------------
@@ -1695,11 +1752,12 @@ function corridorsIn(
     // The clearance is doubled because the text is drawn at the *midpoint* of
     // the line, so the room it needs is symmetric about that point whatever sits
     // at either end. The arrowhead is charged on both sides for the same reason:
-    // it covers `ARROW_LENGTH` of the line it arrives on, and reserving that at
-    // one end only would move the midpoint rather than lengthen the run.
+    // it covers the head's length of the line it arrives on, and reserving that
+    // at one end only would move the midpoint rather than lengthen the run. A
+    // thick line's head is longer, and takes the room it needs.
     const extent = (axis: Axis): number =>
       textExtent(edge.lines!, edge.textAttrs, axis, measurer, fontSize, edge.line) +
-      (TEXT_CLEARANCE + ARROW_LENGTH) * 2;
+      (TEXT_CLEARANCE + arrowLength(edge.look.thickness)) * 2;
     corridors.push({
       edge,
       from,
