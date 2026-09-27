@@ -1,4 +1,4 @@
-# Syntax reference — 0.5.0
+# Syntax reference — 0.6.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -977,7 +977,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.6.0**
 
 - An edge whose ends face away from each other, such as `from: left  to: right` with the far node to the right, goes around instead of through its own nodes: through the gap between them if there is room, over the top of the row if not. Several over one row take a lane each. Sides at right angles, such as `from: left  to: top`, go around the same way when one faces away.
 - `above`, `below`, `left of` and `right of` on an edge say which side of a node the line passes: `edge a -> b  below c`. Any number, one per node; one naming several nodes covers the stretch between them too. One edge may mix the two kinds, `below m  left of n`, and the line turns between them as often as they need. Clauses that cannot all be drawn are refused with the reason.
