@@ -4,15 +4,13 @@ reladraw is a text language for diagrams where you say where things go.
 
 **[Try it in your browser →](https://reladraw.github.io/reladraw/)**
 
-Here's a diagram drawn by hand in draw.io:
+I wanted to be able to create custom, expressive diagrams where I decided how to arrange the diagram, but without the inefficiency of manually drawing in draw.io. For example, this is a diagram drawn in draw.io:
 
-![The reference diagram, drawn by hand](https://raw.githubusercontent.com/reladraw/reladraw/main/examples/reference/arch.png)
+![Hand-drawn reference diagram](https://raw.githubusercontent.com/reladraw/reladraw/main/examples/reference/arch.png)
 
-And here's the same diagram written in reladraw ([`examples/arch.reladraw`](examples/arch.reladraw)).
+This is the same diagram, but written in reladraw ([`examples/arch.reladraw`](examples/arch.reladraw)).
 
-![The same diagram, rendered from reladraw source](https://raw.githubusercontent.com/reladraw/reladraw/main/docs/arch-render.png)
-
-The positions in the second picture come from statements like `above-left of cluster.hub`, rather than an algorithm automatically determining placement.
+![reference diagram via reladraw](https://raw.githubusercontent.com/reladraw/reladraw/main/docs/arch-render.png)
 
 ## Why not Mermaid or draw.io?
 
@@ -68,15 +66,13 @@ That gets you a copy of the skill at the time you run it, so you'll need to re-r
 
 ## Status
 
-Version 0.8.0. It's early, but it works. There's a parser, a layout engine and an SVG renderer in TypeScript with no runtime dependencies, plus a command-line tool that turns a text file into a standalone SVG. The comparison at the top of this page is that tool run on [`examples/arch.reladraw`](examples/arch.reladraw).
+Version 0.8.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG.
 
 The language isn't stable yet, so expect the syntax to change.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
-
-The license covers the code, not the name. It grants no rights to "reladraw", the project logo or the project's other marks. See [NOTICE](NOTICE).
+Apache-2.0. See [LICENSE](LICENSE). The license covers the code, not the name. It grants no rights to "reladraw", the project logo or the project's other marks. See [NOTICE](NOTICE).
 
 ## Contributing
 
