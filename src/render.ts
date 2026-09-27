@@ -633,8 +633,20 @@ function jointedLine(
 
   if (route) {
     if (square) return { points: route.points, mid: route.mid };
-    const points = straighten(route.points, edge, nodes);
-    return { points, mid: textSpot(points, textWidth) };
+    if (textWidth === 0) {
+      const points = straighten(route.points, edge, nodes);
+      return { points, mid: textSpot(points, textWidth) };
+    }
+    // The route pushed its run out far enough to hold the text clear of the
+    // boxes it passes, and that room is only on the run. So a straight line
+    // with a text keeps the text's point and straightens either side of it;
+    // cutting across the run would put the text back against the box.
+    const [before, after] = splitAt(route.points, route.mid);
+    const points = tidyRoute([
+      ...straighten(before, edge, nodes),
+      ...straighten(after, edge, nodes).slice(1),
+    ]);
+    return { points, mid: route.mid };
   }
 
   if (corridor) {
@@ -796,6 +808,31 @@ function straighten(points: Point[], edge: LayoutEdge, nodes: LayoutNode[]): Poi
     at = next;
   }
   return kept;
+}
+
+/**
+ * A line cut in two at `at`, a point on one of its pieces, each half keeping
+ * `at` as its end. A point on no piece cuts at the nearest one.
+ */
+function splitAt(points: Point[], at: Point): [Point[], Point[]] {
+  let piece = 0;
+  let nearest = Infinity;
+  for (let index = 1; index < points.length; index += 1) {
+    const a = points[index - 1]!;
+    const b = points[index]!;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const t = length === 0 ? 0 : Math.max(0, Math.min(1,
+      ((at.x - a.x) * (b.x - a.x) + (at.y - a.y) * (b.y - a.y)) / (length * length)));
+    const off = Math.hypot(a.x + t * (b.x - a.x) - at.x, a.y + t * (b.y - a.y) - at.y);
+    if (off < nearest) {
+      nearest = off;
+      piece = index;
+    }
+  }
+  return [
+    tidyRoute([...points.slice(0, piece), at]),
+    tidyRoute([at, ...points.slice(piece)]),
+  ];
 }
 
 function extentOfBox(box: Box): Extent {
