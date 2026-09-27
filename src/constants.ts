@@ -82,6 +82,15 @@ export function arrowLength(thickness: number): number {
 }
 
 /**
+ * Line left showing behind the head of an edge with no text, so a gap an arrow
+ * crosses is at least this plus its heads. Stacked children sit `CHILD_GAP`
+ * apart, which is less than one head, and an arrow between them drew as a head
+ * with no line. This is what the tightest named gap already leaves behind a
+ * normal head, so any gap an author could have asked for holds it unchanged.
+ */
+export const BARE_EDGE_RUN = GAPS['tight']! - ARROW_LENGTH;
+
+/**
  * Line left showing between an edge's text and the box at that end of the
  * corridor it crosses.
  *

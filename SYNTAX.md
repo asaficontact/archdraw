@@ -1017,6 +1017,10 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+- A fix, no syntax change. Children of a container stack close together, and an edge with no text between two of them used to get only that step, so it drew as an arrowhead with no line behind it. The gap now widens to show a short run of line behind each head, as an edge with text already did for its text. Existing diagrams with such an edge will look different, and correct.
+
 **0.8.0**
 
 - `shape: circle`. A circle is sized to hold its text and is always round. Edges on one of its sides spread round that quarter of the circle, and a corner of it is the point on the circle halfway round. It does not yet take a badge, a deck or a node placed against its own edge. Nothing that already renders changes.

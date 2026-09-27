@@ -25,6 +25,7 @@ import {
   nameTarget,
 } from './ast.js';
 import {
+  BARE_EDGE_RUN,
   CHILD_GAP,
   DECK_STEP,
   DEFAULT_FONT_SIZE,
@@ -1744,7 +1745,7 @@ interface Corridor {
   edge: LayoutEdge;
   from: Target;
   to: Target;
-  /** Room the text needs in a gap on each axis, clearance included. */
+  /** Room the edge needs in a gap on each axis: its text with clearance, or a bare run of line. */
   need: Record<Axis, number>;
   /**
    * Where a named side points its end away from the other along an axis, and
@@ -1808,7 +1809,7 @@ function liftTo(
   };
 }
 
-/** The edges with text whose two ends are different members of this group. */
+/** The edges whose two ends are different members of this group. */
 function corridorsIn(
   edges: LayoutEdge[],
   locate: (node: LayoutNode) => Target | undefined,
@@ -1817,16 +1818,28 @@ function corridorsIn(
 ): Corridor[] {
   const corridors: Corridor[] = [];
   for (const edge of edges) {
-    // An edge with no text asks for nothing: every gap holds an arrowhead. And a
-    // edge told to pass between two named things carries its text in *that*
+    // An edge told to pass between two named things carries its text in *that*
     // corridor rather than in the gap between its own ends, so widening this one
     // would make room where the text never goes.
     // An edge that says which side of something it passes is routed round it,
     // and its text rides on that route for the same reason.
-    if (edge.text === undefined || edge.between || edge.passes) continue;
+    if (edge.between || edge.passes) continue;
     const from = locate(edge.from);
     const to = locate(edge.to);
     if (!from || !to || from.index === to.index) continue;
+    // With no text, the gap still has to show a run of line behind each head,
+    // or two stacked children with an arrow between them draw as a head alone.
+    if (edge.text === undefined) {
+      const bare = BARE_EDGE_RUN + arrowLength(edge.look.thickness) * (edge.both ? 2 : 1);
+      corridors.push({
+        edge,
+        from,
+        to,
+        need: { x: bare, y: bare },
+        away: facingAway(edge.attrs['from'], edge.attrs['to']),
+      });
+      continue;
+    }
     // The clearance is doubled because the text is drawn at the *midpoint* of
     // the line, so the room it needs is symmetric about that point whatever sits
     // at either end. The arrowhead is charged on both sides for the same reason:

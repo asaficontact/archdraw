@@ -2436,6 +2436,14 @@ function arrowLength(thickness) {
     return ARROW_MARKER_WIDTH * thickness;
 }
 /**
+ * Line left showing behind the head of an edge with no text, so a gap an arrow
+ * crosses is at least this plus its heads. Stacked children sit `CHILD_GAP`
+ * apart, which is less than one head, and an arrow between them drew as a head
+ * with no line. This is what the tightest named gap already leaves behind a
+ * normal head, so any gap an author could have asked for holds it unchanged.
+ */
+const BARE_EDGE_RUN = GAPS['tight'] - ARROW_LENGTH;
+/**
  * Line left showing between an edge's text and the box at that end of the
  * corridor it crosses.
  *
@@ -6996,22 +7004,34 @@ function liftTo(node, indexOf, local) {
         height: node.height,
     };
 }
-/** The edges with text whose two ends are different members of this group. */
+/** The edges whose two ends are different members of this group. */
 function corridorsIn(edges, locate, measurer, fontSize) {
     const corridors = [];
     for (const edge of edges) {
-        // An edge with no text asks for nothing: every gap holds an arrowhead. And a
-        // edge told to pass between two named things carries its text in *that*
+        // An edge told to pass between two named things carries its text in *that*
         // corridor rather than in the gap between its own ends, so widening this one
         // would make room where the text never goes.
         // An edge that says which side of something it passes is routed round it,
         // and its text rides on that route for the same reason.
-        if (edge.text === undefined || edge.between || edge.passes)
+        if (edge.between || edge.passes)
             continue;
         const from = locate(edge.from);
         const to = locate(edge.to);
         if (!from || !to || from.index === to.index)
             continue;
+        // With no text, the gap still has to show a run of line behind each head,
+        // or two stacked children with an arrow between them draw as a head alone.
+        if (edge.text === undefined) {
+            const bare = BARE_EDGE_RUN + arrowLength(edge.look.thickness) * (edge.both ? 2 : 1);
+            corridors.push({
+                edge,
+                from,
+                to,
+                need: { x: bare, y: bare },
+                away: facingAway(edge.attrs['from'], edge.attrs['to']),
+            });
+            continue;
+        }
         // The clearance is doubled because the text is drawn at the *midpoint* of
         // the line, so the room it needs is symmetric about that point whatever sits
         // at either end. The arrowhead is charged on both sides for the same reason:
