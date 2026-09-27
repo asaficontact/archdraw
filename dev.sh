@@ -95,15 +95,19 @@ Commands:
                                  into the editor without clicking. Run
                                  `playground` first — this looks at what is on
                                  disk, not at the template.
-  page-examples [out.png] [WxH] [n]
-                                 Screenshot the playground with the Examples
-                                 picker open and the nth example (default 1,
-                                 counting from 0) previewed. A headless browser
-                                 cannot click, so this screenshots a copy of the
-                                 page that opens the picker itself; docs/ is
+  page-run '<js>' [out.png] [WxH]
+                                 Screenshot a copy of the playground that runs
+                                 <js> once its own scripts have. A headless
+                                 browser cannot click or drag, so this is how an
+                                 interaction is checked: the script does it with
+                                 .click() or a dispatched event. docs/ is
                                  untouched. Chrome will not lay a window out
                                  much narrower than 500 pixels, so a narrower
                                  WxH is cropped rather than reflowed.
+  page-examples [out.png] [WxH] [n]
+                                 page-run with the Examples picker open and the
+                                 nth example (default 1, counting from 0)
+                                 previewed.
   before <file> [ref]           Render one example as <ref> renders it, into
                                  examples/out/<name>-before.png. `regress` says
                                  that something moved; this is how you see what.
@@ -576,17 +580,24 @@ EOF
       echo "$out"
     fi
     ;;
-  page-examples)
-    out="${1:-$(tmp_path examples png)}"
-    copy="$(tmp_path examples html)"
-    steps="${3:-1}"
-    # The page is self-contained, so a copy anywhere works. The script it gains
-    # opens the picker and steps down the list the way the arrow key would.
-    sed "s#</body>#<script>document.getElementById('browse').click();for(var i=0;i<$steps;i++)document.getElementById('catalog').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));</script></body>#" \
-      docs/index.html >"$copy"
-    screenshot "file://$copy" "$out" "${2:-1400x900}" "0d0d10"
+  page-run)
+    js="${1:?script required}"
+    out="${2:-$(tmp_path page png)}"
+    copy="$(tmp_path page html)"
+    # The page is self-contained, so a copy anywhere works. The script goes in
+    # last, after the page's own, so everything it reaches for already exists,
+    # and it waits a moment: headless Chrome runs scripts while the window is
+    # still narrow and only then resizes it to WxH, so anything measured
+    # straight away is measured in the page's narrow, stacked layout.
+    { sed '/<\/body>/,$d' docs/index.html; printf '<script>setTimeout(function () { %s }, 300);</script>\n</body>\n</html>\n' "$js"; } >"$copy"
+    screenshot "file://$copy" "$out" "${3:-1400x900}" "0d0d10"
     rm -f "$copy"
     echo "$out"
+    ;;
+  page-examples)
+    # Opens the picker and steps down the list the way the arrow key would.
+    "$0" page-run "document.getElementById('browse').click();for(var i=0;i<${3:-1};i++)document.getElementById('catalog').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));" \
+      "${1:-$(tmp_path examples png)}" "${2:-1400x900}"
     ;;
   clicks)
     # What a browser would actually follow, at each point named. A destination

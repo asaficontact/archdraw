@@ -136,7 +136,13 @@
         flex: 1;
         min-height: 0;
         display: grid;
-        grid-template-columns: minmax(300px, 2fr) 3fr;
+        /* --split is the source pane's share of the width, set by dragging the
+           divider. Until then the panes keep their old two-to-three split. */
+        grid-template-columns: minmax(240px, var(--split, 2fr)) 1px minmax(240px, 3fr);
+      }
+
+      main.split {
+        grid-template-columns: minmax(240px, var(--split)) 1px minmax(240px, 1fr);
       }
 
       section {
@@ -146,8 +152,32 @@
         flex-direction: column;
       }
 
-      section + section {
-        border-left: 1px solid var(--edge);
+      /* The divider is the 1px line the panes always had between them, with a
+         wider invisible grip either side of it so it can be caught. */
+      #split {
+        position: relative;
+        z-index: 1;
+        background: var(--edge);
+        cursor: col-resize;
+        touch-action: none;
+        outline: 0;
+      }
+
+      #split::before {
+        content: '';
+        position: absolute;
+        inset: 0 -5px;
+      }
+
+      #split:hover,
+      #split:focus-visible,
+      #split.dragging {
+        background: var(--syn-keyword);
+      }
+
+      body.dragging {
+        cursor: col-resize;
+        user-select: none;
       }
 
       .bar {
@@ -159,10 +189,19 @@
         border-bottom: 1px solid var(--edge);
       }
 
+      /* A dragged divider can leave the diagram pane narrower than its row of
+         controls, so the row wraps rather than squeezing each button's label
+         onto two lines. */
       .bar div {
         margin-left: auto;
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         gap: 6px;
+      }
+
+      .bar button {
+        white-space: nowrap;
       }
 
       h2 {
@@ -497,13 +536,17 @@
       }
 
       @media (max-width: 760px) {
-        main {
+        main,
+        main.split {
           grid-template-columns: 1fr;
           grid-template-rows: 1fr 1fr;
         }
 
-        section + section {
-          border-left: 0;
+        #split {
+          display: none;
+        }
+
+        section:last-child {
           border-top: 1px solid var(--edge);
         }
 
@@ -675,6 +718,14 @@
         </details>
         <div id="error" role="status" aria-live="polite"></div>
       </section>
+      <div
+        id="split"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the source and diagram panes"
+        tabindex="0"
+        title="Drag to resize; double-click to reset"
+      ></div>
       <section>
         <div class="bar">
           <h2>Diagram</h2>
@@ -8643,6 +8694,95 @@ globalThis.reladraw = { compile, SourceError, highlightLine, THEME_NAMES, DEFAUL
         });
 
         window.addEventListener('resize', paint);
+
+        /* ---- the divider between the panes ---- */
+
+        var main = document.querySelector('main');
+        var split = document.getElementById('split');
+        var SPLIT = 'reladraw.split';
+
+        // Kept as a share of the width rather than pixels, so a remembered
+        // split still means the same thing in a wider or narrower window. The
+        // grid's own minimums stop either pane going below 240px.
+        function divide(share, keep) {
+          if (share === null) {
+            main.classList.remove('split');
+            main.style.removeProperty('--split');
+          } else {
+            share = Math.max(0.1, Math.min(0.9, share));
+            main.classList.add('split');
+            main.style.setProperty('--split', (share * 100).toFixed(2) + '%');
+            split.setAttribute('aria-valuenow', String(Math.round(share * 100)));
+          }
+          // The editor's two layers are sized from the textarea's width, so
+          // they have to be re-registered whenever that width changes.
+          paint();
+          if (!keep) return;
+          try {
+            if (share === null) localStorage.removeItem(SPLIT);
+            else localStorage.setItem(SPLIT, String(share));
+          } catch (e) {
+            /* not remembered, and nothing else is lost */
+          }
+        }
+
+        function shareAt(x) {
+          var box = main.getBoundingClientRect();
+          return (x - box.left) / box.width;
+        }
+
+        var dragging = false;
+
+        split.addEventListener('pointerdown', function (event) {
+          if (event.button !== 0) return;
+          dragging = true;
+          // Capture keeps the moves coming when the pointer outruns the thin
+          // divider; a flag rather than hasPointerCapture decides whether a drag
+          // is on, so losing capture never strands one.
+          try {
+            split.setPointerCapture(event.pointerId);
+          } catch (e) {
+            /* the moves still arrive while the pointer is over the divider */
+          }
+          split.classList.add('dragging');
+          document.body.classList.add('dragging');
+          event.preventDefault();
+        });
+
+        split.addEventListener('pointermove', function (event) {
+          if (!dragging) return;
+          divide(shareAt(event.clientX), false);
+        });
+
+        function letGo(event) {
+          if (!dragging) return;
+          dragging = false;
+          split.classList.remove('dragging');
+          document.body.classList.remove('dragging');
+          divide(shareAt(event.clientX), true);
+        }
+
+        split.addEventListener('pointerup', letGo);
+        split.addEventListener('pointercancel', letGo);
+
+        split.addEventListener('dblclick', function () {
+          divide(null, true);
+        });
+
+        split.addEventListener('keydown', function (event) {
+          var step = { ArrowLeft: -0.02, ArrowRight: 0.02 }[event.key];
+          if (!step) return;
+          var box = main.getBoundingClientRect();
+          divide((split.getBoundingClientRect().left - box.left) / box.width + step, true);
+          event.preventDefault();
+        });
+
+        try {
+          var remembered = parseFloat(localStorage.getItem(SPLIT));
+          if (remembered > 0 && remembered < 1) divide(remembered, false);
+        } catch (e) {
+          /* the default split, then */
+        }
 
         /* ---- drawing ---- */
 
