@@ -143,4 +143,4 @@ The license covers the code, not the name: it grants no rights to use "reladraw"
 
 ## Contributing
 
-Issues are wanted — especially a diagram you tried to write and could not. Pull requests are read but not merged yet, for a reason explained in [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues are wanted — especially a diagram you tried to write and could not. While the language is changing quickly, an issue is more useful than a pull request; [CONTRIBUTING.md](CONTRIBUTING.md) says why.

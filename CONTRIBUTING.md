@@ -28,24 +28,13 @@ Open all of these as [GitHub issues](https://github.com/reladraw/reladraw/issues
 
 ## About pull requests
 
-Please open an issue before writing a patch.
+Please open an issue rather than a pull request, at least for now.
 
-Pull requests are read, and I am grateful for them, but they are not being
-merged right now. This is not a closed-to-outsiders project and the reason is
-narrow. Under Apache-2.0, a contribution arrives licensed on the same terms as
-everything else here — you keep your copyright, and I would never ask you to
-sign it away. But that also means the project's license could then only ever
-stay Apache-2.0, and I am not yet ready to close off dual-licensing. A
-license-grant CLA is the normal way to keep that open, and there is not one yet
-because there has been nobody to sign it.
+reladraw is changing quickly. The language is still being designed, and the code underneath it gets reorganized often, sometimes several times a week. A patch written against today's code may not fit next week's, and I would rather not put anyone through several rounds of revising a pull request to chase a moving target.
 
-So if you have written something you want in, say so in the issue. When there is
-code that genuinely belongs in the project, that is when a license-grant CLA gets
-set up — and that is a good problem to have, not a rejection.
+If you do send one, thank you — it will be read. It shows exactly what you wanted and how you thought it should work, and that is useful. But don't be surprised, or feel bad, if the change lands written a different way. That is not a judgment on your code; it usually means it had to fit something else that was changing at the same time.
 
-In the meantime: the problem you hit is more valuable to this project than the
-patch that fixes it. A clear issue describing what broke will usually get the fix
-in faster than a PR would.
+The problem you hit is the most valuable part. A clear issue describing what you were trying to do will usually get the fix in faster than a pull request would.
 
 ## Getting the code running
 
