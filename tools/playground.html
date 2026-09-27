@@ -81,6 +81,7 @@
       header nav {
         margin-left: auto;
         display: flex;
+        align-items: center;
         gap: 16px;
         font-size: 13px;
       }
@@ -93,27 +94,6 @@
 
       a:hover {
         border-bottom-color: var(--muted);
-      }
-
-      /* The examples strip spans the page rather than sitting in the editor
-         pane, so a dozen of them stay on one row instead of wrapping into a
-         column beside a narrow textarea. */
-      #examples {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-wrap: wrap;
-        padding: 8px 18px;
-        border-bottom: 1px solid var(--edge);
-        background: var(--panel);
-      }
-
-      #examples span {
-        color: var(--muted);
-        font-size: 11px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-right: 6px;
       }
 
       button {
@@ -406,6 +386,116 @@
         border-bottom: 1px solid currentColor;
       }
 
+      /* The examples picker. A list of names beside one diagram drawn large:
+         the arrow keys step through the list and the preview follows, and
+         nothing in the editor changes until one is opened. A strip of buttons
+         did this before and wrapped onto a second row, and thumbnails were
+         ruled out because the examples run from 1520 wide to 1230 tall, which
+         at thumbnail size is an outline with no content. */
+      dialog {
+        width: min(1100px, calc(100vw - 32px));
+        height: min(720px, calc(100vh - 32px));
+        max-width: none;
+        max-height: none;
+        padding: 0;
+        border: 1px solid var(--edge);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--ink);
+        overflow: hidden;
+      }
+
+      dialog[open] {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        grid-template-rows: auto auto minmax(0, 1fr) auto;
+      }
+
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.6);
+      }
+
+      dialog .bar {
+        grid-column: 1 / -1;
+      }
+
+      #catalog {
+        grid-row: 2 / 4;
+        margin: 0;
+        padding: 6px 0;
+        list-style: none;
+        overflow-y: auto;
+        border-right: 1px solid var(--edge);
+        outline: 0;
+      }
+
+      #catalog li {
+        padding: 6px 18px;
+        font-size: 13px;
+        cursor: pointer;
+        border-left: 2px solid transparent;
+      }
+
+      #catalog li:hover {
+        background: #1c1c24;
+      }
+
+      #catalog li[aria-selected='true'] {
+        background: #22222c;
+        border-left-color: var(--syn-keyword);
+      }
+
+      #catalog:focus-visible li[aria-selected='true'] {
+        outline: 1px solid var(--muted);
+        outline-offset: -1px;
+      }
+
+      #about {
+        margin: 0;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--edge);
+        font-size: 13px;
+      }
+
+      #preview {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 18px;
+        background: var(--diagram);
+        display: flex;
+      }
+
+      #preview svg {
+        max-width: 100%;
+        max-height: 100%;
+        height: auto;
+        margin: auto;
+      }
+
+      dialog footer {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 18px;
+        border-top: 1px solid var(--edge);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      dialog footer button:last-child {
+        margin-left: auto;
+      }
+
+      kbd {
+        font: inherit;
+        color: var(--ink);
+        border: 1px solid var(--edge);
+        border-radius: 3px;
+        padding: 0 4px;
+      }
+
       @media (max-width: 760px) {
         main {
           grid-template-columns: 1fr;
@@ -416,6 +506,21 @@
           border-left: 0;
           border-top: 1px solid var(--edge);
         }
+
+        dialog[open] {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(0, 2fr) auto minmax(0, 3fr) auto;
+        }
+
+        #catalog {
+          grid-row: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--edge);
+        }
+
+        dialog footer span {
+          display: none;
+        }
       }
     </style>
   </head>
@@ -424,12 +529,25 @@
       <h1>reladraw</h1>
       <p>a diagram language where you say where things go</p>
       <nav>
+        <button id="browse" type="button" aria-haspopup="dialog">Examples</button>
         <a href="https://github.com/reladraw/reladraw">GitHub</a>
         <a href="https://github.com/reladraw/reladraw/blob/main/SYNTAX.md">Syntax</a>
       </nav>
     </header>
 
-    <div id="examples"><span>Examples</span></div>
+    <dialog id="examples" aria-label="Examples">
+      <div class="bar">
+        <h2>Examples</h2>
+        <div><button type="button" data-close>Close</button></div>
+      </div>
+      <ul id="catalog" role="listbox" tabindex="0" aria-label="Examples"></ul>
+      <p id="about" aria-live="polite"></p>
+      <div id="preview"></div>
+      <footer>
+        <span><kbd>↑</kbd> <kbd>↓</kbd> to preview · <kbd>Enter</kbd> to open · <kbd>Esc</kbd> to close</span>
+        <button type="button" id="choose">Open in editor</button>
+      </footer>
+    </dialog>
 
     <main>
       <section>
@@ -596,13 +714,20 @@
         // The seed leads, then whatever `./dev.sh playground` inlined from
         // examples/. The template on its own has neither the library nor the
         // examples, so it is never opened directly.
-        var EXAMPLES = [{ name: 'start', source: SEED }].concat(globalThis.reladrawExamples || []);
+        var EXAMPLES = [
+          { name: 'start', about: 'Three boxes, and the middle one holds the other two apart.', source: SEED },
+        ].concat(globalThis.reladrawExamples || []);
 
         var source = document.getElementById('source');
         var highlight = document.getElementById('highlight');
         var diagram = document.getElementById('diagram');
         var error = document.getElementById('error');
         var examples = document.getElementById('examples');
+        var browse = document.getElementById('browse');
+        var catalog = document.getElementById('catalog');
+        var preview = document.getElementById('preview');
+        var about = document.getElementById('about');
+        var choose = document.getElementById('choose');
         var zoom = document.getElementById('zoom');
         var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
@@ -610,6 +735,8 @@
 
         var drawn = '';
         var errorLine = null;
+        // The example the editor holds unchanged, or null once it is edited.
+        var current = null;
 
         /* ---- the source in the URL, so a diagram is a link ---- */
 
@@ -733,6 +860,14 @@
           diagram.classList.add('stale');
         }
 
+        // The pane around a drawing takes the drawing's own page color, so a
+        // light theme is not a white card floating on black. The <defs> are
+        // skipped: a gap crossing's mask opens with a white rect of its own.
+        function pageColor(svg) {
+          var page = /<rect [^>]*fill="([^"]+)"/.exec(svg.replace(/<defs>[\s\S]*?<\/defs>/, ''));
+          return page ? page[1] : '';
+        }
+
         function draw() {
           // Before the compile, not after: a half-typed line is a parse error
           // and its coloring still has to follow the cursor.
@@ -746,11 +881,7 @@
           }
           drawn = svg;
           diagram.innerHTML = svg;
-          // The pane around the drawing takes the drawing's own page color, so a
-          // light theme is not a white card floating on black. The <defs> are
-          // skipped: a gap crossing's mask opens with a white rect of its own.
-          var page = /<rect [^>]*fill="([^"]+)"/.exec(svg.replace(/<defs>[\s\S]*?<\/defs>/, ''));
-          diagram.style.background = page ? page[1] : '';
+          diagram.style.background = pageColor(svg);
           theme.value = themeOf(source.value) || reladraw.DEFAULT_THEME;
           show(null);
         }
@@ -786,15 +917,6 @@
           load(text, named(text));
         });
 
-        function mark(name) {
-          for (var i = 0; i < examples.children.length; i++) {
-            var button = examples.children[i];
-            if (button.tagName === 'BUTTON') {
-              button.setAttribute('aria-pressed', String(button.textContent === name));
-            }
-          }
-        }
-
         function named(text) {
           for (var i = 0; i < EXAMPLES.length; i++) {
             if (EXAMPLES[i].source === text) return EXAMPLES[i].name;
@@ -804,25 +926,99 @@
 
         function load(text, name) {
           source.value = text;
-          mark(name);
+          current = name;
           draw();
           stow();
         }
 
-        /* ---- the example strip ---- */
+        /* ---- the examples picker ---- */
 
-        EXAMPLES.forEach(function (example) {
-          var button = document.createElement('button');
-          button.type = 'button';
-          button.textContent = example.name;
-          button.setAttribute('aria-pressed', 'false');
-          button.addEventListener('click', function () {
-            load(example.source, example.name);
-            source.focus();
-            source.setSelectionRange(0, 0);
-            source.scrollTop = 0;
+        var chosen = 0;
+        var drawings = {};
+
+        EXAMPLES.forEach(function (example, i) {
+          var item = document.createElement('li');
+          item.id = 'example-' + i;
+          item.setAttribute('role', 'option');
+          item.textContent = example.name;
+          item.addEventListener('click', function () {
+            pick(i);
           });
-          examples.appendChild(button);
+          item.addEventListener('dblclick', function () {
+            open();
+          });
+          catalog.appendChild(item);
+        });
+
+        function pick(i) {
+          chosen = Math.max(0, Math.min(EXAMPLES.length - 1, i));
+          for (var j = 0; j < catalog.children.length; j++) {
+            catalog.children[j].setAttribute('aria-selected', String(j === chosen));
+          }
+          var item = catalog.children[chosen];
+          catalog.setAttribute('aria-activedescendant', item.id);
+          item.scrollIntoView({ block: 'nearest' });
+          var example = EXAMPLES[chosen];
+          if (!(example.name in drawings)) {
+            try {
+              drawings[example.name] = reladraw.compile(example.source);
+            } catch (e) {
+              drawings[example.name] = '';
+            }
+          }
+          about.textContent = example.about || '';
+          preview.innerHTML = drawings[example.name];
+          preview.style.background = pageColor(drawings[example.name]);
+        }
+
+        function open() {
+          var example = EXAMPLES[chosen];
+          examples.close();
+          load(example.source, example.name);
+          source.focus();
+          source.setSelectionRange(0, 0);
+          source.scrollTop = 0;
+        }
+
+        browse.addEventListener('click', function () {
+          var at = 0;
+          for (var i = 0; i < EXAMPLES.length; i++) {
+            if (EXAMPLES[i].name === current) at = i;
+          }
+          examples.showModal();
+          pick(at);
+          catalog.focus();
+        });
+
+        catalog.addEventListener('keydown', function (event) {
+          var step = { ArrowDown: 1, ArrowUp: -1, PageDown: 5, PageUp: -5 }[event.key];
+          if (step) {
+            pick(chosen + step);
+          } else if (event.key === 'Home') {
+            pick(0);
+          } else if (event.key === 'End') {
+            pick(EXAMPLES.length - 1);
+          } else if (event.key === 'Enter') {
+            open();
+          } else {
+            return;
+          }
+          event.preventDefault();
+        });
+
+        choose.addEventListener('click', open);
+
+        examples.querySelector('[data-close]').addEventListener('click', function () {
+          examples.close();
+        });
+
+        // A click on the backdrop lands on the dialog itself, outside its box.
+        examples.addEventListener('click', function (event) {
+          if (event.target !== examples) return;
+          var box = examples.getBoundingClientRect();
+          var inside =
+            event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+          if (!inside) examples.close();
         });
 
         /* ---- getting the drawing out ---- */
@@ -906,7 +1102,7 @@
         var pending = null;
         source.addEventListener('input', function () {
           draw();
-          mark(named(source.value));
+          current = named(source.value);
           // The URL and the stored copy trail the typing rather than following
           // every keystroke: neither is looked at until the page is left.
           if (pending) clearTimeout(pending);
@@ -927,7 +1123,7 @@
         // No stow() on the way in: an untouched visit keeps a clean URL, and the
         // page only starts writing one once there is an edit worth sharing.
         source.value = opening();
-        mark(named(source.value));
+        current = named(source.value);
         draw();
       })();
     </script>

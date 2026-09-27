@@ -95,6 +95,15 @@ Commands:
                                  into the editor without clicking. Run
                                  `playground` first — this looks at what is on
                                  disk, not at the template.
+  page-examples [out.png] [WxH] [n]
+                                 Screenshot the playground with the Examples
+                                 picker open and the nth example (default 1,
+                                 counting from 0) previewed. A headless browser
+                                 cannot click, so this screenshots a copy of the
+                                 page that opens the picker itself; docs/ is
+                                 untouched. Chrome will not lay a window out
+                                 much narrower than 500 pixels, so a narrower
+                                 WxH is cropped rather than reflowed.
   before <file> [ref]           Render one example as <ref> renders it, into
                                  examples/out/<name>-before.png. `regress` says
                                  that something moved; this is how you see what.
@@ -566,6 +575,18 @@ EOF
       screenshot "file://$PWD/docs/index.html${3:+#$3}" "$out" "${2:-1600x1000}" "0d0d10"
       echo "$out"
     fi
+    ;;
+  page-examples)
+    out="${1:-$(tmp_path examples png)}"
+    copy="$(tmp_path examples html)"
+    steps="${3:-1}"
+    # The page is self-contained, so a copy anywhere works. The script it gains
+    # opens the picker and steps down the list the way the arrow key would.
+    sed "s#</body>#<script>document.getElementById('browse').click();for(var i=0;i<$steps;i++)document.getElementById('catalog').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));</script></body>#" \
+      docs/index.html >"$copy"
+    screenshot "file://$copy" "$out" "${2:-1400x900}" "0d0d10"
+    rm -f "$copy"
+    echo "$out"
     ;;
   clicks)
     # What a browser would actually follow, at each point named. A destination

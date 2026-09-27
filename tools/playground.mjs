@@ -30,29 +30,35 @@ const target = process.argv[2] ? resolvePath(process.argv[2]) : join(root, 'docs
  */
 const EXPOSED = ['compile', 'SourceError', 'highlightLine', 'THEME_NAMES', 'DEFAULT_THEME'];
 
-// The examples the page offers, in the order the buttons appear. Every construct
-// in the language is demonstrated by one of these files and by nothing else the
-// page can reach, so leaving them out makes the playground a five-line demo. The
-// list is stated rather than globbed: the order is the point (the benchmark
-// first, then placement, appearance, edges), and a new file under examples/ is
-// not automatically something a stranger should be handed.
+// The examples the page offers, in the order its picker lists them. Every
+// construct in the language is demonstrated by one of these files and by nothing
+// else the page can reach, so leaving them out makes the playground a five-line
+// demo. The list is stated rather than globbed: the order is the point (the
+// benchmark first, then placement, appearance, edges), and a new file under
+// examples/ is not automatically something a stranger should be handed.
+//
+// Each file is listed under the name a stranger sees, with one short sentence
+// shown above its preview. The file names are coverage and are referred to
+// elsewhere; these are for someone who has not read the syntax yet, and say what
+// the picture shows. Keep the sentence to one line: the file's own opening
+// comment is there for anyone who wants more.
 const OFFERED = [
-  'arch',
-  'regions',
-  'gaps',
-  'snug',
-  'separation',
-  'contents',
-  'shapes',
-  'icons',
-  'overlays',
-  'frames',
-  'text',
-  'lanes',
-  'coincident',
-  'corridors',
-  'overhang',
-  'lines',
+  ['arch', 'architecture', "A home network's file sync and backups, redrawn from a draw.io diagram."],
+  ['regions', 'beside a group', 'A node placed against several others at once.'],
+  ['gaps', 'gap sizes', 'Tight and wide gaps, and which one wins when both ends ask.'],
+  ['snug', 'as close as allowed', 'A node sits as close to what it names as its placements allow.'],
+  ['separation', 'no overlaps', 'Nodes never overlap, even where nothing says which way to move.'],
+  ['contents', 'inside a container', 'How children line up in a container wider than they are.'],
+  ['shapes', 'shapes', 'The outlines a node can be drawn with, and the pictures it can be drawn as.'],
+  ['icons', 'icons', 'The seven icons, and the ways to use one.'],
+  ['overlays', 'sides and corners', 'Nodes placed against part of another node: a side, a corner, or its text.'],
+  ['frames', "on the parent's edge", "A child placed on its own container's side or corner."],
+  ['text', 'edge labels', "An edge's text widens the gap it crosses."],
+  ['lanes', 'nested edges', 'Edges between the same two sides nest instead of crossing.'],
+  ['coincident', 'parallel edges', 'Several edges between the same two nodes stay parallel.'],
+  ['corridors', 'through a gap', 'Edges sent through the gap between two named nodes.'],
+  ['overhang', 'outside the nodes', 'Edges that run past the nodes, and the page grows to hold them.'],
+  ['lines', 'line styles', 'Curved, square and straight lines, dashes, and how crossings are drawn.'],
 ];
 
 const IMPORT = /^import\s+[\s\S]*?\s+from\s+'([^']+)';$/gm;
@@ -134,9 +140,10 @@ const bundle = [
   '})();',
 ].join('\n');
 
-const catalogue = OFFERED.map((name) => ({
+const catalogue = OFFERED.map(([file, name, about]) => ({
   name,
-  source: readFileSync(join(examples, `${name}.reladraw`), 'utf8'),
+  about,
+  source: readFileSync(join(examples, `${file}.reladraw`), 'utf8'),
 }));
 
 const page = readFileSync(template, 'utf8');
