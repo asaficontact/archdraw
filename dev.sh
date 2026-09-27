@@ -57,6 +57,12 @@ Commands:
                                  directory and render a diagram with it. The
                                  stranger's-first-command check, run before
                                  every release.
+  check-version <version>       Refuse unless README.md, SYNTAX.md's title and
+                                 changelog, and the skill's copy of SYNTAX.md
+                                 all say <version>. Run by `npm version` as the
+                                 preversion script, so a release whose docs
+                                 name the old number stops before anything is
+                                 bumped, committed or tagged.
   skill                         Refresh the copy of SYNTAX.md that the agent
                                  skill in .claude/skills/reladraw/ carries as
                                  its reference. Re-run after editing SYNTAX.md,
@@ -369,6 +375,29 @@ case "$cmd" in
       exit 1
     fi
     rm -rf "$t"
+    ;;
+  check-version)
+    # `npm version` bumps package.json and nothing else, and the prose that
+    # names the version ships in the tarball — README.md is the npm page. 0.8.0
+    # went out saying 0.7.1 because these edits were skipped, so the check sits
+    # where it cannot be skipped: in the command that makes the release.
+    v="${1:?usage: ./dev.sh check-version <version>}"
+    bad=0
+    grep -q "^Version $v\. " README.md \
+      || { echo "README.md: the Status line does not say \"Version $v.\"" >&2; bad=1; }
+    head -1 SYNTAX.md | grep -q "— $v\$" \
+      || { echo "SYNTAX.md: the title does not end \"— $v\"" >&2; bad=1; }
+    grep -q "^\*\*$v\*\*\$" SYNTAX.md \
+      || { echo "SYNTAX.md: the changelog has no **$v** entry" >&2; bad=1; }
+    ! grep -q '^\*\*Unreleased\*\*$' SYNTAX.md \
+      || { echo "SYNTAX.md: the changelog still has an **Unreleased** entry" >&2; bad=1; }
+    cmp -s SYNTAX.md .claude/skills/reladraw/reference/syntax.md \
+      || { echo "the skill's copy of SYNTAX.md is stale: run ./dev.sh skill" >&2; bad=1; }
+    if [ "$bad" = 1 ]; then
+      echo "not releasing $v — update these, commit, then run npm version again" >&2
+      exit 1
+    fi
+    echo "README.md, SYNTAX.md and the skill all say $v"
     ;;
   skill)
     # The agent skill ships as a directory somebody copies into their own

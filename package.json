@@ -34,6 +34,7 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
+    "preversion": "./dev.sh check-version \"$npm_new_version\"",
     "dev": "tsc --watch",
     "example": "npm run build && node dist/cli.js examples/arch.reladraw -o examples/out/arch.svg"
   },
