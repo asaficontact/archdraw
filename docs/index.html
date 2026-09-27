@@ -3903,6 +3903,11 @@ const ROUTE_RADIUS = 20;
 const ROUTE_STUB = ROUTE_RADIUS + ARROW_LENGTH;
 /** The narrowest gap a route will cross over in, between two nodes it passes on opposite sides. */
 const CROSSING_ROOM = ATTACH_MARGIN * 2;
+function axesAcross(across) {
+    return across === 'y'
+        ? { across, run: 'x', make: (along, level) => ({ x: along, y: level }) }
+        : { across, run: 'y', make: (along, level) => ({ x: level, y: along }) };
+}
 /**
  * Route every edge that says which side of something it passes.
  *
@@ -3916,6 +3921,11 @@ const CROSSING_ROOM = ATTACH_MARGIN * 2;
  * nodes, and if there is no gap, the file is refused rather than drawn through
  * a box. No clause says an order: the line meets the nodes in the order they
  * sit along its way.
+ *
+ * Above and below are passed travelling across the page, left and right
+ * travelling up or down it, so an edge naming both kinds turns between such
+ * runs, as few times as keeps every clause. Which comes first is the named
+ * side's to say, and across when no end names one.
  *
  * Nothing here moves a node or looks for a path. Every level is read off where
  * the named nodes landed, as a `between` channel is, and the only other nodes
@@ -3932,183 +3942,387 @@ function planRoutes(edges, nodes, ends, measurer, fontSize) {
 }
 function planRoute(edge, passes, nodes, { start, end }, measurer, fontSize) {
     const subject = `edge ${edge.from.name} -> ${edge.to.name}`;
-    // Above and below are passed travelling across the page, left and right
-    // travelling up or down it. One edge keeps to one.
-    const across = passes[0].direction === 'above' || passes[0].direction === 'below' ? 'y' : 'x';
-    const other = passes.find((pass) => sideAxis(pass) !== across);
-    if (other) {
-        throw new SourceError(`${subject}: "${passes[0].written}" and "${other.written}" — passing things above and below ` +
-            'takes the line across the page, and passing them left and right takes it up or down, so ' +
-            'one edge says one or the other', edge.line);
-    }
-    const run = across === 'y' ? 'x' : 'y';
-    const make = (along, level) => run === 'x' ? { x: along, y: level } : { x: level, y: along };
     const a = faceOf(edge.from);
     const b = faceOf(edge.to);
     const named = (anchor, face) => anchor.side === undefined ? centerOf(face) : anchor;
-    const travel = Math.sign(named(end, b)[run] - named(start, a)[run]) || 1;
-    // Where the line reaches along its way at each end, before it turns onto a
-    // stretch. Enough to tell which nodes it passes.
-    const reach = (anchor, face) => {
-        const along = run === 'x' ? anchor.tx : anchor.ty;
-        return anchor.side !== undefined && along !== 0
-            ? anchor[run] + along * ROUTE_STUB
-            : named(anchor, face)[run];
-    };
-    const first = reach(start, a);
-    const last = reach(end, b);
-    const low = Math.min(first, last);
-    const high = Math.max(first, last);
     // Far enough out that the line reads as passing. The one stretch carrying
     // the text is held further out, so that half the text, centered on the line,
     // still clears the box beside it.
     const clear = SEPARATION_GAP;
-    const textClear = Math.max(clear, laneExtent(edge, across, measurer, fontSize) / 2 + ATTACH_MARGIN);
-    const clauses = passes.map((pass) => {
-        const box = boundingBox(pass.nodes.map(faceOf));
-        if (hi(box, run) <= low || lo(box, run) >= high) {
-            throw new SourceError(`${subject}: the line never passes ${quoteNames(pass.nodes)}, so "${pass.written}" says nothing ` +
-                'about it', edge.line);
-        }
-        const further = pass.direction === 'below' || pass.direction === 'right';
-        return {
-            pass,
-            from: lo(box, run),
-            to: hi(box, run),
-            bound: further ? hi(box, across) + clear : lo(box, across) - clear,
-            further,
-        };
-    });
-    // Cut the way into pieces at every place a clause starts or stops binding,
-    // and give each piece the band its clauses leave the line.
-    const cuts = [...new Set([low, high, ...clauses.flatMap((c) => [c.from, c.to])])]
-        .filter((at) => at >= low && at <= high)
-        .sort((p, q) => (p - q) * travel);
-    const pieces = cuts.slice(0, -1).map((from, index) => {
-        const to = cuts[index + 1];
-        const middle = (from + to) / 2;
-        const binding = clauses.filter((c) => c.from < middle && c.to > middle);
-        const floor = binding.filter((c) => c.further).sort((p, q) => q.bound - p.bound)[0];
-        const ceiling = binding.filter((c) => !c.further).sort((p, q) => p.bound - q.bound)[0];
-        if (floor && ceiling && floor.bound > ceiling.bound) {
-            const grouped = [floor, ceiling].some((c) => c.pass.nodes.length > 1);
-            throw new SourceError(`${subject}: "${floor.pass.written}" and "${ceiling.pass.written}" cannot both hold — there ` +
-                'is a stretch where the line is alongside both, and it cannot be ' +
-                `${sideWord(floor.pass)} ${quoteNames(floor.pass.nodes)} and ${sideWord(ceiling.pass)} ` +
-                `${quoteNames(ceiling.pass.nodes)} at the same point. Drop one` +
-                (grouped
-                    ? ', or name the nodes in separate clauses so the line may cross over between them'
-                    : ''), edge.line);
-        }
-        return {
-            from,
-            to,
-            lo: floor?.bound ?? -Infinity,
-            hi: ceiling?.bound ?? Infinity,
-            floor,
-            ceiling,
-        };
-    });
-    const stretches = [];
-    let current = { lo: -Infinity, hi: Infinity, first: 0, last: 0, level: 0 };
-    pieces.forEach((piece, index) => {
-        const lower = Math.max(current.lo, piece.lo);
-        const upper = Math.min(current.hi, piece.hi);
-        if (lower <= upper) {
-            Object.assign(current, { lo: lower, hi: upper, last: index });
-        }
-        else {
-            stretches.push(current);
-            current = { lo: piece.lo, hi: piece.hi, first: index, last: index, level: 0 };
-        }
-    });
-    stretches.push(current);
-    // Each stretch sits as near the two ends' own level as its band allows, and
-    // a node lying on it pushes it on the way its clause already points.
     const inWay = nodes.filter((node) => !(contains(node, edge.from) && contains(node, edge.to)));
-    const target = (centerOf(a)[across] + centerOf(b)[across]) / 2;
-    const length = (stretch) => Math.abs(pieces[stretch.last].to - pieces[stretch.first].from);
-    const carrier = stretches.reduce((best, stretch) => (length(stretch) > length(best) ? stretch : best));
-    for (const stretch of stretches) {
-        const room = stretch === carrier && edge.lines !== undefined ? textClear : clear;
-        const extra = room - clear;
-        const lower = stretch.lo + extra;
-        const upper = stretch.hi - extra;
-        stretch.level = lower <= upper
-            ? Math.min(Math.max(target, lower), upper)
-            : (stretch.lo + stretch.hi) / 2;
-        const push = stretch.hi === Infinity ? 1 : stretch.lo === -Infinity ? -1 : 0;
-        if (push === 0)
-            continue;
-        const from = Math.min(pieces[stretch.first].from, pieces[stretch.last].to);
-        const to = Math.max(pieces[stretch.first].from, pieces[stretch.last].to);
-        for (let moved = true; moved;) {
-            moved = false;
-            for (const node of inWay) {
-                const face = faceOf(node);
-                if (lo(face, run) >= to || hi(face, run) <= from)
-                    continue;
-                if (lo(face, across) >= stretch.level + room || hi(face, across) <= stretch.level - room) {
-                    continue;
-                }
-                stretch.level = push > 0 ? hi(face, across) + room : lo(face, across) - room;
-                moved = true;
+    // Above and below are passed travelling across the page, left and right
+    // travelling up or down it. An edge naming only one kind is one section.
+    const acrossPasses = passes.filter((pass) => sideAxis(pass) === 'y');
+    const downPasses = passes.filter((pass) => sideAxis(pass) === 'x');
+    if (acrossPasses.length === 0 || downPasses.length === 0) {
+        const axes = axesAcross(sideAxis(passes[0]));
+        const travel = Math.sign(named(end, b)[axes.run] - named(start, a)[axes.run]) || 1;
+        const section = cut(axes, passes, reach(start, a, axes), reach(end, b, axes), travel);
+        const carrier = longest(section.stretches);
+        settle(section, (centerOf(a)[axes.across] + centerOf(b)[axes.across]) / 2, carrier);
+        return finish([
+            ...approach(start, a, axes, section.stretches[0].level, travel),
+            ...crossings(section),
+            ...approach(end, b, axes, section.stretches[section.stretches.length - 1].level, -travel).reverse(),
+        ], carrier, axes);
+    }
+    // Both kinds: the line turns between travelling across the page and
+    // travelling down it, as often as its clauses need. A side named at an end
+    // says which it does first; with none named, it goes across first. The
+    // fewest turns that keep every clause win, and at each count the other
+    // order is tried before adding a turn. If every attempt fails the same way,
+    // that is the error; if they fail differently, no one of them is the reason
+    // and the error names every clause.
+    const sideways = (anchor) => anchor.side === undefined ? undefined : anchor.side === 'left' || anchor.side === 'right';
+    const acrossFirst = sideways(start) ?? !(sideways(end) ?? false);
+    const refusals = [];
+    for (const count of [2, 3, 4]) {
+        for (const order of [acrossFirst, !acrossFirst]) {
+            try {
+                return turned(order, count);
+            }
+            catch (error) {
+                if (!(error instanceof SourceError))
+                    throw error;
+                refusals.push(error);
             }
         }
     }
-    // Between two stretches the line crosses over, in whatever run of pieces at
-    // the end of the first leaves room for both levels.
-    const points = approach(start, a, stretches[0].level, travel);
-    for (let index = 0; index + 1 < stretches.length; index += 1) {
-        const here = stretches[index];
-        const next = stretches[index + 1];
-        let open = here.last + 1;
-        while (open > here.first &&
-            pieces[open - 1].lo <= next.level &&
-            pieces[open - 1].hi >= next.level) {
-            open -= 1;
+    if (refusals.every((refusal) => refusal.message === refusals[0].message))
+        throw refusals[0];
+    const written = passes.map((pass) => `"${pass.written}"`);
+    throw new SourceError(`${subject}: no line keeps ${written.slice(0, -1).join(', ')} and ${written[written.length - 1]} ` +
+        'all at once, whichever way it turns — each way misses one of those nodes or runs into one. ' +
+        'Give the nodes more room, or drop a clause', edge.line);
+    /**
+     * A route in `count` sections, alternating across and down, joined at
+     * corners. Each section is planned as an edge naming one kind is, running
+     * from the level of the section before it to the level of the one after,
+     * and each clause binds every section of its kind that passes its node.
+     * The first and last keep as near their own ends as their clauses allow,
+     * so with nothing in the way two sections make an L through the corner
+     * level with both ends; a section between hugs its own clauses. Where the
+     * corners land depends on every section, so they are planned in turn
+     * until none moves.
+     */
+    function turned(acrossFirst, count) {
+        const axes = Array.from({ length: count }, (_, index) => axesAcross((index % 2 === 0) === acrossFirst ? 'y' : 'x'));
+        const last = count - 1;
+        const targets = axes.map(({ across }, index) => index === 0
+            ? centerOf(a)[across]
+            : index === last
+                ? centerOf(b)[across]
+                : (centerOf(a)[across] + centerOf(b)[across]) / 2);
+        // Each section's first and last level, which bound its neighbours' runs.
+        const firstLevels = [...targets];
+        const lastLevels = [...targets];
+        const startAt = reach(start, a, axes[0]);
+        const endAt = reach(end, b, axes[last]);
+        // A section starts or ends at the middle of its end's own node, which
+        // must not push it: the line leaves that node from the side facing it.
+        const obstacles = inWay.filter((node) => !contains(node, edge.from) && !contains(node, edge.to));
+        const near = new Set(passes.flatMap((pass) => pass.nodes));
+        // Which stretch carries the text: its section and index, from the last round.
+        let carries;
+        let sections = [];
+        let travels = [];
+        let bound = new Set();
+        for (let round = 0; round < 8; round += 1) {
+            let moved = false;
+            sections = [];
+            travels = [];
+            bound = new Set();
+            axes.forEach((section, index) => {
+                const from = index === 0 ? startAt : lastLevels[index - 1];
+                const to = index === last ? endAt : firstLevels[index + 1];
+                const travel = Math.sign((index === last ? named(end, b)[section.run] : to) -
+                    (index === 0 ? named(start, a)[section.run] : from)) || 1;
+                const low = Math.min(from, to);
+                const high = Math.max(from, to);
+                const mine = passes.filter((pass) => {
+                    const box = boundingBox(pass.nodes.map(faceOf));
+                    return sideAxis(pass) === section.across && hi(box, section.run) > low && lo(box, section.run) < high;
+                });
+                mine.forEach((pass) => bound.add(pass));
+                const planned = cut(section, mine, from, to, travel);
+                const carrier = carries?.[0] === index ? planned.stretches[carries[1]] : undefined;
+                settle(planned, targets[index], carrier, obstacles, index > 0 && index < last, near);
+                const first = planned.stretches[0].level;
+                const final = planned.stretches[planned.stretches.length - 1].level;
+                if (Math.abs(first - firstLevels[index]) >= 0.5 || Math.abs(final - lastLevels[index]) >= 0.5) {
+                    moved = true;
+                }
+                firstLevels[index] = first;
+                lastLevels[index] = final;
+                sections.push(planned);
+                travels.push(travel);
+            });
+            let wanted;
+            if (edge.lines !== undefined) {
+                sections.forEach((section, index) => {
+                    const best = longest(section.stretches);
+                    if (!wanted || length(best) > length(sections[wanted[0]].stretches[wanted[1]])) {
+                        wanted = [index, section.stretches.indexOf(best)];
+                    }
+                });
+            }
+            const settled = round > 0 && !moved && wanted?.[0] === carries?.[0] && wanted?.[1] === carries?.[1];
+            carries = wanted;
+            if (settled)
+                break;
         }
-        const from = open <= here.last ? pieces[open].from : pieces[here.last].to;
-        const to = pieces[here.last].to;
-        if (Math.abs(to - from) < CROSSING_ROOM) {
-            const behind = [...pieces.slice(here.first, here.last + 1)]
-                .reverse()
-                .map((piece) => piece.floor ?? piece.ceiling)
-                .find((clause) => clause !== undefined);
-            const entering = pieces[next.first];
-            const ahead = (next.level > here.level ? entering.floor : entering.ceiling) ??
-                entering.floor ?? entering.ceiling;
-            throw new SourceError(`${subject}: to pass "${behind.pass.written}" and "${ahead.pass.written}" the line has to ` +
-                `cross over between ${quoteNames(behind.pass.nodes)} and ${quoteNames(ahead.pass.nodes)}, and there ` +
-                'is no room between them — give the placement between them a gap, or drop one of the two', edge.line);
+        const unpassed = passes.find((pass) => !bound.has(pass));
+        if (unpassed) {
+            throw new SourceError(`${subject}: the line never passes ${quoteNames(unpassed.nodes)}, so "${unpassed.written}" says ` +
+                'nothing about it', edge.line);
         }
-        const at = (from + to) / 2;
-        points.push(make(at, here.level), make(at, next.level));
+        const points = [...approach(start, a, axes[0], firstLevels[0], travels[0])];
+        sections.forEach((section, index) => {
+            points.push(...crossings(section));
+            if (index < last)
+                points.push(section.axes.make(firstLevels[index + 1], lastLevels[index]));
+        });
+        points.push(...approach(end, b, axes[last], lastLevels[last], -travels[last]).reverse());
+        const broken = breaks(points);
+        if (broken) {
+            throw new SourceError(`${subject}: a line passing things both above or below and left or right has to turn, and ` +
+                `no way it can turn keeps "${broken.written}" — drop that clause, or one of the others`, edge.line);
+        }
+        const [which, index] = carries ?? [0, 0];
+        const carrier = edge.lines === undefined ? undefined : sections[which].stretches[index];
+        return finish(points, carrier, axes[which]);
     }
-    points.push(...approach(end, b, stretches[stretches.length - 1].level, -travel).reverse());
-    const drawn = tidyRoute(points);
-    // The text rides at the middle of the piece that lies on the stretch held
-    // clear for it.
-    let mid = centerOf(boundingBox([a, b]));
-    let best = -1;
-    for (let index = 0; index + 1 < drawn.length; index += 1) {
-        const [p, q] = [drawn[index], drawn[index + 1]];
-        if (Math.abs(p[across] - carrier.level) > 0.5 || Math.abs(q[across] - carrier.level) > 0.5) {
-            continue;
+    /** The first clause the drawn line breaks, wherever it lies alongside that clause's nodes. */
+    function breaks(points) {
+        for (const pass of passes) {
+            const box = boundingBox(pass.nodes.map(faceOf));
+            const across = sideAxis(pass);
+            const run = across === 'y' ? 'x' : 'y';
+            const further = pass.direction === 'below' || pass.direction === 'right';
+            for (let index = 0; index + 1 < points.length; index += 1) {
+                const [p, q] = [points[index], points[index + 1]];
+                const alongside = Math.abs(p[run] - q[run]) < 0.5
+                    ? p[run] > lo(box, run) + 0.5 && p[run] < hi(box, run) - 0.5
+                    : Math.min(Math.max(p[run], q[run]), hi(box, run)) -
+                        Math.max(Math.min(p[run], q[run]), lo(box, run)) > 0.5;
+                if (!alongside)
+                    continue;
+                const kept = further
+                    ? Math.min(p[across], q[across]) >= hi(box, across) - 0.5
+                    : Math.max(p[across], q[across]) <= lo(box, across) + 0.5;
+                if (!kept)
+                    return pass;
+            }
         }
-        const length = Math.abs(q[run] - p[run]);
-        if (length > best) {
-            best = length;
-            mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+        return undefined;
+    }
+    /**
+     * Where the line reaches along a run at one end, before it turns onto a
+     * stretch. Enough to tell which nodes it passes.
+     */
+    function reach(anchor, face, { run }) {
+        const along = run === 'x' ? anchor.tx : anchor.ty;
+        return anchor.side !== undefined && along !== 0
+            ? anchor[run] + along * ROUTE_STUB
+            : named(anchor, face)[run];
+    }
+    function length(stretch) {
+        return Math.abs(stretch.to - stretch.from);
+    }
+    function longest(stretches) {
+        return stretches.reduce((best, stretch) => (length(stretch) > length(best) ? stretch : best));
+    }
+    /**
+     * The way from `first` to `last` along a run, cut wherever a clause starts
+     * or stops binding, with each piece given the band its clauses leave the
+     * line, and consecutive pieces grouped into stretches that can share one
+     * level. Levels are left for `settle`.
+     */
+    function cut(axes, passes, first, last, travel) {
+        const { across, run } = axes;
+        const low = Math.min(first, last);
+        const high = Math.max(first, last);
+        const clauses = passes.map((pass) => {
+            const box = boundingBox(pass.nodes.map(faceOf));
+            if (hi(box, run) <= low || lo(box, run) >= high) {
+                throw new SourceError(`${subject}: the line never passes ${quoteNames(pass.nodes)}, so "${pass.written}" says nothing ` +
+                    'about it', edge.line);
+            }
+            const further = pass.direction === 'below' || pass.direction === 'right';
+            return {
+                pass,
+                from: lo(box, run),
+                to: hi(box, run),
+                bound: further ? hi(box, across) + clear : lo(box, across) - clear,
+                further,
+            };
+        });
+        // Cut the way into pieces at every place a clause starts or stops binding,
+        // and give each piece the band its clauses leave the line.
+        const cuts = [...new Set([low, high, ...clauses.flatMap((c) => [c.from, c.to])])]
+            .filter((at) => at >= low && at <= high)
+            .sort((p, q) => (p - q) * travel);
+        const pieces = cuts.slice(0, -1).map((from, index) => {
+            const to = cuts[index + 1];
+            const middle = (from + to) / 2;
+            const binding = clauses.filter((c) => c.from < middle && c.to > middle);
+            const floor = binding.filter((c) => c.further).sort((p, q) => q.bound - p.bound)[0];
+            const ceiling = binding.filter((c) => !c.further).sort((p, q) => p.bound - q.bound)[0];
+            if (floor && ceiling && floor.bound > ceiling.bound) {
+                const grouped = [floor, ceiling].some((c) => c.pass.nodes.length > 1);
+                throw new SourceError(`${subject}: "${floor.pass.written}" and "${ceiling.pass.written}" cannot both hold — there ` +
+                    'is a stretch where the line is alongside both, and it cannot be ' +
+                    `${sideWord(floor.pass)} ${quoteNames(floor.pass.nodes)} and ${sideWord(ceiling.pass)} ` +
+                    `${quoteNames(ceiling.pass.nodes)} at the same point. Drop one` +
+                    (grouped
+                        ? ', or name the nodes in separate clauses so the line may cross over between them'
+                        : ''), edge.line);
+            }
+            return {
+                from,
+                to,
+                lo: floor?.bound ?? -Infinity,
+                hi: ceiling?.bound ?? Infinity,
+                floor,
+                ceiling,
+            };
+        });
+        // A way of no length, as the first section of a turned route can be when
+        // the corner is level with its start, is one piece binding nothing.
+        if (pieces.length === 0) {
+            pieces.push({ from: low, to: high, lo: -Infinity, hi: Infinity, floor: undefined, ceiling: undefined });
+        }
+        // Consecutive pieces share one level for as long as their bands overlap.
+        const stretches = [];
+        let current = { lo: -Infinity, hi: Infinity, first: 0, last: 0, from: 0, to: 0, level: 0 };
+        pieces.forEach((piece, index) => {
+            const lower = Math.max(current.lo, piece.lo);
+            const upper = Math.min(current.hi, piece.hi);
+            if (lower <= upper) {
+                Object.assign(current, { lo: lower, hi: upper, last: index });
+            }
+            else {
+                stretches.push(current);
+                current = { lo: piece.lo, hi: piece.hi, first: index, last: index, from: 0, to: 0, level: 0 };
+            }
+        });
+        stretches.push(current);
+        for (const stretch of stretches) {
+            stretch.from = pieces[stretch.first].from;
+            stretch.to = pieces[stretch.last].to;
+        }
+        return { axes, pieces, stretches };
+    }
+    /**
+     * Each stretch sits as near `target` as its band allows, and a node lying
+     * on it pushes it on the way its clause already points. `carrier` is the
+     * stretch held clear for the text, if this section has it.
+     */
+    function settle({ axes: { across, run }, stretches }, target, carrier, obstacles = inWay, hug = false, near = new Set()) {
+        const textClear = Math.max(clear, laneExtent(edge, across, measurer, fontSize) / 2 + ATTACH_MARGIN);
+        for (const stretch of stretches) {
+            const room = stretch === carrier && edge.lines !== undefined ? textClear : clear;
+            const extra = room - clear;
+            const lower = stretch.lo + extra;
+            const upper = stretch.hi - extra;
+            // A stretch hugging its clauses sits as close as its one bound allows.
+            const wanted = !hug
+                ? target
+                : stretch.hi === Infinity && stretch.lo !== -Infinity
+                    ? lower
+                    : stretch.lo === -Infinity && stretch.hi !== Infinity
+                        ? upper
+                        : target;
+            stretch.level = lower <= upper
+                ? Math.min(Math.max(wanted, lower), upper)
+                : (stretch.lo + stretch.hi) / 2;
+            const push = stretch.hi === Infinity ? 1 : stretch.lo === -Infinity ? -1 : 0;
+            if (push === 0)
+                continue;
+            const from = Math.min(stretch.from, stretch.to);
+            const to = Math.max(stretch.from, stretch.to);
+            for (let moved = true; moved;) {
+                moved = false;
+                for (const node of obstacles) {
+                    const face = faceOf(node);
+                    if (lo(face, run) >= to || hi(face, run) <= from)
+                        continue;
+                    // A node the edge names is one it is meant to go close by, so it
+                    // keeps the line only as far off as a crossing does.
+                    const off = near.has(node) && room === clear ? ATTACH_MARGIN : room;
+                    if (lo(face, across) >= stretch.level + off || hi(face, across) <= stretch.level - off) {
+                        continue;
+                    }
+                    stretch.level = push > 0 ? hi(face, across) + off : lo(face, across) - off;
+                    moved = true;
+                }
+            }
         }
     }
-    return { points: drawn, mid };
+    /**
+     * Between two stretches the line crosses over, in whatever run of pieces at
+     * the end of the first leaves room for both levels.
+     */
+    function crossings({ axes: { make }, pieces, stretches }) {
+        const points = [];
+        for (let index = 0; index + 1 < stretches.length; index += 1) {
+            const here = stretches[index];
+            const next = stretches[index + 1];
+            let open = here.last + 1;
+            while (open > here.first &&
+                pieces[open - 1].lo <= next.level &&
+                pieces[open - 1].hi >= next.level) {
+                open -= 1;
+            }
+            const from = open <= here.last ? pieces[open].from : pieces[here.last].to;
+            const to = pieces[here.last].to;
+            if (Math.abs(to - from) < CROSSING_ROOM) {
+                const behind = [...pieces.slice(here.first, here.last + 1)]
+                    .reverse()
+                    .map((piece) => piece.floor ?? piece.ceiling)
+                    .find((clause) => clause !== undefined);
+                const entering = pieces[next.first];
+                const ahead = (next.level > here.level ? entering.floor : entering.ceiling) ??
+                    entering.floor ?? entering.ceiling;
+                throw new SourceError(`${subject}: to pass "${behind.pass.written}" and "${ahead.pass.written}" the line has to ` +
+                    `cross over between ${quoteNames(behind.pass.nodes)} and ${quoteNames(ahead.pass.nodes)}, and there ` +
+                    'is no room between them — give the placement between them a gap, or drop one of the two', edge.line);
+            }
+            const at = (from + to) / 2;
+            points.push(make(at, here.level), make(at, next.level));
+        }
+        return points;
+    }
+    /**
+     * The route drawn through `points`, with its text at the middle of the
+     * piece that lies on the stretch held clear for it.
+     */
+    function finish(points, carrier, { across, run }) {
+        const drawn = tidyRoute(points);
+        let mid = centerOf(boundingBox([a, b]));
+        let best = -1;
+        for (let index = 0; index + 1 < drawn.length; index += 1) {
+            const [p, q] = [drawn[index], drawn[index + 1]];
+            if (!carrier)
+                break;
+            if (Math.abs(p[across] - carrier.level) > 0.5 || Math.abs(q[across] - carrier.level) > 0.5) {
+                continue;
+            }
+            const length = Math.abs(q[run] - p[run]);
+            if (length > best) {
+                best = length;
+                mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+            }
+        }
+        return { points: drawn, mid };
+    }
     /**
      * The points from one end of the line to the level of its nearest stretch.
      * `toward` is the way the line heads along its run from this end.
      */
-    function approach(given, face, level, toward) {
-        const anchor = given.side !== undefined ? given : leaving(face, level, toward);
+    function approach(given, face, axes, level, toward) {
+        const { across, run, make } = axes;
+        const anchor = given.side !== undefined ? given : leaving(face, axes, level, toward);
         const along = run === 'x' ? anchor.tx : anchor.ty;
         const out = across === 'x' ? anchor.tx : anchor.ty;
         if (along !== 0) {
@@ -4128,7 +4342,7 @@ function planRoute(edge, passes, nodes, { start, end }, measurer, fontSize) {
      * An end naming no side leaves from the one facing the level it is going
      * to, or, when the level is alongside the node, the one facing its way.
      */
-    function leaving(face, level, toward) {
+    function leaving(face, { across, run }, level, toward) {
         const center = centerOf(face);
         const side = level > hi(face, across)
             ? across === 'y' ? 'bottom' : 'right'

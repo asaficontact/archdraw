@@ -534,12 +534,39 @@ edge t1 -> t2  from: bottom  to: bottom  below t1  above peak  below t2
 
 Those three clauses let the line rise over Peak in the gap. Write `below t1 and t2  above peak` instead and it is refused, because Peak sits over the stretch `below t1 and t2` covers, and the line cannot be below the one and above the other at the same point.
 
+One edge may pass some nodes above or below and others left or right. Passing above or below is done travelling across the page, and passing left or right travelling up or down it, so the line turns between the two, as few times as it can:
+
+```
+node a "A"
+node m "M"  right of a
+node n "N"  below m  right of m
+node b "B"  below n  right of n
+edge a -> b  below m  left of n
+```
+
+That line leaves the bottom of A, runs across just under M, turns down on N's left, and runs across into B. The clauses read as before: `left of n` binds only where the line is level with N, so the last stretch passing under N is not held to it.
+
+A side named at an end says which way the line goes first: `from: right` starts it across, `from: bottom` starts it down. With no side named at either end it goes across first, then down.
+
+Clauses of one kind may sit on different legs. Here the line goes over P on the way out, down past N, and under M on the way in, turning twice:
+
+```
+node a "A"
+node p "P"  right of a
+node n "N"  below p  right of p
+node m "M"  below n  right of n
+node b "B"  right of m
+edge a -> b  from: right  to: bottom  above p  right of n  below m
+```
+
+Each clause binds whichever legs pass its node, so a node wide enough to sit under two legs holds both of them to its side.
+
 Refused, each by name:
 
 - **Clauses that cannot all hold** at one point, as above.
 - **A crossing with no room.** Two clauses on opposite sides need a gap between their nodes to cross over in. Placed flush — `gap: 0` — there is none, and the error says to give the placement a gap or drop a clause. The gap is never opened for the line: you wrote how far apart those two are.
 - **A node the line never passes.** `below z` on a line that never goes by Z says nothing.
-- **Both pairs on one edge.** Passing things above and below takes a line across the page, and passing them left and right takes it up or down; one edge says one or the other.
+- **Both kinds where no way of turning keeps them all.** The error names the clauses, or the one reason if every way fails for the same one.
 - **`between` with a side.** An edge passing between two things already has a side of each.
 - **A part of a node, or a gap.** A line passes a whole box, and passes it as close as reads clearly.
 
@@ -949,7 +976,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 **Unreleased**
 
 - An edge whose ends face away from each other, such as `from: left  to: right` with the far node to the right, goes around instead of through its own nodes: through the gap between them if there is room, over the top of the row if not.
-- `above`, `below`, `left of` and `right of` on an edge say which side of a node the line passes: `edge a -> b  below c`. Any number, one per node; one naming several nodes covers the stretch between them too. Clauses that cannot all be drawn are refused with the reason.
+- `above`, `below`, `left of` and `right of` on an edge say which side of a node the line passes: `edge a -> b  below c`. Any number, one per node; one naming several nodes covers the stretch between them too. One edge may mix the two kinds, `below m  left of n`, and the line turns between them as often as they need. Clauses that cannot all be drawn are refused with the reason.
 
 **0.5.0**
 
