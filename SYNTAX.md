@@ -1,4 +1,4 @@
-# Syntax reference — 0.8.0
+# Syntax reference — 0.8.1
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1021,7 +1021,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.8.1**
 
 - A fix, no syntax change. An edge naming a side at both ends could be drawn through one of its own nodes in two cases. With the nodes stacked and the sides at right angles, such as `from: bottom  to: left`, the line went down past the lower node and came back up through it; it is now one curve round the corner. With both ends naming the same side, such as `from: left  to: left`, the line ran straight through the node behind; it now goes over the top of that node, or round the right in a column. Existing diagrams with such an edge will look different, and correct.
 
