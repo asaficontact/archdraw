@@ -159,10 +159,13 @@ export const ICON_NAMES = Object.keys(ICONS);
  * diagram, while a folded corner has meant "an artifact, not a process" in
  * flowcharts for decades and reads with no legend at all.
  *
- * `circle` and `diamond` join these when a diagram asks. The set being short is
- * a fact about what has been drawn, not about the key.
+ * `circle` is the one geometric name, because a circle carries no single
+ * meaning to name it after — it is a state, a step, a person, whatever the
+ * diagram's own convention makes it. `diamond` joins these when a diagram
+ * asks. The set being short is a fact about what has been drawn, not about the
+ * key.
  */
-export const OUTLINES = ['rectangle', 'document'] as const;
+export const OUTLINES = ['rectangle', 'document', 'circle'] as const;
 export type Outline = (typeof OUTLINES)[number];
 
 /** Every value `shape:` accepts, `none` included. */

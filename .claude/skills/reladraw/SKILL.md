@@ -99,7 +99,7 @@ The mark names a style and never a color; the closer repeats the name; `\[` is a
 
 ### The body
 
-Every node has one body and two keys can name it. `shape: rectangle | document | none` is the outline it is drawn with — `rectangle` is the default and `none` is text with no box at all, which is what an annotation is. `icon: <name>` draws the node **as** a picture, with no box: `disk`, `desktop`, `laptop`, `package`, `cubes`, `cube`, `database`. Writing both is an error.
+Every node has one body and two keys can name it. `shape: rectangle | document | circle | none` is the outline it is drawn with — `rectangle` is the default, `circle` is sized to its text and always round, and `none` is text with no box at all, which is what an annotation is. `icon: <name>` draws the node **as** a picture, with no box: `disk`, `desktop`, `laptop`, `package`, `cubes`, `cube`, `database`. Writing both is an error.
 
 `badge: <name>` is different again: it puts one of those pictures *beside* a node's text, and the node keeps its own body and grows to hold both.
 

@@ -346,6 +346,16 @@ const FOLD = CORNER * 2;
 /** The node's outline, as path data. */
 function outlinePath(shape: Outline, x: number, y: number, w: number, h: number): string {
   const r = CORNER;
+  if (shape === 'circle') {
+    // Two half-turns from the leftmost point, since one arc cannot close.
+    const radius = w / 2;
+    return [
+      `M${round(x)} ${round(y + h / 2)}`,
+      `a${round(radius)} ${round(radius)} 0 1 0 ${round(w)} 0`,
+      `a${round(radius)} ${round(radius)} 0 1 0 ${round(-w)} 0`,
+      'Z',
+    ].join(' ');
+  }
   if (shape === 'document') {
     // Every corner rounded but the top-right one, which is cut away and folded.
     return [
@@ -1095,6 +1105,10 @@ function sidePoint(box: Box, toward: { x: number; y: number }): { x: number; y: 
   const dx = toward.x - center.x;
   const dy = toward.y - center.y;
   if (dx === 0 && dy === 0) return center;
+  if (box.round) {
+    const scale = box.width / 2 / Math.hypot(dx, dy);
+    return { x: center.x + dx * scale, y: center.y + dy * scale };
+  }
 
   const scaleX = dx === 0 ? Infinity : box.width / 2 / Math.abs(dx);
   const scaleY = dy === 0 ? Infinity : box.height / 2 / Math.abs(dy);
@@ -1643,6 +1657,7 @@ function claim(
 
 /** The point `at` along one side of a box, with the outward normal for that side. */
 function anchorOn(face: Box, side: AttachSide, at: number): Anchor {
+  if (face.round) return anchorOnCircle(face, side, at);
   switch (side) {
     case 'top':
       return { x: at, y: face.y, tx: 0, ty: -1, side };
@@ -1653,6 +1668,29 @@ function anchorOn(face: Box, side: AttachSide, at: number): Anchor {
     case 'right':
       return { x: face.x + face.width, y: at, tx: 1, ty: 0, side };
   }
+}
+
+/**
+ * The same, on a circle: a side is the quarter of the circle around its
+ * compass point, and `at` is walked round the arc rather than along a
+ * straight edge, so points spaced a step apart on a side are a step apart on
+ * the circle too. The line meets the circle square on, heading from its center.
+ */
+function anchorOnCircle(face: Box, side: AttachSide, at: number): Anchor {
+  const radius = face.width / 2;
+  const center = centerOf(face);
+  const across = side === 'top' || side === 'bottom' ? at - center.x : at - center.y;
+  const turn = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, across / radius));
+  // SVG's y runs down, so the bottom is a quarter-turn clockwise from the right.
+  const angle = {
+    right: turn,
+    bottom: Math.PI / 2 - turn,
+    left: Math.PI - turn,
+    top: -Math.PI / 2 + turn,
+  }[side];
+  const tx = Math.cos(angle);
+  const ty = Math.sin(angle);
+  return { x: center.x + radius * tx, y: center.y + radius * ty, tx, ty, side };
 }
 
 /** An end with no side named: leave from the border, pointing at the far end. */
@@ -1682,6 +1720,19 @@ function exitAlong(
   // is the graceful answer, and the crowding it signals is a diagnostic.
   const x = Math.min(Math.max(from.x, box.x), box.x + box.width);
   const y = Math.min(Math.max(from.y, box.y), box.y + box.height);
+  if (box.round) {
+    // Where the ray leaves the circle: the larger root of |p + t·dir − c| = r.
+    const center = centerOf(box);
+    const px = x - center.x;
+    const py = y - center.y;
+    const a = dir.x * dir.x + dir.y * dir.y;
+    const b = px * dir.x + py * dir.y;
+    const c = px * px + py * py - (box.width / 2) ** 2;
+    const reach = b * b - a * c;
+    if (a === 0 || reach < 0) return { x, y };
+    const t = Math.max(0, (-b + Math.sqrt(reach)) / a);
+    return { x: x + dir.x * t, y: y + dir.y * t };
+  }
   const tx = dir.x === 0 ? Infinity : ((dir.x > 0 ? box.x + box.width : box.x) - x) / dir.x;
   const ty = dir.y === 0 ? Infinity : ((dir.y > 0 ? box.y + box.height : box.y) - y) / dir.y;
   const t = Math.min(tx, ty);
@@ -3078,6 +3129,8 @@ interface Box {
   y: number;
   width: number;
   height: number;
+  /** The circle in this square is what is drawn, so a line meets that instead. */
+  round?: boolean;
 }
 
 /** The rectangle actually drawn. Differs from the node box only for a deck. */
@@ -3087,6 +3140,7 @@ function faceOf(node: LayoutNode): Box {
     y: node.y + node.inset,
     width: node.width - node.inset,
     height: node.height - node.inset,
+    round: node.body.kind === 'shape' && node.body.outline === 'circle',
   };
 }
 

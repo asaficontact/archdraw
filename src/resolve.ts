@@ -773,6 +773,8 @@ function sizeNode(
   // too. The *absence* of children makes the setting inert, which stays silent;
   // a value the language does not have is wrong wherever it is written.
   const contents = contentsStyleFor(node);
+  const circle = isCircle(node);
+  if (circle) refuseOnCircle(node);
 
   if (node.children.length === 0) {
     // `at` is read on a leaf too, and is inert wherever the box is exactly the
@@ -807,7 +809,7 @@ function sizeNode(
     relayout.set(node, lay);
     return;
   } else {
-    if (contents.widths === 'match') matchWidths(node.children);
+    if (contents.widths === 'match') matchWidths(node.children, local);
     let content = layoutChildren(node.children, edges, measurer, fontSize, local);
     if (contents.widths === 'fill') {
       // The band is the wider of the title and the contents, so filling it
@@ -815,7 +817,7 @@ function sizeNode(
       // this is `match` exactly; where the title wins it is the answer `match`
       // could not give.
       const band = Math.max(textWidth, content.width);
-      for (const child of node.children) widenTo(child, band);
+      for (const child of node.children) widenTo(child, band, local);
       content = layoutChildren(node.children, edges, measurer, fontSize, local);
       checkOneColumn(node, node.children, local);
     }
@@ -854,7 +856,73 @@ function sizeNode(
     node.banded = true;
   }
 
+  if (circle) circumscribe(node, local);
   applyDeck(node, local);
+}
+
+function isCircle(node: LayoutNode): boolean {
+  return node.body.kind === 'shape' && node.body.outline === 'circle';
+}
+
+/**
+ * Grow a node sized as a rectangle into the circle around what it holds.
+ *
+ * The circle passes a padding outside the corners of the padded-in block —
+ * the text of a leaf, or the band and contents of a container — so whatever
+ * fits in the rectangle fits in the circle, clear of its edge by the same
+ * padding at the corners where it comes closest. Everything inside moves to
+ * keep the block centered.
+ */
+function circumscribe(node: LayoutNode, local: Local): void {
+  const side = Math.hypot(node.width - PAD * 2, node.height - PAD * 2) + PAD * 2;
+  moveInside(node, (side - node.width) / 2, (side - node.height) / 2, local);
+  node.width = side;
+  node.height = side;
+}
+
+function moveInside(node: LayoutNode, dx: number, dy: number, local: Local): void {
+  node.textBox.x += dx;
+  node.textBox.y += dy;
+  for (const child of node.children) {
+    const offset = local.get(child)!;
+    offset.x += dx;
+    offset.y += dy;
+  }
+}
+
+/**
+ * What a circle does not take yet, refused by name rather than drawn as an
+ * ellipse or with a copy's text outside the outline.
+ *
+ * Something placed against the circle's own edge or text — a badge included —
+ * sizes the frame in the same solve as the thing placed, and a circle's corner
+ * points are a fraction of a radius that solve does not know yet. A deck's
+ * copies write their text at the top-left of the face, which on a circle is
+ * outside it.
+ */
+function refuseOnCircle(node: LayoutNode): void {
+  const [framed] = framedChildren(node);
+  if (node.attrs['badge'] !== undefined || node.appearance['badge'] !== undefined) {
+    throw new SourceError(
+      `"${node.name}" is a circle with a badge:, and a badge is not built for circles yet — ` +
+        'make it a rectangle, or place the badge as a node of its own against the circle',
+      node.line,
+    );
+  }
+  if (framed !== undefined) {
+    throw new SourceError(
+      `"${framed.name}" is placed against "${node.name}" itself, and "${node.name}" is a circle. ` +
+        'Something placed against a circle\'s own edge or text is not built yet — place it against ' +
+        `another node, or make "${node.name}" a rectangle`,
+      framed.line,
+    );
+  }
+  if (node.deckTexts.length > 0) {
+    throw new SourceError(
+      `"${node.name}" is a circle with a deck:, and a deck is not built for circles yet`,
+      node.line,
+    );
+  }
 }
 
 /**
@@ -936,9 +1004,9 @@ function contentsStyleFor(node: LayoutNode): ContentsStyle {
  * before layoutChildren sizes and positions anything from those widths. A
  * container's own children are already sized by this point.
  */
-function matchWidths(children: LayoutNode[]): void {
+function matchWidths(children: LayoutNode[], local: Local): void {
   const maxWidth = Math.max(...children.map((child) => child.width));
-  for (const child of children) widenTo(child, maxWidth);
+  for (const child of children) widenTo(child, maxWidth, local);
 }
 
 /**
@@ -969,8 +1037,18 @@ function checkOneColumn(node: LayoutNode, children: LayoutNode[], local: Local):
  * was sized from its own contents, and the text's box was worked out against
  * the old one. A left-ranged text stays where it is; a centered or right-ranged
  * one moves by its share of the difference.
+ *
+ * A circle grows both ways, since a wider circle is a bigger one, and what is
+ * inside it stays centered.
  */
-function widenTo(node: LayoutNode, width: number): void {
+function widenTo(node: LayoutNode, width: number, local: Local): void {
+  if (isCircle(node)) {
+    const grew = width - node.width;
+    moveInside(node, grew / 2, grew / 2, local);
+    node.width = width;
+    node.height = width;
+    return;
+  }
   // A node with something placed against its own frame is laid out by a
   // solve, and a wider frame is one more thing that solve has to hold: the
   // things against its right edge move, and a centered text re-centers.
@@ -1267,7 +1345,7 @@ function layoutFramed(
 
   let block = { width: 0, height: 0 };
   if (banded) {
-    if (contents.widths === 'match') matchWidths(stacked);
+    if (contents.widths === 'match') matchWidths(stacked, local);
     block = layoutChildren(stacked, edges, measurer, fontSize, local);
     if (contents.widths === 'fill') {
       // The row is the text and whatever stands beside it, each at its gap.
@@ -1280,7 +1358,7 @@ function layoutFramed(
         if (beside) row += child.width + (hasText ? gapFor(child, beside, node) : 0);
       }
       const across = Math.max(row, block.width);
-      for (const child of stacked) widenTo(child, across);
+      for (const child of stacked) widenTo(child, across, local);
       block = layoutChildren(stacked, edges, measurer, fontSize, local);
       checkOneColumn(node, stacked, local);
     }
@@ -2117,6 +2195,15 @@ function partOf(target: Target, part: Part | undefined, owner: LayoutNode, line:
   };
   narrow('x', 'left', 'right');
   narrow('y', 'top', 'bottom');
+  // A circle has no corners, so a corner of one is the point on it halfway
+  // between the two sides named: on the outline, as a rectangle's corner is.
+  const across = words.includes('left') || words.includes('right');
+  const down = words.includes('top') || words.includes('bottom');
+  if (isCircle(target.node) && across && down) {
+    const pull = (target.width / 2) * (1 - Math.SQRT1_2);
+    box.offset.x += words.includes('left') ? pull : -pull;
+    box.offset.y += words.includes('top') ? pull : -pull;
+  }
   return box;
 }
 

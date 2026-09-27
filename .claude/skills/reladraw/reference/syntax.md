@@ -171,6 +171,7 @@ Every node has a *body*: the thing that is drawn where the node is. Two keys nam
 | --- | --- |
 | `rectangle` | The plain rounded box. The default, so nothing has to say it. |
 | `document` | The same box with its top-right corner folded — the flowchart symbol saying *this is an artifact, not a process*. |
+| `circle` | A circle just big enough to hold the text, and always round — a longer text makes a bigger circle, never an oval. |
 | `none` | No outline, no fill, no padding. The node is its text and nothing else. |
 
 `icon: <name>` is a picture the node is drawn **as**, with no box at all.
@@ -193,7 +194,11 @@ node svc  icon: cube
 
 A node has one body, so writing both keys is an error naming both.
 
-The `document` fold is worth having because a shape is a second channel alongside color, and a stronger one. A fill means whatever you assigned it and a reader has to learn it from the diagram; a folded corner has meant "a document" for as long as there have been flowcharts, and reads with no legend. Most diagrams lose the difference between a thing that runs and a thing that is produced, because every node is a rectangle. `circle` and `diamond` will join these when a diagram asks for them.
+The `document` fold is worth having because a shape is a second channel alongside color, and a stronger one. A fill means whatever you assigned it and a reader has to learn it from the diagram; a folded corner has meant "a document" for as long as there have been flowcharts, and reads with no legend. Most diagrams lose the difference between a thing that runs and a thing that is produced, because every node is a rectangle. `diamond` will join these when a diagram asks for one.
+
+A circle is an ordinary node in every other way, and the file means the same thing whichever shape its nodes are. `from: right` on a circle leaves from its rightmost point, and several edges on one side spread round the quarter of the circle about that point, each meeting it square on. A corner such as `top-right` is the point on the circle halfway between those two sides, not the corner of the square around it. A circle can hold other nodes; they sit in the middle of it. A circle cannot yet take a `badge:`, a `deck:`, or a node placed against its own edge or text, and each is refused with an error saying so.
+
+`circle` is the one name that describes the picture rather than the meaning, because a circle has no single meaning to name it after: it is a state in one diagram, a step in another, a person in a third.
 
 A name says what the thing *is*, never what the picture looks like: naming the meaning is what lets the drawing be improved later without every diagram that uses it changing sense. `document`, not `folded-corner`. The one place that rule stops is a picture with no single meaning — the cube stands for a container in one diagram, a VM in another, a service in a third — which is why it is called `cube` and not `instance`. An unrecognized name is an error listing the whole set, rather than a node that quietly draws nothing.
 
@@ -1011,6 +1016,10 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- `shape: circle`. A circle is sized to hold its text and is always round. Edges on one of its sides spread round that quarter of the circle, and a corner of it is the point on the circle halfway round. It does not yet take a badge, a deck or a node placed against its own edge. Nothing that already renders changes.
 
 **0.7.1**
 

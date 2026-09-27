@@ -518,7 +518,7 @@
 
             <dt>Body</dt>
             <dd>
-              <code>shape: rectangle|document|none</code> — the outline the node is drawn with;
+              <code>shape: rectangle|document|circle|none</code> — the outline the node is drawn with;
               <code>none</code> is text with no box, which is what an annotation is.<br />
               <code>icon: <i>name</i></code> — the node <i>is</i> that picture, with no box.<br />
               <code>badge: <i>name</i></code> — the picture sits <i>beside</i> the text and the node keeps its box.<br />
@@ -2716,10 +2716,13 @@ const ICON_NAMES = Object.keys(ICONS);
  * diagram, while a folded corner has meant "an artifact, not a process" in
  * flowcharts for decades and reads with no legend at all.
  *
- * `circle` and `diamond` join these when a diagram asks. The set being short is
- * a fact about what has been drawn, not about the key.
+ * `circle` is the one geometric name, because a circle carries no single
+ * meaning to name it after — it is a state, a step, a person, whatever the
+ * diagram's own convention makes it. `diamond` joins these when a diagram
+ * asks. The set being short is a fact about what has been drawn, not about the
+ * key.
  */
-const OUTLINES = ['rectangle', 'document'];
+const OUTLINES = ['rectangle', 'document', 'circle'];
 /** Every value `shape:` accepts, `none` included. */
 const SHAPE_WORDS = [...OUTLINES, 'none'];
 const PLAIN = { kind: 'shape', outline: 'rectangle' };
@@ -3087,6 +3090,16 @@ const FOLD = CORNER * 2;
 /** The node's outline, as path data. */
 function outlinePath(shape, x, y, w, h) {
     const r = CORNER;
+    if (shape === 'circle') {
+        // Two half-turns from the leftmost point, since one arc cannot close.
+        const radius = w / 2;
+        return [
+            `M${round(x)} ${round(y + h / 2)}`,
+            `a${round(radius)} ${round(radius)} 0 1 0 ${round(w)} 0`,
+            `a${round(radius)} ${round(radius)} 0 1 0 ${round(-w)} 0`,
+            'Z',
+        ].join(' ');
+    }
     if (shape === 'document') {
         // Every corner rounded but the top-right one, which is cut away and folded.
         return [
@@ -3754,6 +3767,10 @@ function sidePoint(box, toward) {
     const dy = toward.y - center.y;
     if (dx === 0 && dy === 0)
         return center;
+    if (box.round) {
+        const scale = box.width / 2 / Math.hypot(dx, dy);
+        return { x: center.x + dx * scale, y: center.y + dy * scale };
+    }
     const scaleX = dx === 0 ? Infinity : box.width / 2 / Math.abs(dx);
     const scaleY = dy === 0 ? Infinity : box.height / 2 / Math.abs(dy);
     const scale = Math.min(scaleX, scaleY);
@@ -4148,6 +4165,8 @@ function claim(claims, node, side, entry) {
 }
 /** The point `at` along one side of a box, with the outward normal for that side. */
 function anchorOn(face, side, at) {
+    if (face.round)
+        return anchorOnCircle(face, side, at);
     switch (side) {
         case 'top':
             return { x: at, y: face.y, tx: 0, ty: -1, side };
@@ -4158,6 +4177,28 @@ function anchorOn(face, side, at) {
         case 'right':
             return { x: face.x + face.width, y: at, tx: 1, ty: 0, side };
     }
+}
+/**
+ * The same, on a circle: a side is the quarter of the circle around its
+ * compass point, and `at` is walked round the arc rather than along a
+ * straight edge, so points spaced a step apart on a side are a step apart on
+ * the circle too. The line meets the circle square on, heading from its center.
+ */
+function anchorOnCircle(face, side, at) {
+    const radius = face.width / 2;
+    const center = centerOf(face);
+    const across = side === 'top' || side === 'bottom' ? at - center.x : at - center.y;
+    const turn = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, across / radius));
+    // SVG's y runs down, so the bottom is a quarter-turn clockwise from the right.
+    const angle = {
+        right: turn,
+        bottom: Math.PI / 2 - turn,
+        left: Math.PI - turn,
+        top: -Math.PI / 2 + turn,
+    }[side];
+    const tx = Math.cos(angle);
+    const ty = Math.sin(angle);
+    return { x: center.x + radius * tx, y: center.y + radius * ty, tx, ty, side };
 }
 /** An end with no side named: leave from the border, pointing at the far end. */
 function free(face, toward) {
@@ -4181,6 +4222,20 @@ function exitAlong(box, from, dir) {
     // is the graceful answer, and the crowding it signals is a diagnostic.
     const x = Math.min(Math.max(from.x, box.x), box.x + box.width);
     const y = Math.min(Math.max(from.y, box.y), box.y + box.height);
+    if (box.round) {
+        // Where the ray leaves the circle: the larger root of |p + t·dir − c| = r.
+        const center = centerOf(box);
+        const px = x - center.x;
+        const py = y - center.y;
+        const a = dir.x * dir.x + dir.y * dir.y;
+        const b = px * dir.x + py * dir.y;
+        const c = px * px + py * py - (box.width / 2) ** 2;
+        const reach = b * b - a * c;
+        if (a === 0 || reach < 0)
+            return { x, y };
+        const t = Math.max(0, (-b + Math.sqrt(reach)) / a);
+        return { x: x + dir.x * t, y: y + dir.y * t };
+    }
     const tx = dir.x === 0 ? Infinity : ((dir.x > 0 ? box.x + box.width : box.x) - x) / dir.x;
     const ty = dir.y === 0 ? Infinity : ((dir.y > 0 ? box.y + box.height : box.y) - y) / dir.y;
     const t = Math.min(tx, ty);
@@ -5278,6 +5333,7 @@ function faceOf(node) {
         y: node.y + node.inset,
         width: node.width - node.inset,
         height: node.height - node.inset,
+        round: node.body.kind === 'shape' && node.body.outline === 'circle',
     };
 }
 function centerOf(box) {
@@ -6088,6 +6144,9 @@ function sizeNode(node, edges, measurer, fontSize, local) {
     // too. The *absence* of children makes the setting inert, which stays silent;
     // a value the language does not have is wrong wherever it is written.
     const contents = contentsStyleFor(node);
+    const circle = isCircle(node);
+    if (circle)
+        refuseOnCircle(node);
     if (node.children.length === 0) {
         // `at` is read on a leaf too, and is inert wherever the box is exactly the
         // size of what it holds — which is every leaf, since a leaf is sized from
@@ -6119,7 +6178,7 @@ function sizeNode(node, edges, measurer, fontSize, local) {
     }
     else {
         if (contents.widths === 'match')
-            matchWidths(node.children);
+            matchWidths(node.children, local);
         let content = layoutChildren(node.children, edges, measurer, fontSize, local);
         if (contents.widths === 'fill') {
             // The band is the wider of the title and the contents, so filling it
@@ -6128,7 +6187,7 @@ function sizeNode(node, edges, measurer, fontSize, local) {
             // could not give.
             const band = Math.max(textWidth, content.width);
             for (const child of node.children)
-                widenTo(child, band);
+                widenTo(child, band, local);
             content = layoutChildren(node.children, edges, measurer, fontSize, local);
             checkOneColumn(node, node.children, local);
         }
@@ -6161,7 +6220,61 @@ function sizeNode(node, edges, measurer, fontSize, local) {
         }
         node.banded = true;
     }
+    if (circle)
+        circumscribe(node, local);
     applyDeck(node, local);
+}
+function isCircle(node) {
+    return node.body.kind === 'shape' && node.body.outline === 'circle';
+}
+/**
+ * Grow a node sized as a rectangle into the circle around what it holds.
+ *
+ * The circle passes a padding outside the corners of the padded-in block —
+ * the text of a leaf, or the band and contents of a container — so whatever
+ * fits in the rectangle fits in the circle, clear of its edge by the same
+ * padding at the corners where it comes closest. Everything inside moves to
+ * keep the block centered.
+ */
+function circumscribe(node, local) {
+    const side = Math.hypot(node.width - PAD * 2, node.height - PAD * 2) + PAD * 2;
+    moveInside(node, (side - node.width) / 2, (side - node.height) / 2, local);
+    node.width = side;
+    node.height = side;
+}
+function moveInside(node, dx, dy, local) {
+    node.textBox.x += dx;
+    node.textBox.y += dy;
+    for (const child of node.children) {
+        const offset = local.get(child);
+        offset.x += dx;
+        offset.y += dy;
+    }
+}
+/**
+ * What a circle does not take yet, refused by name rather than drawn as an
+ * ellipse or with a copy's text outside the outline.
+ *
+ * Something placed against the circle's own edge or text — a badge included —
+ * sizes the frame in the same solve as the thing placed, and a circle's corner
+ * points are a fraction of a radius that solve does not know yet. A deck's
+ * copies write their text at the top-left of the face, which on a circle is
+ * outside it.
+ */
+function refuseOnCircle(node) {
+    const [framed] = framedChildren(node);
+    if (node.attrs['badge'] !== undefined || node.appearance['badge'] !== undefined) {
+        throw new SourceError(`"${node.name}" is a circle with a badge:, and a badge is not built for circles yet — ` +
+            'make it a rectangle, or place the badge as a node of its own against the circle', node.line);
+    }
+    if (framed !== undefined) {
+        throw new SourceError(`"${framed.name}" is placed against "${node.name}" itself, and "${node.name}" is a circle. ` +
+            'Something placed against a circle\'s own edge or text is not built yet — place it against ' +
+            `another node, or make "${node.name}" a rectangle`, framed.line);
+    }
+    if (node.deckTexts.length > 0) {
+        throw new SourceError(`"${node.name}" is a circle with a deck:, and a deck is not built for circles yet`, node.line);
+    }
 }
 /**
  * Make room for a deck's copies, once the node's own face has been sized.
@@ -6216,10 +6329,10 @@ function contentsStyleFor(node) {
  * before layoutChildren sizes and positions anything from those widths. A
  * container's own children are already sized by this point.
  */
-function matchWidths(children) {
+function matchWidths(children, local) {
     const maxWidth = Math.max(...children.map((child) => child.width));
     for (const child of children)
-        widenTo(child, maxWidth);
+        widenTo(child, maxWidth, local);
 }
 /**
  * `widths: fill` makes every child as wide as the band, which only holds for
@@ -6247,8 +6360,18 @@ function checkOneColumn(node, children, local) {
  * was sized from its own contents, and the text's box was worked out against
  * the old one. A left-ranged text stays where it is; a centered or right-ranged
  * one moves by its share of the difference.
+ *
+ * A circle grows both ways, since a wider circle is a bigger one, and what is
+ * inside it stays centered.
  */
-function widenTo(node, width) {
+function widenTo(node, width, local) {
+    if (isCircle(node)) {
+        const grew = width - node.width;
+        moveInside(node, grew / 2, grew / 2, local);
+        node.width = width;
+        node.height = width;
+        return;
+    }
     // A node with something placed against its own frame is laid out by a
     // solve, and a wider frame is one more thing that solve has to hold: the
     // things against its right edge move, and a centered text re-centers.
@@ -6503,7 +6626,7 @@ function layoutFramed(node, own, edges, measurer, fontSize, local, minWidth) {
     let block = { width: 0, height: 0 };
     if (banded) {
         if (contents.widths === 'match')
-            matchWidths(stacked);
+            matchWidths(stacked, local);
         block = layoutChildren(stacked, edges, measurer, fontSize, local);
         if (contents.widths === 'fill') {
             // The row is the text and whatever stands beside it, each at its gap.
@@ -6515,7 +6638,7 @@ function layoutFramed(node, own, edges, measurer, fontSize, local, minWidth) {
             }
             const across = Math.max(row, block.width);
             for (const child of stacked)
-                widenTo(child, across);
+                widenTo(child, across, local);
             block = layoutChildren(stacked, edges, measurer, fontSize, local);
             checkOneColumn(node, stacked, local);
         }
@@ -7210,6 +7333,15 @@ function partOf(target, part, owner, line) {
     };
     narrow('x', 'left', 'right');
     narrow('y', 'top', 'bottom');
+    // A circle has no corners, so a corner of one is the point on it halfway
+    // between the two sides named: on the outline, as a rectangle's corner is.
+    const across = words.includes('left') || words.includes('right');
+    const down = words.includes('top') || words.includes('bottom');
+    if (isCircle(target.node) && across && down) {
+        const pull = (target.width / 2) * (1 - Math.SQRT1_2);
+        box.offset.x += words.includes('left') ? pull : -pull;
+        box.offset.y += words.includes('top') ? pull : -pull;
+    }
     return box;
 }
 /** Where a node of this size sits so that the named side of it meets the span's. */
