@@ -1,4 +1,4 @@
-# Syntax reference — 0.7.0
+# Syntax reference — 0.7.1
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1011,6 +1011,10 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**0.7.1**
+
+- A fix, no syntax change. An edge with `line: (path: straight)` and a clause such as `below m` could draw its text on top of `m`. The line now bends through the room left for the text, so the text sits clear of the node. Existing diagrams with such an edge will look different, and correct.
 
 **0.7.0**
 
