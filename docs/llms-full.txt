@@ -1163,6 +1163,7 @@ diagram  theme: solarized-dark
 | `catppuccin-mocha`, `catppuccin-latte` | [Catppuccin](https://catppuccin.com) |
 | `nord` | [Nord](https://www.nordtheme.com) |
 | `dracula` | [Dracula](https://draculatheme.com) |
+| `vesper` | [Vesper](https://github.com/raunofreiberg/vesper) |
 | `high-contrast-dark`, `high-contrast-light` | no fills to lean on, every line at full strength |
 | `print` | a white page, black lines and no fills, for paper |
 
@@ -1303,6 +1304,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 - A box with a theme fill and no text color of its own gets text that reads on that fill.
 - **Breaking:** `muted` is now `theme-muted`. `color: muted` is refused with the new name.
 - The examples use theme colors where they used to hand-pick colors for a dark page, so they read in every theme.
+- A fourteenth theme, `vesper`, from [Vesper](https://github.com/raunofreiberg/vesper).
 
 **0.8.1**
 

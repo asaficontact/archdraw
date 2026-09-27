@@ -293,6 +293,22 @@ export const THEMES: Readonly<Record<string, Theme>> = {
     primary: accent('#bd93f9', '#282a36', '#282a36'),
     secondary: accent('#ff79c6', '#282a36', '#282a36'),
   },
+  // Vesper, Rauno Freiberg. Near-black page, its input surface for leaves, and
+  // the peach it spends on everything that matters for lines; mint second.
+  vesper: {
+    background: '#101010',
+    boxFill: '#1c1c1c',
+    boxStroke: '#505050',
+    containerFill: '#161616',
+    containerStroke: '#232323',
+    text: '#ffffff',
+    mutedText: '#a0a0a0',
+    edge: '#ffc799',
+    iconInk: '#a0a0a0',
+    iconShade: '#282828',
+    primary: accent('#ffc799', '#101010', '#101010'),
+    secondary: accent('#99ffe4', '#101010', '#101010'),
+  },
   // For low vision and projectors: no fills to lean on, every line at full
   // strength, and a container told apart by a gray outline alone.
   'high-contrast-dark': {
