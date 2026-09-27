@@ -1,4 +1,4 @@
-import type { Attrs, Axis, Kind, Placement } from './ast.js';
+import type { Attrs, Axis, Direction, Kind, Placement } from './ast.js';
 import type { Line } from './text.js';
 import type { Body } from './icons.js';
 
@@ -7,6 +7,18 @@ export interface LayoutPassage {
   nodes: [LayoutNode, LayoutNode];
   /** Which gap, where the pair has two. Absent when the pair leaves no doubt. */
   axis?: Axis;
+}
+
+/**
+ * `below resolver` on an edge with its targets resolved: the line is on that
+ * side of the box bounding `nodes`, where it passes them. Mirrors the edge's
+ * `passes` in `ast.ts`.
+ */
+export interface LayoutPass {
+  direction: Direction;
+  nodes: LayoutNode[];
+  /** As the author wrote it, for error messages. */
+  written: string;
 }
 
 /** A node with its geometry solved. Coordinates are absolute, origin top-left. */
@@ -125,6 +137,8 @@ export interface LayoutEdge {
    * rather than solved for, so edges stay out of the constraint system entirely.
    */
   between?: LayoutPassage;
+  /** Which side of which nodes the line passes. Measured in the renderer, like `between`. */
+  passes?: LayoutPass[];
   attrs: Attrs;
   appearance: Attrs;
   line: number;

@@ -148,14 +148,16 @@ node stack "Stack"  below wedge  right of wall (gap: tight)  gap: wide
 ### Edges
 
 ```
-edge <from> -> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [attributes]
+edge <from> -> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [above|below|left of|right of <node> ...] [attributes]
 ```
 
 `<-` and `<->` also work; `a <- b` is exactly `b -> a` drawn the same way, and lets you write the subject first. Endpoints may be nested (`server.api`).
 
 `from:` and `to:` name a side — `top`, `bottom`, `left`, `right` — and turn the line into a curve that actually leaves and arrives that way. Name them whenever the straight center-to-center line would cut through something.
 
-`between a and b` says the line travels down the gap between two named nodes. Use it instead of hoping: the tool will not route around an obstacle by itself, on purpose.
+`between a and b` says the line travels down the gap between two named nodes. `below c` (or `above`, `left of`, `right of`) says which side of a node the line passes, only where it goes by that node; write one per node, and `below c and d` covers the stretch between them too. Use these instead of hoping: the tool will not route around an obstacle by itself, on purpose.
+
+An edge whose two ends face away from each other — `from: left  to: right` with the far node further right — turns back through the gap between its nodes if there is room, and otherwise goes over the top of the row (round the right for a column). Add `below <node>` to send it underneath.
 
 An edge with text widens the corridor between its own two ends by what the text needs, so texts are safe to add.
 
@@ -209,7 +211,7 @@ node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 
 - **Reaching for `note`, `box` or `link`.** They are not statements. A note is `node … shape: none`; the keywords are `node` and `edge`. Each gets an error naming the replacement.
 - **Nodes that nothing orders.** Every pair of nodes must clear the other, and where the file says nothing about which side of what, it is an error naming the pair: `"b" and "c" overlap, and nothing says which side of the other either one sits on`. Hanging two children off the same side of the same target is the usual cause. Place one against the other.
 - **An annotation with no wrap.**
-- **Reaching for a coordinate, an offset, or a waypoint.** None exist. If a line goes somewhere wrong, say more about it with `between` and `from:`/`to:`; if a node is in the wrong place, add a placement.
+- **Reaching for a coordinate, an offset, or a waypoint.** None exist. If a line goes somewhere wrong, say more about it with `between`, `below <node>` and `from:`/`to:`; if a node is in the wrong place, add a placement.
 - **`#` is not a comment.** It opens a hex color. Comments are `//`.
 - **Guessing at syntax from another language.** There are no braces, no semicolons, no `-->`, no subgraphs. If you want something not written here, check `reference/syntax.md` before inventing it.
 

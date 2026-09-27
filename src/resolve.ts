@@ -47,7 +47,7 @@ import { SourceError } from './errors.js';
 import { type Body, bodyFor } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import type { Layout, LayoutEdge, LayoutNode, LayoutPassage, Reach } from './model.js';
+import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, Reach } from './model.js';
 
 export interface ResolveOptions {
   measurer?: Measurer;
@@ -582,6 +582,28 @@ function buildEdges(
       }) as [LayoutNode, LayoutNode],
       ...(stmt.between.axis !== undefined ? { axis: stmt.between.axis } : {}),
     };
+    const passes: LayoutPass[] | undefined = stmt.passes?.map((placement) => {
+      const written = describePlacement(placement);
+      return {
+        direction: placement.direction,
+        written,
+        nodes: placement.targets.map(({ name, part }) => {
+          if (part !== undefined) {
+            // The line passes a box, and a side or a point has no side of its
+            // own to be passed on. Refused by name rather than dropped.
+            throw new SourceError(
+              `edge passes "${written}", and a line passes a whole box — drop "${part}"`,
+              stmt.line,
+            );
+          }
+          const node = byName.get(name);
+          if (!node) {
+            throw new SourceError(`edge passes "${written}", and "${name}" does not exist`, stmt.line);
+          }
+          return node;
+        }),
+      };
+    });
     const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
     const what = `${stmt.from} -> ${stmt.to}`;
     checkAttrs('edge', what, stmt.attrs, stmt.line);
@@ -607,6 +629,7 @@ function buildEdges(
         ? { text: stmt.text, lines: linesFor(stmt.text, textAttrs, `edge ${what}`, stmt.line) }
         : {}),
       ...(between ? { between } : {}),
+      ...(passes ? { passes } : {}),
       attrs: stmt.attrs,
       appearance,
       line: stmt.line,
@@ -1648,7 +1671,9 @@ function corridorsIn(
     // edge told to pass between two named things carries its text in *that*
     // corridor rather than in the gap between its own ends, so widening this one
     // would make room where the text never goes.
-    if (edge.text === undefined || edge.between) continue;
+    // An edge that says which side of something it passes is routed round it,
+    // and its text rides on that route for the same reason.
+    if (edge.text === undefined || edge.between || edge.passes) continue;
     const from = locate(edge.from);
     const to = locate(edge.to);
     if (!from || !to || from.index === to.index) continue;

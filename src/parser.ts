@@ -8,6 +8,7 @@ import type {
   DiagramStmt,
   Document,
   EdgeStmt,
+  OffsetPlacement,
   Part,
   Passage,
   PlacementTarget,
@@ -590,10 +591,33 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     return next;
   });
 
-  if (tail.placements.length > 0) {
+  // An edge is not placed, so a direction on its line says which side of that
+  // node the line passes. The other placements say where a thing *is*, and
+  // have no reading for a line.
+  const passes: OffsetPlacement[] = [];
+  for (const placement of tail.placements) {
+    const written = describePlacement(placement);
+    if (placement.kind !== 'offset' || placement.written !== undefined) {
+      throw new SourceError(
+        `${subject}: "${written}" places a node, and an edge is not placed — it joins two things ` +
+          'that are. On an edge, above, below, left of and right of say which side of a node the ' +
+          'line passes',
+        line,
+      );
+    }
+    if (placement.gap !== undefined) {
+      throw new SourceError(
+        `${subject}: "${written}" gives a gap, and a gap is kept between nodes — the line passes ` +
+          'as close as it reads clearly. Drop the brackets',
+        line,
+      );
+    }
+    passes.push(placement);
+  }
+  if (passes.length > 0 && between) {
     throw new SourceError(
-      `${subject}: "${describePlacement(tail.placements[0]!)}" places a node, and an edge is not ` +
-        'placed — it joins two things that are',
+      `${subject}: "between" and "${describePlacement(passes[0]!)}" on one edge — an edge passing ` +
+        'between two things already has a side of each, so say one or the other',
       line,
     );
   }
@@ -608,6 +632,7 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     both: arrow.text === '<->',
     ...(textToken ? { text: textToken.text } : {}),
     ...(between ? { between } : {}),
+    ...(passes.length > 0 ? { passes } : {}),
     attrs: tail.attrs,
     line,
   };

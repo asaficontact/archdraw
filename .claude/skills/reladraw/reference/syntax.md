@@ -433,7 +433,7 @@ edge parser -> renderer  "test edge"  from: left  to: right
 
 That line leaves Parser heading left and has to arrive at Renderer from the right, so it must turn back on itself somewhere. It turns back in the gap between its two nodes when there is one wide enough to hold the line and its text, and otherwise it goes over the top: out of its side, along the top of the row clear of the tallest node between its ends, and down into the far side. The text rides on that top stretch, so it never sits on a node. The same goes for `from: top  to: bottom` in a column, which goes round the right, and for an edge from a node back to itself.
 
-Over the top is the rule, not a guess the tool makes each time — it does not look for the shorter way round. There is not yet a way to ask for underneath or the left.
+Over the top is the rule, not a guess the tool makes each time — it does not look for the shorter way round. To send the line underneath or round the left, say which side of a node it passes: `below resolver`. See "Passing on one side of a node".
 
 #### Several edges between the same two sides
 
@@ -499,6 +499,51 @@ Leave it out on a diagonal pair and the error asks for it, in your own node name
 Several edges may share one channel, and they take a lane each. As with attachments on a side, which edge gets which lane is derived from where their ends sit, so lines through a channel come out in the order their ends are in and do not cross. The lanes are spaced by what is actually running along them: a text's depth where an edge with text runs, an arrow's width where none does.
 
 A named channel does not widen. It is measured off the layout you described, so if you name a gap too narrow for the lines you put through it they crowd together rather than pushing the two nodes apart. That is the difference between this and a text making room for itself, above: there, the corridor is the gap between the edge's own two ends, and opening it moves them apart exactly as anything else put between them would. Here the pair is named by an edge merely passing through, and nothing yet lets an edge bid into a gap it is only a visitor in. It is the remaining half and it is not built.
+
+### Passing on one side of a node
+
+`above`, `below`, `left of` and `right of`, written on an edge, say which side of a node the line passes.
+
+```
+node parser "Parser"
+node resolver "Resolver"  right of parser
+node renderer "Renderer"  right of resolver
+edge parser -> renderer  "underneath"  from: left  to: right  below resolver
+```
+
+They are the placement words, and they mean what `between` means: only where the line passes that node. `below resolver` says the line is below Resolver where it goes by Resolver, not that the whole line is. That edge would go over the top of the row on its own; with the clause it leaves Parser, drops under the row and comes up into Renderer.
+
+Write as many as you need, one for each node you have something to say about. The line meets them in the order they sit along its way, so no clause says an order:
+
+```
+node a "A"
+node b "B"  below a
+edge a -> b  from: top  to: bottom  left of a  right of b
+```
+
+That line leaves the top of A, goes round A's left, crosses over in the gap between the two, passes B on the right, and turns up into B's bottom. The line is drawn as straight stretches joined by rounded corners, each stretch as close to the two ends as its clauses allow, and pushed further out, the way its clause already points, by any node sitting on it.
+
+One clause may name several nodes, and it is not shorthand for several clauses. `below a and b` is below the box bounding both, so it covers the stretch between them too:
+
+```
+node t1 "T1"
+node t2 "T2"  right of t1  (gap: wide)
+node peak "Peak"  right of t1  left of t2  above t1
+edge t1 -> t2  from: bottom  to: bottom  below t1  above peak  below t2
+```
+
+Those three clauses let the line rise over Peak in the gap. Write `below t1 and t2  above peak` instead and it is refused, because Peak sits over the stretch `below t1 and t2` covers, and the line cannot be below the one and above the other at the same point.
+
+Refused, each by name:
+
+- **Clauses that cannot all hold** at one point, as above.
+- **A crossing with no room.** Two clauses on opposite sides need a gap between their nodes to cross over in. Placed flush — `gap: 0` — there is none, and the error says to give the placement a gap or drop a clause. The gap is never opened for the line: you wrote how far apart those two are.
+- **A node the line never passes.** `below z` on a line that never goes by Z says nothing.
+- **Both pairs on one edge.** Passing things above and below takes a line across the page, and passing them left and right takes it up or down; one edge says one or the other.
+- **`between` with a side.** An edge passing between two things already has a side of each.
+- **A part of a node, or a gap.** A line passes a whole box, and passes it as close as reads clearly.
+
+An end with no side named leaves from the side facing where the line is going.
 
 ## Against a part of a node
 
@@ -844,7 +889,7 @@ Deliberate omissions. What they protect is that the renderer never *chooses* an 
 - **Guessing an axis nobody constrained.** When two placements bind one axis and nothing binds the other, the tool refuses rather than picking a target to center on. Choosing there would decide which row a node shares, not how far it sits from something.
 - **Placements that run in a circle.** A loop where each placement demands more room than the last cannot be satisfied and is an error naming the placements involved. A target does *not* have to be positioned before the node naming it — the whole system is solved at once — so ordinary mutual references are fine.
 - **Edge waypoints.** A point a line must pass through is a coordinate wearing a hat. Saying a line goes between two named things is not one — it names things the diagram already contains, and it survives those things moving.
-- **Choosing a route.** The tool will not find its own way around an obstacle. A line that crosses something it should not is a line you have not yet said enough about, and `between` is how you say it.
+- **Choosing a route.** The tool will not find its own way around an obstacle. A line that crosses something it should not is a line you have not yet said enough about, and `between` and `below <node>` are how you say it.
 - **Set-level placement.** Four siblings around a hub are four statements today. Whether a durable group that reflows when a member is added is worth the same-axis conflict it introduces is undecided.
 
 Note what is *not* on this list: saying more about where something goes. A statement that lets you be more precise is not a step toward auto-layout, and the first version was short enough of them to render the benchmark wrong.
@@ -853,7 +898,7 @@ Note what is *not* on this list: saying more about where something goes. A state
 
 Designed, decided, and absent from the code. Written down so the next version has somewhere to start.
 
-**Nothing keeps an edge clear of a node on its own.** Non-overlap applies to nodes only. A line may still cut across a node it has nothing to do with, and an edge text may still land on top of one. `between` is how you say where a line goes when that matters, and nothing checks the ones where you have not said. A check belongs on the diagnostics list, but finding a route by itself does not — see "What the language refuses".
+**Nothing keeps an edge clear of a node on its own.** Non-overlap applies to nodes only. A line may still cut across a node it has nothing to do with, and an edge text may still land on top of one. `between` and `below <node>` are how you say where a line goes when that matters, and nothing checks the ones where you have not said. A check belongs on the diagnostics list, but finding a route by itself does not — see "What the language refuses".
 
 **An icon outside the built-in seven.** The set is closed, and a diagram wanting a picture that is not in it has nowhere to go. The two shapes this could take are a declaration in the file, `icon <name> "<path data>"` beside `style`, and `icon: ./thing.svg` inlined by the tool at render time. Either keeps the output standalone, which is the constraint any answer has to meet.
 
@@ -904,6 +949,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 **Unreleased**
 
 - An edge whose ends face away from each other, such as `from: left  to: right` with the far node to the right, goes around instead of through its own nodes: through the gap between them if there is room, over the top of the row if not.
+- `above`, `below`, `left of` and `right of` on an edge say which side of a node the line passes: `edge a -> b  below c`. Any number, one per node; one naming several nodes covers the stretch between them too. Clauses that cannot all be drawn are refused with the reason.
 
 **0.5.0**
 

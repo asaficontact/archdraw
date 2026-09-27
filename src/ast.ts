@@ -391,6 +391,13 @@ export interface EdgeStmt {
   textAttrs: Attrs;
   /** `between desktop1 and laptop1` — the gap the line passes through. */
   between?: Passage;
+  /**
+   * `below resolver`, `left of a and b` — which side of a node the line is on
+   * where it passes that node. The placement words, because it is the same
+   * statement about the picture; on an edge it binds only the stretch where the
+   * line is passing, as `between` does. Always `kind: 'offset'` with no gap.
+   */
+  passes?: OffsetPlacement[];
   attrs: Attrs;
   line: number;
 }
