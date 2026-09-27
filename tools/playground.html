@@ -260,8 +260,13 @@
         overflow-y: auto;
       }
 
+      /* The selection is painted on the top layer, over the colored text, so
+         it has to be see-through: an opaque one hides what is selected. The
+         ink stays transparent too, or some browsers draw their own selected
+         glyphs over the <pre>'s. */
       textarea::selection {
-        background: #3a3a4c;
+        background: rgba(130, 170, 240, 0.25);
+        color: transparent;
       }
 
       .t-comment {
