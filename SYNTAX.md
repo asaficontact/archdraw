@@ -1,4 +1,4 @@
-# Syntax reference — 0.6.0
+# Syntax reference — 0.7.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1012,7 +1012,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.7.0**
 
 - `line:` takes a bracket for everything about how the line is drawn: `path: curved | square | straight`, `corners: sharp | rounded`, `crossing: none | arc | gap | square`, `pattern: solid | dashed | dotted | dash-dot` and `thickness: thin | normal | thick` or a number. `line: red` still works, as the short form of `line: (color: red)`. Every default is how lines were drawn before, so no existing file changes.
 
