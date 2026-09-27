@@ -1,4 +1,4 @@
-# Syntax reference — 0.7.1
+# Syntax reference — 0.8.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1017,7 +1017,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.8.0**
 
 - `shape: circle`. A circle is sized to hold its text and is always round. Edges on one of its sides spread round that quarter of the circle, and a corner of it is the point on the circle halfway round. It does not yet take a badge, a deck or a node placed against its own edge. Nothing that already renders changes.
 
