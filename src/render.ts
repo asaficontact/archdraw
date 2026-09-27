@@ -2004,13 +2004,36 @@ function planLoops(
     if (corridors.has(edge) || edge.passes) continue;
     const { start, end } = ends.get(edge)!;
     if (start.side === undefined || end.side === undefined) continue;
-    // Sides at right angles, one facing away from the other end.
+    // Sides at right angles, one facing away from the other end. Going out
+    // past both boxes and coming straight in is right when the boxes are side
+    // by side. When the other end lies within the span of the box facing away
+    // — stacked boxes — coming straight in would pass through that box, so
+    // the curve is kept, which has room to bend round the corner; and if even
+    // the curve hits a box, the line goes round the facing-away box on the
+    // side it names.
     if (start.tx * end.tx + start.ty * end.ty === 0) {
+      const away = awayEnd(edge, start, end);
+      if (away && within(faceOf(away.node), away.anchor, away.other)) {
+        if (curveHits(edge, ends.get(edge)!, nodes)) {
+          implyRoute(edge, away.node, sidePass(away.anchor.side!), nodes, ends, routes, measurer, fontSize);
+        }
+        continue;
+      }
       const inWay = nodes.filter(
         (node) => !(contains(node, edge.from) && contains(node, edge.to)),
       );
       const plan = turnBack(edge, start, end, inWay, routes, measurer, fontSize);
       if (plan) tops.push(plan);
+      continue;
+    }
+    // Both sides facing the same way, one box behind the other: the line has
+    // to get round that box to reach the far side, which a curve cannot. It
+    // goes over the top, or round the right for a column, as a loop does.
+    if (start.tx === end.tx && start.ty === end.ty) {
+      const away = awayEnd(edge, start, end);
+      if (away && curveHits(edge, ends.get(edge)!, nodes)) {
+        implyRoute(edge, away.node, start.tx !== 0 ? 'above' : 'right', nodes, ends, routes, measurer, fontSize);
+      }
       continue;
     }
     // The two ends point opposite ways along one axis, each away from the other.
@@ -2246,6 +2269,104 @@ function turnBack(
       routes.set(edge, { points: startAway ? points : points.reverse(), mid });
     },
   };
+}
+
+/**
+ * Whether the single curve an edge would otherwise be drawn as passes through
+ * a box: either of its own, or any other that holds neither end. Measured on
+ * the curve itself, so the answer is the picture's and not a rule about which
+ * sides were named.
+ *
+ * Only passing through counts. Also counting a curve that merely comes close,
+ * or whose text touches a node, was tried (2026-09-27) and sent nearly every
+ * such edge the long way round with square corners, which the user rejected
+ * outright.
+ */
+function curveHits(edge: LayoutEdge, { start, end, bow }: EdgeEnds, nodes: LayoutNode[]): boolean {
+  const reach = controlReach(start, end);
+  const lift = 4 / 3;
+  const bx = (bow?.x ?? 0) * lift;
+  const by = (bow?.y ?? 0) * lift;
+  const c1 = { x: start.x + start.tx * reach + bx, y: start.y + start.ty * reach + by };
+  const c2 = { x: end.x + end.tx * reach + bx, y: end.y + end.ty * reach + by };
+  const at = (t: number): Point => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * start.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * end.x,
+      y: u * u * u * start.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * end.y,
+    };
+  };
+  // The line starts and ends on its own boxes' sides, so those are shrunk a
+  // pixel to let it touch them there.
+  const boxes = [
+    ...[edge.from, edge.to].map((node) => grow(extentOfBox(faceOf(node)), -1)),
+    ...nodes
+      .filter((node) => !contains(node, edge.from) && !contains(node, edge.to))
+      .map((node) => extentOfBox(faceOf(node))),
+  ];
+  const steps = 32;
+  let previous = start as Point;
+  for (let step = 1; step <= steps; step += 1) {
+    const point = at(step / steps);
+    if (boxes.some((box) => segmentHits(previous, point, box))) return true;
+    previous = point;
+  }
+  return false;
+}
+
+/**
+ * The end of an edge whose side faces away from the other end, with its node
+ * and the other end's anchor; the start if both do.
+ */
+function awayEnd(
+  edge: LayoutEdge,
+  start: Anchor,
+  end: Anchor,
+): { node: LayoutNode; anchor: Anchor; other: Anchor } | undefined {
+  const facesAway = (from: Anchor, to: Anchor): boolean =>
+    from.tx * (to.x - from.x) + from.ty * (to.y - from.y) < 0;
+  if (facesAway(start, end)) return { node: edge.from, anchor: start, other: end };
+  if (facesAway(end, start)) return { node: edge.to, anchor: end, other: start };
+  return undefined;
+}
+
+/**
+ * Whether a line coming straight in to `other`, across the way `anchor`'s side
+ * faces, would pass through `box` — that is, `other` lies within the box's
+ * span along that way.
+ */
+function within(box: Box, anchor: Anchor, other: Anchor): boolean {
+  const run: Axis = anchor.tx !== 0 ? 'x' : 'y';
+  return lo(box, run) < other[run] && other[run] < hi(box, run);
+}
+
+/** The clause that passes a node on the side named. */
+function sidePass(side: AttachSide): 'above' | 'below' | 'left' | 'right' {
+  return side === 'top' ? 'above' : side === 'bottom' ? 'below' : side;
+}
+
+/**
+ * Route an edge as if it carried one clause the author did not write, passing
+ * `node` on that side. If that cannot be drawn, the edge keeps its curve: a
+ * refusal would name a clause that is not in the file, and would refuse a file
+ * earlier versions drew.
+ */
+function implyRoute(
+  edge: LayoutEdge,
+  node: LayoutNode,
+  direction: 'above' | 'below' | 'left' | 'right',
+  nodes: LayoutNode[],
+  ends: Map<LayoutEdge, EdgeEnds>,
+  routes: Map<LayoutEdge, Route>,
+  measurer: Measurer,
+  fontSize: number,
+): void {
+  const written = `${direction === 'left' || direction === 'right' ? `${direction} of` : direction} ${node.name}`;
+  try {
+    routes.set(edge, planRoute(edge, [{ direction, nodes: [node], written }], nodes, ends.get(edge)!, measurer, fontSize));
+  } catch (error) {
+    if (!(error instanceof SourceError)) throw error;
+  }
 }
 
 /** A line drawn as straight pieces with rounded corners, and where its text rides. */

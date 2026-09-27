@@ -66,3 +66,26 @@ node o "O"  right of n
 
 edge m -> o  "into the top"  from: left  to: top
 edge m -> o  "into the bottom"  from: left  to: bottom
+
+// Stacked, sides at right angles (GitHub issue #2). Going out past both and
+// coming straight in would pass through the lower node, so the line is one
+// curve, bending round the corner into the side named.
+node p "P"  below j  (gap: wide)
+node q "Q"  below p
+edge p -> q  "curve"  from: bottom  to: left
+
+// Both ends facing the same way, one node behind the other: the line has to
+// get round the node behind, so it goes over the top, as a loop does. The gap
+// between them widens to hold the text, which rides over the node and the gap.
+node r "R"  right of p  (gap: wide)
+node s "S"  right of r
+edge r -> s  "left to left"  from: left  to: left
+
+node t "T"  right of s  (gap: wide)
+node u "U"  right of t
+edge t -> u  "right to right"  from: right  to: right
+
+// In a column, round the right.
+node v "V"  right of u  (gap: wide)
+node w "W"  below v
+edge v -> w  from: bottom  to: bottom

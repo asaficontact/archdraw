@@ -442,6 +442,10 @@ Several such lines over the same row take a lane each, the shorter inside the lo
 
 Sides at right angles can face away too. `from: left  to: top` with the far node to the right leaves heading away from it, so the line steps out of the left, goes up past both nodes, runs along above them and comes straight down into the top. The side named at the far end says which way round: `to: bottom` takes it underneath instead.
 
+When the two nodes are stacked instead — `from: bottom  to: left` into a node directly below — going out past both and coming straight in would pass through the lower node. There the line is one curve, bending round the corner into the side named. If even the curve would cross a node, the line goes round the node on the side it names, as `left of` that node would send it.
+
+Both ends can name the same side. `from: left  to: left` with the far node to the right leaves heading away from it, and has to get round the node behind to reach the far side. It goes over the top, as the lines above do, and down into the gap; in a column, `from: bottom  to: bottom` goes round the right.
+
 Over the top is the rule, not a guess the tool makes each time — it does not look for the shorter way round. To send the line underneath or round the left, say which side of a node it passes: `below resolver`. See "Passing on one side of a node".
 
 #### Several edges between the same two sides
@@ -1018,6 +1022,8 @@ That one was found by testing the lexer, not by rendering — and it could not h
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
 **Unreleased**
+
+- A fix, no syntax change. An edge naming a side at both ends could be drawn through one of its own nodes in two cases. With the nodes stacked and the sides at right angles, such as `from: bottom  to: left`, the line went down past the lower node and came back up through it; it is now one curve round the corner. With both ends naming the same side, such as `from: left  to: left`, the line ran straight through the node behind; it now goes over the top of that node, or round the right in a column. Existing diagrams with such an edge will look different, and correct.
 
 - A fix, no syntax change. Children of a container stack close together, and an edge with no text between two of them used to get only that step, so it drew as an arrowhead with no line behind it. The gap now widens to show a short run of line behind each head, as an edge with text already did for its text. Existing diagrams with such an edge will look different, and correct.
 

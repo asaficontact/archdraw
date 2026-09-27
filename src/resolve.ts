@@ -1760,6 +1760,9 @@ interface Corridor {
  * away together or not at all (`left right` with `from` first); sides at right
  * angles each may, and either is enough (`left top` with `from` first, where
  * the edge turns back over the top, or with `to` below, where it goes round).
+ * The same side on both is left out on purpose: that edge goes round the box
+ * behind, and its text rides on the stretch over that box and the gap, so the
+ * room made in the gap is what keeps a long text clear of the line's turns.
  */
 function facingAway(fromSide: unknown, toSide: unknown): { axis: Axis; fromFirst: boolean }[] {
   // The axis a side is on, and whether it faces away when its own end is first.
