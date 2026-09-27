@@ -358,26 +358,25 @@
         padding: 18px;
         background: var(--diagram);
         display: flex;
-        align-items: center;
-        justify-content: center;
         transition: opacity 120ms ease;
       }
 
+      /* Centered by auto margins, not by align-items/justify-content: those
+         push a drawing taller than the pane out past the top as well as the
+         bottom, where the scrollbar cannot reach it. Auto margins center when
+         there is room and fall to zero when there is not. */
       #diagram svg {
         max-width: 100%;
         height: auto;
+        margin: auto;
       }
 
       /* Actual size: the drawing keeps its own dimensions and the pane scrolls.
          A diagram the size of the benchmark is a thumbnail otherwise. */
-      #diagram.actual {
-        align-items: flex-start;
-        justify-content: flex-start;
-      }
-
       #diagram.actual svg {
         max-width: none;
         flex: none;
+        margin: 0;
       }
 
       #diagram.stale {
@@ -8121,8 +8120,9 @@ globalThis.reladraw = { compile, SourceError, highlightLine, THEME_NAMES, DEFAUL
           drawn = svg;
           diagram.innerHTML = svg;
           // The pane around the drawing takes the drawing's own page color, so a
-          // light theme is not a white card floating on black.
-          var page = /<rect [^>]*fill="([^"]+)"/.exec(svg);
+          // light theme is not a white card floating on black. The <defs> are
+          // skipped: a gap crossing's mask opens with a white rect of its own.
+          var page = /<rect [^>]*fill="([^"]+)"/.exec(svg.replace(/<defs>[\s\S]*?<\/defs>/, ''));
           diagram.style.background = page ? page[1] : '';
           theme.value = themeOf(source.value) || reladraw.DEFAULT_THEME;
           show(null);
