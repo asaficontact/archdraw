@@ -1,4 +1,4 @@
-# Syntax reference — 0.10.0
+# Syntax reference — 0.11.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1068,7 +1068,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.11.0**
 
 - A line never passes through a box. Every edge takes the shortest way between its ends that goes through none, and goes round whatever is in its way, including edges that name no side. This replaces the separate rules for lines going over a row, turning back and going round a node behind, which kept missing cases; a fan of three from one side into a column was the latest. See "Going round boxes".
 - Of two ways round that are equally short, the line goes over the top; otherwise the shorter way wins. It used to go over the top always.

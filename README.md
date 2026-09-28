@@ -66,7 +66,7 @@ That gets you a copy of the skill at the time you run it, so you'll need to re-r
 
 ## Status
 
-Version 0.10.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG.
+Version 0.11.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG.
 
 The language isn't stable yet, so expect the syntax to change.
 
