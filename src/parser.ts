@@ -58,14 +58,14 @@ import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
  */
 export function parse(source: string): Document {
   const statements: Stmt[] = [];
-  /** The statement being gathered, one entry per line that has tokens on it. */
-  let open: Array<{ tokens: Token[]; line: number }> | null = null;
+  /** The statement being gathered, and the line it starts on. */
+  let open: { tokens: Token[]; line: number } | null = null;
   // Brackets may close on a later line, and the lexer only reads `)` as a
   // bracket while one is open, so the depth is carried from line to line.
   let depth = 0;
 
   const close = () => {
-    if (open) statements.push(parseLines(open));
+    if (open) statements.push(parseStatement(open.tokens, open.line));
     open = null;
     depth = 0;
   };
@@ -84,7 +84,7 @@ export function parse(source: string): Document {
     if (tokens.length === 0) return;
 
     if (!indented) {
-      open = [{ tokens, line: lineNumber }];
+      open = { tokens, line: lineNumber };
     } else {
       const first = tokens[0]!;
       if (!open) {
@@ -101,7 +101,7 @@ export function parse(source: string): Document {
           lineNumber,
         );
       }
-      open.push({ tokens, line: lineNumber });
+      open.tokens.push(...tokens);
     }
 
     for (const token of tokens) {
@@ -116,30 +116,39 @@ export function parse(source: string): Document {
 }
 
 /**
- * Parse a statement gathered from one or more lines. The statement parsers
- * report the line a statement starts on, which for a continued one is often
- * not the line at fault, so an error is blamed on the first line whose
- * addition produces it. Lines are nearly always whole attributes, so a prefix
- * of them usually parses; one that fails differently, such as a bracket not
- * yet closed, is not the culprit and is passed over.
+ * Find the line at fault for an error reported on the first line of a
+ * continued statement. Everything after the parser reports a statement by the
+ * line it starts on, which for a continued one is often not where the mistake
+ * is, so this asks which line brings the error in: `run` is tried on the
+ * source with the statement cut after each of its lines in turn, and the first
+ * cut that fails with the same message names the line. A cut that fails
+ * differently — a bracket not yet closed, a placement not yet written — is not
+ * the culprit and is passed over. Lines keep their numbers, because what is cut
+ * is blanked rather than removed.
+ *
+ * This costs a few extra runs, and only when there is an error to report.
  */
-function parseLines(lines: Array<{ tokens: Token[]; line: number }>): Stmt {
-  const start = lines[0]!.line;
-  try {
-    return parseStatement(lines.flatMap((l) => l.tokens), start);
-  } catch (error) {
-    if (!(error instanceof SourceError) || lines.length === 1) throw error;
-    for (let n = 1; n < lines.length; n++) {
-      try {
-        parseStatement(lines.slice(0, n).flatMap((l) => l.tokens), start);
-      } catch (partial) {
-        if (partial instanceof SourceError && partial.message === error.message) {
-          throw new SourceError(error.message, lines[n - 1]!.line);
-        }
+export function blame(source: string, error: SourceError, run: (source: string) => unknown): SourceError {
+  const lines = source.split(/\r?\n/);
+  const start = error.line - 1;
+  const first = lines[start];
+  if (first === undefined || first.trim() === '' || first[0] === ' ' || first[0] === '\t') return error;
+
+  let end = start;
+  while (end + 1 < lines.length && lines[end + 1]!.trim() !== '' && /^[ \t]/.test(lines[end + 1]!)) end += 1;
+  if (end === start) return error;
+
+  for (let last = start; last < end; last++) {
+    const cut = lines.map((line, index) => (index > last && index <= end ? '' : line)).join('\n');
+    try {
+      run(cut);
+    } catch (partial) {
+      if (partial instanceof SourceError && partial.message === error.message) {
+        return last === start ? error : new SourceError(error.message, last + 1);
       }
     }
-    throw new SourceError(error.message, lines[lines.length - 1]!.line);
   }
+  return new SourceError(error.message, end + 1);
 }
 
 function parseStatement(tokens: Token[], line: number): Stmt {
