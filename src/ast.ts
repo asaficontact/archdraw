@@ -377,7 +377,7 @@ export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'th
 export const LINE_VALUES = {
   path: ['curved', 'square', 'straight'],
   corners: ['sharp', 'rounded'],
-  crossing: ['none', 'arc', 'gap', 'square'],
+  crossing: ['gap', 'none', 'arc', 'square'],
   pattern: ['solid', 'dashed', 'dotted', 'dash-dot'],
   thickness: ['normal', 'thin', 'thick'],
 } as const;

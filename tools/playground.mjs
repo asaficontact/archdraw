@@ -58,6 +58,7 @@ const OFFERED = [
   ['coincident', 'parallel edges', 'Several edges between the same two nodes stay parallel.'],
   ['corridors', 'through a gap', 'Edges sent through the gap between two named nodes.'],
   ['overhang', 'outside the nodes', 'Edges that run past the nodes, and the page grows to hold them.'],
+  ['routing', 'going round boxes', 'Every routing bug reported so far, each line now going the shortest way round.'],
   ['lines', 'line styles', 'Curved, square and straight lines, dashes, and how crossings are drawn.'],
 ];
 

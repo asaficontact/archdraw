@@ -1,7 +1,7 @@
 // Edges whose two ends face away from each other. Each has to turn back on
 // itself, and a single curve could only do that through its own nodes. So the
-// line runs along the gap between its two nodes when there is room for it, and
-// over the top of the row when there is not.
+// line takes the shortest way round: along the gap between its two nodes when
+// there is room for it, and over the top of the row when there is not.
 
 // The case that found it: level, with a node in the middle, and a text that
 // used to land on that node.
@@ -50,7 +50,8 @@ node self "Self"  below bottom  (gap: wide)
 
 edge self -> self  "itself"  from: left  to: right
 
-// Two loops over one row take a lane each, the shorter inside.
+// Two lines out of one side, each the shorter way round. They share J's left
+// side, so the one leaving lower down has the shorter way underneath.
 node j "J"  below e  (gap: 200)
 node k "K"  right of j
 node l "L"  right of k
@@ -67,9 +68,9 @@ node o "O"  right of n
 edge m -> o  "into the top"  from: left  to: top
 edge m -> o  "into the bottom"  from: left  to: bottom
 
-// Stacked, sides at right angles (GitHub issue #2). Going out past both and
-// coming straight in would pass through the lower node, so the line is one
-// curve, bending round the corner into the side named.
+// Stacked, sides at right angles (GitHub issue #2). Coming straight in would
+// pass through the lower node, so the line steps out beside it and comes in
+// to the side named.
 node p "P"  below j  (gap: wide)
 node q "Q"  below p
 edge p -> q  "curve"  from: bottom  to: left

@@ -1,0 +1,67 @@
+// Every routing bug reported so far, one row each, the line's text saying
+// where it was reported. Each of these was drawn through a box at some point.
+// Every line now takes the shortest way round that passes through none.
+
+// Hacker News, 2026-09-26: ends facing away across a row. The line ran
+// straight through the middle node, its text sitting on it.
+node parser "Parser"
+node resolver "Resolver"  right of parser
+node renderer "Renderer"  right of resolver
+edge parser -> renderer  "Hacker News"  from: left  to: right
+
+// GitHub issue #2: stacked, sides at right angles. The line came straight up
+// through the lower node.
+node p "P"  below parser  (gap: wide)
+node q "Q"  below p
+edge p -> q  "issue #2"  from: bottom  to: left
+
+// GitHub issue #2: both ends on the same side, one node behind the other. The
+// line went straight through the node behind.
+node r "R"  right of p  (gap: wide)
+node s "S"  right of r
+edge r -> s  "issue #2, same side"  from: left  to: left
+
+node v "V"  right of s  (gap: wide)
+node w "W"  below v
+edge v -> w  from: bottom  to: bottom
+
+// A fan of three, 2026-09-27. The lines to the top and bottom nodes ran level
+// with the middle one, straight through it, out past the column and back.
+node a "A"  below q  (gap: wide)
+node b "B"  right of a  (gap: wide)
+node c "C"  right of a  (gap: wide)
+node d "D"  right of a  (gap: wide)
+edge a -> b  "fan"  from: right  to: top
+edge a -> c  from: right  to: left
+edge a -> d  from: right  to: bottom
+
+// The Cache case, 2026-09-27. The curved line dipped through Cache, while the
+// same line drawn square happened to clear it.
+node web "Web"  right of c  (gap: wide)
+node api "API"  right of web
+node db "Postgres"  right of api
+node cache "Cache"  below api
+edge web -> db  "cache case"  from: bottom  to: bottom
+
+// A curve back round the side of a row, 2026-09-26: it crossed the node it
+// was going round.
+node e "E"  below a  (gap: 200)
+node f "F"  right of e  (gap: wide)
+node g "G"  below e and f
+edge g -> e  "round the side"  from: left  to: left
+
+// Two lines turning down the same gap into one box, 2026-09-27. The longer
+// one's curve swung across the other's twice. They now take a lane each, in
+// the order that keeps them from crossing at all.
+node x1 "X"  right of z  (gap: wide)
+node a1 "A"  below x1
+node b1 "B"  right of a1  (gap: normal)  below a1  (gap: tight)
+edge a1 -> b1  from: right  to: left
+edge x1 -> b1  from: right  to: left
+
+// No side named, with a box in the way. The line used to be straight from
+// center to center, through whatever lay between.
+node x "X"  right of f  (gap: wide)
+node y "Y"  right of x
+node z "Z"  right of y
+edge x -> z  "no sides named"

@@ -431,13 +431,15 @@ An edge with no text asks for nothing, since every gap is wide enough for an arr
 edge desktop1.files <-> hub  from: right  to: top
 ```
 
-That line leaves the right side of `desktop1.files` heading right, and arrives at the top of `hub` heading down. Naming a side is a statement about how the line should leave or arrive, so the edge is drawn as a curve that actually does. An edge naming neither side stays the straight center-to-center line it has always been. Either end may be named on its own; the unnamed one aims at wherever its partner ended up.
+That line leaves the right side of `desktop1.files` heading right, and arrives at the top of `hub` heading down. Naming a side is a statement about how the line should leave or arrive, so the edge is drawn as a curve that actually does. An edge naming neither side is a straight line from center to center, unless a box is in the way (see "Going round boxes"). Either end may be named on its own; the unnamed one aims at wherever its partner ended up.
 
 You name a side and never a point on it. Alone on a side, an edge lands at its center. Sharing a side with other edges, the attachments space themselves apart, and which one goes where is derived from where the far ends actually sit — of two edges arriving at one top side, the one coming from further left arrives further left. Move a node and the order follows it. This is the same rule as nodes not overlapping: the tool separates things by default and reads the direction off the solved layout rather than asking you.
 
 The space it leaves is deliberately small, and shrinks further if the side is too short to hold the whole group. On a side short enough, it shrinks to nothing and the attachments coincide. Their texts still come apart, because the lines bow in the middle to make up what the side could not give them, but the arrowheads themselves land on one point and nothing warns you — so a small node with several edges arriving on one side is worth a look.
 
-#### Ends that face away from each other
+#### Going round boxes
+
+A line never passes through a box. It takes the shortest way between its ends that goes through none, leaving a named side heading straight out and arriving at one heading straight in, with as few turns as that length allows. When the direct line is clear, that is the line you get. When it is not, the line goes round whatever is in the way. A line you have steered with `between` or `below <node>` keeps to what you said instead.
 
 ```
 node parser "Parser"
@@ -446,17 +448,17 @@ node renderer "Renderer"  right of resolver
 edge parser -> renderer  "test edge"  from: left  to: right
 ```
 
-That line leaves Parser heading left and has to arrive at Renderer from the right, so it must turn back on itself somewhere. It turns back in the gap between its two nodes when there is one wide enough to hold the line and its text, and otherwise it goes over the top: out of its side, along the top of the row clear of the tallest node between its ends, and down into the far side. The text rides on that top stretch, so it never sits on a node. The same goes for `from: top  to: bottom` in a column, which goes round the right, and for an edge from a node back to itself.
+That line leaves Parser heading left and has to arrive at Renderer from the right, so it must turn back on itself somewhere. The shortest way is out of Parser's left, over the top of the row, and down into Renderer's right. Under the row would be exactly as long, and when two ways round tie, the line goes over the top, or round the right in a column. A node stepped down far enough leaves a gap between the two, and the line turns back through the gap, because that is shorter.
 
-Several such lines over the same row take a lane each, the shorter inside the longer, so they nest instead of drawing on top of one another.
+The same rule covers every other case: sides at right angles where one faces away from the other end, two ends naming the same side with one node behind the other, a node back to itself, and a line with no side named that has a box between its ends. Each goes the shortest way round. An end with no side named leaves or arrives by whichever of its box's sides makes the way shortest.
 
-Sides at right angles can face away too. `from: left  to: top` with the far node to the right leaves heading away from it, so the line steps out of the left, goes up past both nodes, runs along above them and comes straight down into the top. The side named at the far end says which way round: `to: bottom` takes it underneath instead.
+Several lines along the same stretch take a lane each, side by side, instead of drawing on top of one another. The text rides on the line's longest straight piece that it does not land on a box from, and never changes which way the line goes.
 
-When the two nodes are stacked instead — `from: bottom  to: left` into a node directly below — going out past both and coming straight in would pass through the lower node. There the line is one curve, bending round the corner into the side named. If even the curve would cross a node, the line goes round the node on the side it names, as `left of` that node would send it.
+A curved line and a square one take the same way; the curved one sweeps its turns. At an arrowhead, the line always finishes straight, so the head points square into the side.
 
-Both ends can name the same side. `from: left  to: left` with the far node to the right leaves heading away from it, and has to get round the node behind to reach the far side. It goes over the top, as the lines above do, and down into the gap; in a column, `from: bottom  to: bottom` goes round the right.
+When there is no way at all — the side you named is flush against another box — the file is refused with the reason: `edge a -> b: cannot leave a's right side, b is against it`.
 
-Over the top is the rule, not a guess the tool makes each time — it does not look for the shorter way round. To send the line underneath or round the left, say which side of a node it passes: `below resolver`. See "Passing on one side of a node".
+To send a line round the other way, say which side of a node it passes: `below resolver`. See "Passing on one side of a node".
 
 #### Several edges between the same two sides
 
@@ -612,7 +614,7 @@ edge web -> api  line: (color: #d2904e, thickness: thick, crossing: arc)
 | `color` | a color | as `line:` alone |
 | `path` | `curved` (the default), `square`, `straight` | how the line joins the points it has to meet |
 | `corners` | `sharp` (the default), `rounded` | how a square or straight line turns |
-| `crossing` | `none` (the default), `arc`, `gap`, `square` | how the line is drawn where it crosses an earlier one |
+| `crossing` | `gap` (the default), `none`, `arc`, `square` | how the line is drawn where it crosses an earlier one |
 | `pattern` | `solid` (the default), `dashed`, `dotted`, `dash-dot` | |
 | `thickness` | `thin`, `normal` (the default), `thick`, or a number of pixels | |
 
@@ -624,7 +626,7 @@ edge web -> api  line: (color: #d2904e, thickness: thick, crossing: arc)
 
 **Corners** apply wherever a line has them: every bend in a square line, and the bends a clause puts in a straight one. A curved line has none, so `corners: rounded` written on a curved edge is refused. From a style or a default it rounds the edges that have corners and leaves curved ones alone, as a style's `fill:` lands only on the things that have an inside.
 
-**A crossing is drawn on the later line**: the edge written further down the file jumps the one written above it. `arc` is a small half-circle hop, `square` a three-sided jump, and `gap` a short break in the later line, as though it passed underneath. A line never jumps within reach of its own ends, where two lines meeting at a box are not passing each other.
+**A crossing is drawn on the later line**: the edge written further down the file jumps the one written above it. `gap`, the default, is a short break in the later line, as though it passed underneath; `arc` is a small half-circle hop, `square` a three-sided jump, and `none` draws the two lines straight across each other. A line never jumps within reach of its own ends, where two lines meeting at a box are not passing each other.
 
 **A pattern is measured in thicknesses**, so dashes keep their proportions on a thick line.
 
@@ -1009,7 +1011,7 @@ Deliberate omissions. What they protect is that the renderer never *chooses* an 
 - **Guessing an axis nobody constrained.** When two placements bind one axis and nothing binds the other, the tool refuses rather than picking a target to center on. Choosing there would decide which row a node shares, not how far it sits from something.
 - **Placements that run in a circle.** A loop where each placement demands more room than the last cannot be satisfied and is an error naming the placements involved. A target does *not* have to be positioned before the node naming it — the whole system is solved at once — so ordinary mutual references are fine.
 - **Edge waypoints.** A point a line must pass through is a coordinate wearing a hat. Saying a line goes between two named things is not one — it names things the diagram already contains, and it survives those things moving.
-- **Choosing a route.** The tool will not find its own way around an obstacle. A line that crosses something it should not is a line you have not yet said enough about, and `between` and `below <node>` are how you say it.
+- **Choosing where a line goes when you said.** The tool finds its own way round a box in a line's way, but only as the shortest way through the open space, so where a line goes follows from where the boxes are. When you want a particular way instead, `between` and `below <node>` say it, and the tool keeps to what they say.
 - **Set-level placement.** Four siblings around a hub are four statements today. Whether a durable group that reflows when a member is added is worth the same-axis conflict it introduces is undecided.
 
 Note what is *not* on this list: saying more about where something goes. A statement that lets you be more precise is not a step toward auto-layout, and the first version was short enough of them to render the benchmark wrong.
@@ -1060,11 +1062,21 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 ~~An edge text ignored the line break.~~ Fixed. ` / ` split a node's text and was never applied to an edge's, so the marker came out as a literal slash on an arrow and the benchmark's two-line captions had to be flattened to one. The measurer had always returned the split lines; the renderer was handing it the raw string and drawing that instead. The block now centers on the point the text already occupied, so a one-line text sits exactly where it did.
 
-~~An edge whose ends faced away from each other was drawn through its own nodes.~~ Fixed. `from: left  to: right` with the far node further right was one curve bending out at both ends, and with the two nodes in a row it flattened into a straight line through both of them and anything between, its text landing on whatever was in the middle. It was not a matter of exact alignment: a node stepped down a little drew a tilted version of the same line. Such an edge now turns back in the gap between its nodes if there is room, and goes over the top of the row if not. See "Ends that face away from each other".
+~~An edge whose ends faced away from each other was drawn through its own nodes.~~ Fixed. `from: left  to: right` with the far node further right was one curve bending out at both ends, and with the two nodes in a row it flattened into a straight line through both of them and anything between, its text landing on whatever was in the middle. It was not a matter of exact alignment: a node stepped down a little drew a tilted version of the same line. Such an edge now turns back in the gap between its nodes if there is room, and goes over the top of the row if not. See "Going round boxes".
 
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- A line never passes through a box. Every edge takes the shortest way between its ends that goes through none, and goes round whatever is in its way, including edges that name no side. This replaces the separate rules for lines going over a row, turning back and going round a node behind, which kept missing cases; a fan of three from one side into a column was the latest. See "Going round boxes".
+- Of two ways round that are equally short, the line goes over the top; otherwise the shorter way wins. It used to go over the top always.
+- A curve finishes straight at an arrowhead, so the head points square into its side. Most diagrams with a named side look slightly different.
+- Where two lines cross, the later one now breaks for a short gap, as though it passed underneath. It used to draw straight across; `crossing: none` keeps that. See "How the line is drawn".
+- Lines that turn down the same gap, such as two into one side of a box, take a lane each in the order that keeps them from crossing, instead of curving across each other.
+- A line's text no longer lands on another line's text: where two would overlap, the later one slides along its own line to the nearest clear spot.
+- **Breaking:** a line whose named side is flush against another box, with no way out, is refused with the reason. It used to be drawn through the box.
 
 **0.10.0**
 

@@ -153,11 +153,11 @@ edge <from> -> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [
 
 `<-` and `<->` also work; `a <- b` is exactly `b -> a` drawn the same way, and lets you write the subject first. Endpoints may be nested (`server.api`).
 
-`from:` and `to:` name a side — `top`, `bottom`, `left`, `right` — and turn the line into a curve that actually leaves and arrives that way. Name them whenever the straight center-to-center line would cut through something.
+`from:` and `to:` name a side — `top`, `bottom`, `left`, `right` — and turn the line into a curve that actually leaves and arrives that way. Name them when it matters which side a line meets a box on.
 
-`between a and b` says the line travels down the gap between two named nodes. `below c` (or `above`, `left of`, `right of`) says which side of a node the line passes, only where it goes by that node; write one per node, and `below c and d` covers the stretch between them too. Use these instead of hoping: the tool will not route around an obstacle by itself, on purpose.
+A line never passes through a box: every edge takes the shortest way between its ends that goes through none, going round whatever is in its way. Of two ways round that are equally short, it goes over the top (round the right for a column). An end with no side named leaves by whichever side makes the way shortest.
 
-An edge whose two ends face away from each other — `from: left  to: right` with the far node further right — turns back through the gap between its nodes if there is room, and otherwise goes over the top of the row (round the right for a column). Add `below <node>` to send it underneath.
+`between a and b` says the line travels down the gap between two named nodes. `below c` (or `above`, `left of`, `right of`) says which side of a node the line passes, only where it goes by that node; write one per node, and `below c and d` covers the stretch between them too. Use these when you want a line to go a particular way rather than the shortest.
 
 An edge with text widens the corridor between its own two ends by what the text needs, so texts are safe to add.
 
