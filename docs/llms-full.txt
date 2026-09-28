@@ -240,7 +240,7 @@ node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 
 
 # Part 2 — the syntax reference
 
-# Syntax reference — 0.11.1
+# Syntax reference — 0.12.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1310,7 +1310,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.12.0**
 
 - Diagrams can be written straight into a web page. Load `dist/element.js` from the package, and each `<reladraw-diagram>` element is drawn in place from the source inside it, with `theme=` choosing the colors. See "In a web page" in the README.
 
