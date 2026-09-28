@@ -153,6 +153,10 @@ Commands:
                                  white / black / transparent.
 
 Reading colors out of a reference image (all take any PNG):
+  imgdiff <a.png> <b.png> [out] How many pixels differ between two images, and
+                                 each one's size. With out, also writes a picture
+                                 of the difference there. For telling whether a
+                                 PNG that is not byte-identical actually moved.
   pixel <img> <x> <y>           Hex color of one pixel
   palette <img> [WxH+X+Y] [n]   The n most common colors in a region, biggest
                                  first. Region defaults to the whole image,
@@ -235,7 +239,12 @@ screenshot() {
   # left sitting beside today's SVG. A stale PNG is the worst outcome here: the
   # whole point of `out` is that the image can be trusted to match the source.
   rm -f "$out"
+  # Gray text smoothing and no hinting, whatever this machine's font settings
+  # say: a PNG is viewed on other screens, where subpixel color fringes show as
+  # halos, and two machines with different settings otherwise draw the same
+  # diagram differently and `stale` calls the tracked pictures out of date.
   "$chrome" --headless --disable-gpu --no-sandbox \
+    --disable-lcd-text --font-render-hinting=none \
     --screenshot="$out" \
     --window-size="$size" \
     --default-background-color="$bg" \
@@ -773,6 +782,16 @@ PY
     out="${2:?output .png path required}"
     screenshot "$in" "$out" "${3:-1600x1200}" "${4:-ffffff}"
     echo "$out"
+    ;;
+  imgdiff)
+    a="${1:?first image required}"
+    b="${2:?second image required}"
+    echo "sizes: $(im "$a" -format '%wx%h' info:) and $(im "$b" -format '%wx%h' info:)"
+    echo "pixels differing: $(im "$a" "$b" -metric AE -compare -format '%[distortion]' info: 2>&1)"
+    if [ -n "${3:-}" ]; then
+      im "$a" "$b" -compose difference -composite -negate "$3"
+      echo "$3"
+    fi
     ;;
   pixel)
     img="${1:?image path required}"
