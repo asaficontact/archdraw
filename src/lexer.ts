@@ -21,12 +21,14 @@ export interface Token {
  * opening bracket counts only where a token starts, and a closing one only
  * while a group is open, so an unquoted `rgb(20,20,20)` stays a single token.
  *
+ * `depth` is how many brackets are still open from the lines before, when a
+ * statement continues onto this one.
+ *
  * Returns an empty array for a blank or comment-only line.
  */
-export function tokenizeLine(line: string, lineNumber: number): Token[] {
+export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token[] {
   const tokens: Token[] = [];
   let i = 0;
-  let depth = 0;
 
   while (i < line.length) {
     const ch = line[i]!;

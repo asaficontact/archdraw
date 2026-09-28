@@ -4,7 +4,7 @@
 
 Most models have not seen reladraw in training, and its syntax is not Mermaid's, Graphviz's or D2's. Read the full documentation below before writing a file rather than guessing at syntax. Things to know first:
 
-- One statement per line. The statements are `node`, `edge`, `style`, `diagram` and `default`. `//` starts a comment; `#` opens a hex color.
+- A statement starts at the beginning of a line and may continue onto indented lines below it. The statements are `node`, `edge`, `style`, `diagram` and `default`. `//` starts a comment; `#` opens a hex color.
 - Anything the file leaves ambiguous is refused with an error naming the statement, never guessed. Read the error, fix the file, render again.
 - Render with `reladraw diagram.reladraw -o diagram.svg`, or `npx reladraw` without installing.
 - These pages describe the main branch, which can run ahead of the release on npm. If the installed tool refuses a construct documented here, check the changelog at the end of the syntax reference.

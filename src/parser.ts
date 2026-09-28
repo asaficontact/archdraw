@@ -41,21 +41,105 @@ import {
   nameTarget,
 } from './ast.js';
 import { SourceError } from './errors.js';
+import { STATEMENT_KEYWORDS } from './grammar.js';
 import { isAttrKey, tokenizeLine, type Token } from './lexer.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
-/** Parse a whole source file. One statement per line; blanks and comments drop out. */
+/**
+ * Parse a whole source file. A statement starts on an unindented line and runs
+ * on through any line that starts with whitespace; a blank line or the next
+ * unindented one ends it. How much whitespace never matters, only whether
+ * there is any, so two lines that look alike cannot mean different things.
+ *
+ * An indented comment stays inside the statement and an unindented one ends
+ * it. An indented line with nothing open above it is refused rather than read
+ * as a statement of its own: it is a stray indent or a deleted first line, and
+ * both are worth hearing about.
+ */
 export function parse(source: string): Document {
   const statements: Stmt[] = [];
+  /** The statement being gathered, one entry per line that has tokens on it. */
+  let open: Array<{ tokens: Token[]; line: number }> | null = null;
+  // Brackets may close on a later line, and the lexer only reads `)` as a
+  // bracket while one is open, so the depth is carried from line to line.
+  let depth = 0;
+
+  const close = () => {
+    if (open) statements.push(parseLines(open));
+    open = null;
+    depth = 0;
+  };
 
   source.split(/\r?\n/).forEach((line, index) => {
     const lineNumber = index + 1;
-    const tokens = tokenizeLine(line, lineNumber);
+    if (line.trim() === '') {
+      close();
+      return;
+    }
+
+    const indented = line[0] === ' ' || line[0] === '\t';
+    if (!indented) close();
+
+    const tokens = tokenizeLine(line, lineNumber, depth);
     if (tokens.length === 0) return;
-    statements.push(parseStatement(tokens, lineNumber));
+
+    if (!indented) {
+      open = [{ tokens, line: lineNumber }];
+    } else {
+      const first = tokens[0]!;
+      if (!open) {
+        throw new SourceError(
+          'this line is indented, which continues the statement above, but there is none to ' +
+            'continue — remove the indentation to start a new statement',
+          lineNumber,
+        );
+      }
+      if (!first.quoted && (STATEMENT_KEYWORDS as readonly string[]).includes(first.text)) {
+        throw new SourceError(
+          `\`${first.text}\` cannot continue the statement above — an indented line continues ` +
+            `the one before it, so remove the indentation to start a new statement`,
+          lineNumber,
+        );
+      }
+      open.push({ tokens, line: lineNumber });
+    }
+
+    for (const token of tokens) {
+      if (token.quoted) continue;
+      if (token.text === '(') depth += 1;
+      else if (token.text === ')') depth -= 1;
+    }
   });
+  close();
 
   return { statements };
+}
+
+/**
+ * Parse a statement gathered from one or more lines. The statement parsers
+ * report the line a statement starts on, which for a continued one is often
+ * not the line at fault, so an error is blamed on the first line whose
+ * addition produces it. Lines are nearly always whole attributes, so a prefix
+ * of them usually parses; one that fails differently, such as a bracket not
+ * yet closed, is not the culprit and is passed over.
+ */
+function parseLines(lines: Array<{ tokens: Token[]; line: number }>): Stmt {
+  const start = lines[0]!.line;
+  try {
+    return parseStatement(lines.flatMap((l) => l.tokens), start);
+  } catch (error) {
+    if (!(error instanceof SourceError) || lines.length === 1) throw error;
+    for (let n = 1; n < lines.length; n++) {
+      try {
+        parseStatement(lines.slice(0, n).flatMap((l) => l.tokens), start);
+      } catch (partial) {
+        if (partial instanceof SourceError && partial.message === error.message) {
+          throw new SourceError(error.message, lines[n - 1]!.line);
+        }
+      }
+    }
+    throw new SourceError(error.message, lines[lines.length - 1]!.line);
+  }
 }
 
 function parseStatement(tokens: Token[], line: number): Stmt {

@@ -19,9 +19,12 @@
  * The scanner is the JavaScript consumer of the same spec, and the playground is
  * its only caller.
  *
- * Nothing in the language spans lines: `//` runs to the end of one, a string
- * closes on one, and there are no blocks. That is the property those editor
- * formats need and the reason a `.reladraw` grammar is small in all of them.
+ * No token spans lines: `//` runs to the end of one, a string closes on one,
+ * and there are no blocks. A statement may continue onto indented lines, but
+ * each of those is colored by the same rules, and a word that is a keyword at
+ * the start of one is refused by the parser anyway. That is the property those
+ * editor formats need and the reason a `.reladraw` grammar is small in all of
+ * them.
  */
 
 import { DIRECTIONS, POSITIONS, SIDES, PASSAGE_AXES } from './ast.js';

@@ -6,9 +6,19 @@ The worked example is `examples/arch.reladraw`, transcribed from the reference r
 
 ## Shape of the file
 
-One statement per line. No multi-line statements, no line continuations, no blocks.
+A statement starts at the beginning of a line. A long one may continue onto the lines after it by indenting them:
 
-Blank lines and `//` comments are ignored. A comment runs to the end of the line and may trail a statement, so `node a "Docker"  // the one that matters` is fine. Indentation is ignored entirely — a formatter may add it for readability, and stale indentation cannot change what a file means.
+```
+node desktop1 "Desktop 1 / Linux"
+  above-left of hub  gap: tight
+  badge: desktop  style: synced
+```
+
+A line that starts with whitespace continues the statement above it, and a blank line or the next unindented line ends it. How much whitespace makes no difference — one space and a tab mean the same — so nothing can depend on indentation you cannot see. A bracket may stay open across lines, as in `line: (color: red,` with `pattern: dashed)` on the next. There are no blocks: indentation continues a statement, and never puts one thing inside another.
+
+An indented line with no statement to continue — at the top of the file, or after a blank line or an unindented comment — is an error rather than a statement of its own, and so is an indented line starting with a statement keyword such as `node`. Both are almost always a stray indent, and both say to remove it.
+
+Blank lines and `//` comments are ignored. A comment runs to the end of the line and may trail a statement, so `node a "Docker"  // the one that matters` is fine. An indented comment line sits inside the statement it follows; an unindented one ends it.
 
 A lone `/` is an ordinary character rather than the start of a comment, and `#` is ordinary too — it opens a hex color. Comments were spelled `#` in an earlier version and moved to `//` so that `fill: #14532d` could be written the way every other tool writes a color.
 
@@ -1055,6 +1065,11 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- A statement may continue onto the lines after it by indenting them. See "Shape of the file".
+- **Breaking:** indentation used to be ignored, so an indented `node` line was a statement of its own. It now continues the statement above and is refused, with a message saying to remove the indentation.
 
 **0.9.0**
 

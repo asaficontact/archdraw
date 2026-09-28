@@ -50,7 +50,7 @@ Nothing says how far apart `hub` and `side` are. Delete `wedge` and they close b
 
 ## Writing a file
 
-One statement per line. No blocks, no continuations, no significant indentation. `//` starts a comment and may trail a statement.
+A statement starts at the beginning of a line, and a long one continues onto following lines that are indented; a blank or unindented line ends it. How much indentation makes no difference, and there are no blocks — indentation never puts one thing inside another. `//` starts a comment and may trail a statement.
 
 A statement is a positional head — the keyword, a name, then a text — followed by attributes and placements **in any order**. A token ending in a colon opens an attribute and nothing else does, so `node n "text" gap: wide below worker` and `node n "text" below worker gap: wide` are the same statement.
 
