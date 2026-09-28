@@ -19,7 +19,7 @@ Chrome, and the image-reading commands at the bottom want ImageMagick.
 Commands:
   install                       Install the dev dependencies (npm install).
                                  Needed once per machine before `build`.
-  build                         Compile TypeScript (npx tsc)
+  build                         Compile TypeScript: the library, then the browser element
   clean-build                   rm -rf dist and examples/out, then compile
   render <file> <out.svg>       Run the compiled CLI on a .reladraw file
   try '<statements>'            Parse and render source given on the command
@@ -108,6 +108,11 @@ Commands:
                                  page-run with the Examples picker open and the
                                  nth example (default 1, counting from 0)
                                  previewed.
+  element [out.png] [WxH]       Screenshot tools/element.html, the check page
+                                 for <reladraw-diagram>: each case on it says
+                                 what should appear. `element dom` prints the
+                                 DOM after the element has drawn. Run `build`
+                                 first — it loads dist/element.js.
   before <file> [ref]           Render one example as <ref> renders it, into
                                  examples/out/<name>-before.png. `regress` says
                                  that something moved; this is how you see what.
@@ -191,6 +196,13 @@ tmp_path() {
   base="$(mktemp "${dir%/}/reladraw-$1.XXXXXX")"
   rm -f "$base"
   echo "$base.$2"
+}
+
+# The working tree's build: the library and command-line tool, then the browser
+# element on its own, so only the element sees the DOM's types. A throwaway
+# build of an old ref runs plain `npx tsc`, since it only needs dist/cli.js.
+compile() {
+  npx tsc && npx tsc -p tsconfig.element.json
 }
 
 # Two SVGs that differ only in their ids' per-drawing prefix. Any change to a
@@ -337,11 +349,11 @@ case "$cmd" in
     npm install
     ;;
   build)
-    npx tsc
+    compile
     ;;
   clean-build)
     rm -rf dist examples/out
-    npx tsc
+    compile
     ;;
   render)
     in="${1:?input .reladraw path required}"
@@ -435,7 +447,7 @@ case "$cmd" in
     # built from a clean clone can ship a `bin` pointing at a file that is not
     # in it. Note that `npm pack` does not run prepublishOnly — only publish
     # does — so this builds first rather than trusting whatever dist/ holds.
-    npx tsc
+    compile
     t="$(mktemp -d)"
     npm pack --pack-destination "$t" >/dev/null 2>&1
     mkdir -p "$t/probe"
@@ -506,7 +518,7 @@ case "$cmd" in
     echo "docs/llms-full.txt regenerated from the skill and SYNTAX.md"
     ;;
   snippets)
-    [ -f dist/index.js ] || npx tsc
+    [ -f dist/index.js ] || compile
     if [ "$#" -gt 0 ]; then
       node tools/snippets.mjs "$@"
     else
@@ -518,7 +530,7 @@ case "$cmd" in
     # and compared with what is there. Each of these went stale silently at least
     # once, because regenerating it was a separate step nobody was prompted for.
     # Reports and never rewrites: the fix is the named command, run on purpose.
-    npx tsc
+    compile
     t="$(mktemp -d)"
     found=0
     stale() { echo "  STALE  $1 — run ./dev.sh $2"; found=1; }
@@ -616,6 +628,24 @@ EOF
     "$0" page-run "document.getElementById('browse').click();for(var i=0;i<${3:-1};i++)document.getElementById('catalog').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));" \
       "${1:-$(tmp_path examples png)}" "${2:-1400x900}"
     ;;
+  element)
+    # Chrome refuses a module script from a file:// page, whose origin is null,
+    # unless told file pages may read files. The page imports dist/ as a
+    # module because that is how a stranger's page will load it.
+    url="file://$PWD/tools/element.html"
+    if [ "${1:-}" = "dom" ]; then
+      "$(chrome_bin)" --headless --disable-gpu --no-sandbox --allow-file-access-from-files \
+        --virtual-time-budget=2000 --dump-dom "$url" 2>/dev/null
+    else
+      out="${1:-$(tmp_path element png)}"
+      rm -f "$out"
+      "$(chrome_bin)" --headless --disable-gpu --no-sandbox --allow-file-access-from-files \
+        --disable-lcd-text --font-render-hinting=none --virtual-time-budget=2000 \
+        --screenshot="$out" --window-size="${2:-900x1400}" "$url" >/dev/null 2>&1 || true
+      [ -f "$out" ] || { echo "no screenshot of $url" >&2; exit 1; }
+      echo "$out"
+    fi
+    ;;
   clicks)
     # What a browser would actually follow, at each point named. A destination
     # is the one thing in the output that cannot be seen in a picture, and the
@@ -667,7 +697,7 @@ PY
     ln -s "$PWD/node_modules" "$work/base/node_modules"
     (cd "$work/base" && npx tsc >/dev/null)
 
-    npx tsc
+    compile
     moved=0
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
@@ -698,7 +728,7 @@ PY
   snapshot)
     dir="${1:?output directory required}"
     mkdir -p "$dir"
-    npx tsc
+    compile
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
       node dist/cli.js "$in" -o "$dir/$name.svg" >/dev/null 2>&1 || echo "FAILS $name"
@@ -712,7 +742,7 @@ PY
     dir="${1:?baseline directory required}"
     work="$(mktemp -d -t reladraw-against-XXXXXX)"
     trap 'rm -rf "$work"' EXIT
-    npx tsc
+    compile
     moved=0
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
@@ -742,7 +772,7 @@ PY
     ln -s "$PWD/node_modules" "$work/base/node_modules"
     (cd "$work/base" && npx tsc >/dev/null)
 
-    npx tsc
+    compile
     moved=0
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"

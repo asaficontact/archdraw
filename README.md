@@ -48,6 +48,22 @@ npm install && npm run build
 node dist/cli.js examples/arch.reladraw -o out.svg
 ```
 
+## In a web page
+
+Load one script, then write diagrams straight into the page:
+
+```html
+<script type="module" src="https://cdn.jsdelivr.net/npm/reladraw/dist/element.js"></script>
+
+<reladraw-diagram>
+  node a "Parser"
+  node b "Renderer" right of a
+  edge a -> b
+</reladraw-diagram>
+```
+
+Each `<reladraw-diagram>` is replaced by its SVG. Indent the source however suits the page, since the indentation its lines share is taken off. Add `theme="light"` (or any other theme) to change the colors. A mistake is shown where the diagram would have been, with its line number counted from the first line of the diagram. The page's HTML is read first, so a `<` followed by a letter inside a text has to be written `&lt;`.
+
 ## Using it with an agent
 
 To install a skill to let your agent know how to use reladraw:
@@ -66,7 +82,7 @@ That gets you a copy of the skill at the time you run it, so you'll need to re-r
 
 ## Status
 
-Version 0.11.1. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG.
+Version 0.11.1. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
 
 The language isn't stable yet, so expect the syntax to change.
 

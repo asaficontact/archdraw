@@ -1,0 +1,12 @@
+{
+  // The browser element, compiled on its own so that only it sees the DOM's
+  // types. The main tsconfig.json leaves it out, so anything else in src/ that
+  // names `document` or `window` fails to compile instead of failing at run
+  // time in the command-line tool.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/element.ts"],
+  "exclude": []
+}

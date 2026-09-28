@@ -32,7 +32,7 @@
     "url": "https://github.com/reladraw/reladraw/issues"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.element.json",
     "prepublishOnly": "npm run build",
     "preversion": "./dev.sh check-version \"$npm_new_version\"",
     "dev": "tsc --watch",

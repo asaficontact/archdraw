@@ -1310,6 +1310,10 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+- Diagrams can be written straight into a web page. Load `dist/element.js` from the package, and each `<reladraw-diagram>` element is drawn in place from the source inside it, with `theme=` choosing the colors. See "In a web page" in the README.
+
 **0.11.1**
 
 - Several diagrams inlined into one web page no longer lose their arrowheads. Every drawing used to name its arrowheads the same way, so a page took them all from the first drawing, and drew none when that drawing was hidden. The gaps where lines cross were named the same way, so a second drawing's lines were cut where the first drawing's crossed. Each drawing's names now carry a prefix of its own, taken from the drawing, so the same source still gives the same SVG.
