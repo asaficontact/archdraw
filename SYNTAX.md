@@ -1136,7 +1136,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 
 Open questions the benchmark raised, recorded so a later session does not rediscover them.
 
-- One edge passing some nodes above or below and others left or right — an L-shaped line, across under one node and then down past another — is refused today. Often the picture leaves only one order for the two legs; where two orders both fit, the tool must not pick one, and whether it asks for another clause or follows a standing rule is not decided.
+- ~~One edge passing some nodes above or below and others left or right — an L-shaped line, across under one node and then down past another — is refused today.~~ Answered in 0.6.0: such an edge turns between the two kinds as few times as it can, and where two orders both fit, a standing rule picks — a side named at an end says which way the line goes first, and with none named it goes across first. See "Passing on one side of a node" above.
 - Named gaps are the first step toward numbers, but making them minimums took most of the pressure off: they now set how much a diagram breathes, never whether something fits. Whether four names is the right number is still open.
 - Four machines each holding a `files` child with the same text means writing the same line four times. This is the strongest case for a set-level declaration, for terseness rather than for placement.
 - The 2×2 arrangement around a hub is four independent statements, so a fifth machine has no slot to reflow into. There are only eight directions.
