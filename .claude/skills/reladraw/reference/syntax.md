@@ -1,4 +1,4 @@
-# Syntax reference — 0.11.0
+# Syntax reference — 0.11.1
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1068,9 +1068,9 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.11.1**
 
-- Several diagrams inlined into one web page no longer lose their arrowheads. Every drawing used to name its arrowheads the same way, so a page took them all from the first drawing, and drew none when that drawing was hidden. Each drawing's names now carry a prefix of its own, taken from the drawing, so the same source still gives the same SVG.
+- Several diagrams inlined into one web page no longer lose their arrowheads. Every drawing used to name its arrowheads the same way, so a page took them all from the first drawing, and drew none when that drawing was hidden. The gaps where lines cross were named the same way, so a second drawing's lines were cut where the first drawing's crossed. Each drawing's names now carry a prefix of its own, taken from the drawing, so the same source still gives the same SVG.
 
 **0.11.0**
 
