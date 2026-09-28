@@ -193,6 +193,14 @@ tmp_path() {
   echo "$base.$2"
 }
 
+# Two SVGs that differ only in their ids' per-drawing prefix. Any change to a
+# drawing changes its prefix, so this only tells a change to how ids are named
+# apart from a change to what is drawn.
+same_but_ids() {
+  local strip='s/(id="|url\(#)r[0-9a-f]{8}-/\1/g'
+  cmp -s <(sed -E "$strip" "$1") <(sed -E "$strip" "$2")
+}
+
 # Chrome clips to the window, so take the window from the drawing itself.
 svg_size() {
   local size
@@ -678,6 +686,8 @@ PY
       node dist/cli.js "$in" -o "$work/head/$name.head.svg" >/dev/null 2>&1 || true
       if cmp -s "$work/head/$name.base.svg" "$work/head/$name.head.svg"; then
         echo "same  $name"
+      elif same_but_ids "$work/head/$name.base.svg" "$work/head/$name.head.svg"; then
+        echo "ids   $name  (only the id prefix differs)"
       else
         echo "MOVED $name"
         moved=$((moved + 1))
@@ -751,6 +761,8 @@ PY
       node dist/cli.js "$in" -o "$work/out/$name.head.svg" >/dev/null 2>&1 || true
       if cmp -s "$work/out/$name.base.svg" "$work/out/$name.head.svg"; then
         echo "same  $name"
+      elif same_but_ids "$work/out/$name.base.svg" "$work/out/$name.head.svg"; then
+        echo "ids   $name  (only the id prefix differs)"
       else
         echo "MOVED $name"
         moved=$((moved + 1))

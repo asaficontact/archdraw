@@ -28,7 +28,7 @@ const target = process.argv[2] ? resolvePath(process.argv[2]) : join(root, 'docs
  * What the page is allowed to reach: the pipeline, what it needs to report an
  * error, and the line scanner behind the editor's syntax coloring.
  */
-const EXPOSED = ['compile', 'SourceError', 'highlightLine', 'THEME_NAMES', 'DEFAULT_THEME'];
+const EXPOSED = ['compile', 'SourceError', 'highlightLine', 'THEMES', 'THEME_NAMES', 'DEFAULT_THEME'];
 
 // The examples the page offers, in the order its picker lists them. Every
 // construct in the language is demonstrated by one of these files and by nothing

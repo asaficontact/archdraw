@@ -1050,11 +1050,31 @@
           return text.replace(DIAGRAM_LINE, line[1] + rest);
         }
 
-        reladraw.THEME_NAMES.forEach(function (name) {
-          var option = document.createElement('option');
-          option.value = name;
-          option.textContent = name;
-          theme.appendChild(option);
+        // Dark themes together and light together, so stepping through the list
+        // does not flash between black and white pages. Which group a theme is in
+        // comes from how light its page is, so a new theme needs no entry here.
+        function isLight(name) {
+          var hex = reladraw.THEMES[name].background.replace('#', '');
+          var r = parseInt(hex.slice(0, 2), 16);
+          var g = parseInt(hex.slice(2, 4), 16);
+          var b = parseInt(hex.slice(4, 6), 16);
+          return 0.299 * r + 0.587 * g + 0.114 * b > 128;
+        }
+
+        [
+          ['Dark', false],
+          ['Light', true],
+        ].forEach(function (group) {
+          var optgroup = document.createElement('optgroup');
+          optgroup.label = group[0];
+          reladraw.THEME_NAMES.forEach(function (name) {
+            if (isLight(name) !== group[1]) return;
+            var option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            optgroup.appendChild(option);
+          });
+          theme.appendChild(optgroup);
         });
 
         theme.addEventListener('change', function () {
@@ -1164,6 +1184,13 @@
           var inside =
             event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
           if (!inside) examples.close();
+        });
+
+        // Every drawing names its arrowheads the same way, and a page resolves a
+        // shared name to the first one it finds. A preview left in the closed
+        // dialog comes first and is hidden, so the diagram's arrowheads vanished.
+        examples.addEventListener('close', function () {
+          preview.innerHTML = '';
         });
 
         /* ---- getting the drawing out ---- */

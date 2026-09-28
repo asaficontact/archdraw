@@ -129,7 +129,7 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
 
   const arrowColors = new Set(layout.edges.map((edge) => lineOf(edge.appearance, theme, theme.edge)));
 
-  return [
+  const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
     '  <defs>',
     ...[...arrowColors].map((color) => arrowMarker(color)),
@@ -152,6 +152,35 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     '</svg>',
     '',
   ].join('\n');
+  return ownIds(svg);
+}
+
+/**
+ * Gives every id in a drawing a prefix of its own, taken from a hash of the
+ * drawing.
+ *
+ * Ids are shared by every SVG inlined into one page, and a reference resolves to
+ * the first element in the page carrying the name. With plain names, a second
+ * drawing's arrowheads came from the first one — and when the first was hidden,
+ * in a closed dialog or a collapsed tab, they were not drawn at all. Its masks
+ * would have cut the second drawing's lines where the first one's crossed.
+ *
+ * A hash rather than a counter, so the same source gives the same bytes on every
+ * run. Two drawings that share a prefix are byte-for-byte the same, so whichever
+ * copy a reference lands on draws the same thing — unless that copy is hidden,
+ * which is the one case this does not cover.
+ *
+ * Only attribute positions are rewritten. Anything a diagram's author wrote is
+ * escaped before it reaches an attribute, so it cannot contain the `"` both
+ * patterns begin or end with.
+ */
+function ownIds(svg: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < svg.length; i++) {
+    hash = Math.imul(hash ^ svg.charCodeAt(i), 0x01000193);
+  }
+  const prefix = `r${(hash >>> 0).toString(16).padStart(8, '0')}-`;
+  return svg.replaceAll(' id="', ` id="${prefix}`).replaceAll('="url(#', `="url(#${prefix}`);
 }
 
 // --- nodes -------------------------------------------------------------------

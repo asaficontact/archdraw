@@ -3951,7 +3951,7 @@ function render(layout, options = {}) {
         height: Math.ceil(ink.maxY) - Math.floor(ink.minY),
     };
     const arrowColors = new Set(layout.edges.map((edge) => lineOf(edge.appearance, theme, theme.edge)));
-    return [
+    const svg = [
         `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
         '  <defs>',
         ...[...arrowColors].map((color) => arrowMarker(color)),
@@ -3970,6 +3970,34 @@ function render(layout, options = {}) {
         '</svg>',
         '',
     ].join('\n');
+    return ownIds(svg);
+}
+/**
+ * Gives every id in a drawing a prefix of its own, taken from a hash of the
+ * drawing.
+ *
+ * Ids are shared by every SVG inlined into one page, and a reference resolves to
+ * the first element in the page carrying the name. With plain names, a second
+ * drawing's arrowheads came from the first one — and when the first was hidden,
+ * in a closed dialog or a collapsed tab, they were not drawn at all. Its masks
+ * would have cut the second drawing's lines where the first one's crossed.
+ *
+ * A hash rather than a counter, so the same source gives the same bytes on every
+ * run. Two drawings that share a prefix are byte-for-byte the same, so whichever
+ * copy a reference lands on draws the same thing — unless that copy is hidden,
+ * which is the one case this does not cover.
+ *
+ * Only attribute positions are rewritten. Anything a diagram's author wrote is
+ * escaped before it reaches an attribute, so it cannot contain the `"` both
+ * patterns begin or end with.
+ */
+function ownIds(svg) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < svg.length; i++) {
+        hash = Math.imul(hash ^ svg.charCodeAt(i), 0x01000193);
+    }
+    const prefix = `r${(hash >>> 0).toString(16).padStart(8, '0')}-`;
+    return svg.replaceAll(' id="', ` id="${prefix}`).replaceAll('="url(#', `="url(#${prefix}`);
 }
 // --- nodes -------------------------------------------------------------------
 /**
@@ -9097,7 +9125,7 @@ function compile(source, options = {}) {
         throw error instanceof SourceError ? blame(source, error, run) : error;
     }
 }
-globalThis.reladraw = { compile, SourceError, highlightLine, THEME_NAMES, DEFAULT_THEME };
+globalThis.reladraw = { compile, SourceError, highlightLine, THEMES, THEME_NAMES, DEFAULT_THEME };
 })();
 </script>
 
@@ -9403,11 +9431,31 @@ globalThis.reladraw = { compile, SourceError, highlightLine, THEME_NAMES, DEFAUL
           return text.replace(DIAGRAM_LINE, line[1] + rest);
         }
 
-        reladraw.THEME_NAMES.forEach(function (name) {
-          var option = document.createElement('option');
-          option.value = name;
-          option.textContent = name;
-          theme.appendChild(option);
+        // Dark themes together and light together, so stepping through the list
+        // does not flash between black and white pages. Which group a theme is in
+        // comes from how light its page is, so a new theme needs no entry here.
+        function isLight(name) {
+          var hex = reladraw.THEMES[name].background.replace('#', '');
+          var r = parseInt(hex.slice(0, 2), 16);
+          var g = parseInt(hex.slice(2, 4), 16);
+          var b = parseInt(hex.slice(4, 6), 16);
+          return 0.299 * r + 0.587 * g + 0.114 * b > 128;
+        }
+
+        [
+          ['Dark', false],
+          ['Light', true],
+        ].forEach(function (group) {
+          var optgroup = document.createElement('optgroup');
+          optgroup.label = group[0];
+          reladraw.THEME_NAMES.forEach(function (name) {
+            if (isLight(name) !== group[1]) return;
+            var option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            optgroup.appendChild(option);
+          });
+          theme.appendChild(optgroup);
         });
 
         theme.addEventListener('change', function () {
@@ -9517,6 +9565,13 @@ globalThis.reladraw = { compile, SourceError, highlightLine, THEME_NAMES, DEFAUL
           var inside =
             event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
           if (!inside) examples.close();
+        });
+
+        // Every drawing names its arrowheads the same way, and a page resolves a
+        // shared name to the first one it finds. A preview left in the closed
+        // dialog comes first and is hidden, so the diagram's arrowheads vanished.
+        examples.addEventListener('close', function () {
+          preview.innerHTML = '';
         });
 
         /* ---- getting the drawing out ---- */

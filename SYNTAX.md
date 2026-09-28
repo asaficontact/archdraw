@@ -1068,6 +1068,10 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+- Several diagrams inlined into one web page no longer lose their arrowheads. Every drawing used to name its arrowheads the same way, so a page took them all from the first drawing, and drew none when that drawing was hidden. Each drawing's names now carry a prefix of its own, taken from the drawing, so the same source still gives the same SVG.
+
 **0.11.0**
 
 - A line never passes through a box. Every edge takes the shortest way between its ends that goes through none, and goes round whatever is in its way, including edges that name no side. This replaces the separate rules for lines going over a row, turning back and going round a node behind, which kept missing cases; a fan of three from one side into a column was the latest. See "Going round boxes".
