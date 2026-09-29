@@ -1,4 +1,4 @@
-# Syntax reference — 0.12.0
+# Syntax reference — 0.13.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1068,10 +1068,13 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.13.0**
+
+No syntax changes, and no file that worked is refused. Lines move: every line that goes round something, and every line with `below`/`above`/`left of`/`right of` or `between`, may be drawn differently.
 
 - A fix, no syntax change. Lines told which side of a node to pass (`below a`) or which gap to go through (`between a and b`) now find their way as every other line does, so they take lanes and keep their distance from boxes, and two lines through one gap no longer cross where they need not. Several identical `below a` lines used to be drawn on one path, reading as one line with three arrowheads, and a `between` line could run a couple of pixels from a box and come into its target down the target's own edge.
 - A curved line that goes round something now sweeps through its turns instead of cornering, as widely as the room allows; a line that steps sideways and carries on is one S. `path: square, corners: rounded` is the way to get the cornered look. Existing diagrams with a line going round a box, a clause or a `between` will look different.
+- A line with `below`/`left of` clauses that its direct shape already keeps is drawn direct, as a line without them would be, rather than always with corners. Where it does have to turn, it takes the fewest turns that keep every clause; the old "across first, then down" rule no longer decides. A line told `below m` that would otherwise never reach M's underside is now sent round under M.
 
 **0.12.0**
 
@@ -1161,7 +1164,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 
 Open questions the benchmark raised, recorded so a later session does not rediscover them.
 
-- ~~One edge passing some nodes above or below and others left or right — an L-shaped line, across under one node and then down past another — is refused today.~~ Answered in 0.6.0: such an edge turns between the two kinds as few times as it can, and where two orders both fit, a standing rule picks — a side named at an end says which way the line goes first, and with none named it goes across first. Since the change listed under Unreleased in the changelog, such a line takes whichever way keeps its clauses with the fewest turns, and the across-first rule no longer applies. See "Passing on one side of a node" above.
+- ~~One edge passing some nodes above or below and others left or right — an L-shaped line, across under one node and then down past another — is refused today.~~ Answered in 0.6.0: such an edge turns between the two kinds as few times as it can, and where two orders both fit, a standing rule picks — a side named at an end says which way the line goes first, and with none named it goes across first. Since 0.13.0, such a line takes whichever way keeps its clauses with the fewest turns, and the across-first rule no longer applies. See "Passing on one side of a node" above.
 - Named gaps are the first step toward numbers, but making them minimums took most of the pressure off: they now set how much a diagram breathes, never whether something fits. Whether four names is the right number is still open.
 - Four machines each holding a `files` child with the same text means writing the same line four times. This is the strongest case for a set-level declaration, for terseness rather than for placement.
 - The 2×2 arrangement around a hub is four independent statements, so a fifth machine has no slot to reflow into. There are only eight directions.
