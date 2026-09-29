@@ -44,18 +44,19 @@ node y "Y"  right of z
 
 edge x -> y  "no sides named"  below z
 
-// Both kinds on one edge: across under one node, then down past another. The
-// line turns once between them, across first when no end names a side.
+// Both kinds on one edge. With no clauses this line runs straight from LA to
+// LB. "left of ln" sends it down LN's left instead, and "above lm" brings it
+// across between LN and LM rather than round under LM.
 node la "LA"  below x  (gap: 90)
-node lm "LM"  right of la  (gap: 60)
-node ln "LN"  below lm  right of lm  (gap: 40)
-node lb "LB"  below ln  right of ln  (gap: 40)
+node ln "LN"  below la  (gap: 40)
+node lm "LM"  below ln  (gap: 40)
+node lb "LB"  right of lm  (gap: 80)
 
-edge la -> lb  "an L"  below lm  left of ln
+edge la -> lb  "threaded"  left of ln  above lm
 
 // A named side says which way it goes first, and several clauses of the
 // second kind weave as they do on their own.
-node wa "WA"  right of lm  (gap: 200)
+node wa "WA"  right of la  (gap: 300)
 node wm "WM"  right of wa  (gap: 60)
 node wn "WN"  below wm  right of wm  (gap: 40)
 node wb "WB"  below wn  (gap: 70)

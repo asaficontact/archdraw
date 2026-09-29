@@ -439,7 +439,7 @@ The space it leaves is deliberately small, and shrinks further if the side is to
 
 #### Going round boxes
 
-A line never passes through a box. It takes the shortest way between its ends that goes through none, leaving a named side heading straight out and arriving at one heading straight in, with as few turns as that length allows. When the direct line is clear, that is the line you get. When it is not, the line goes round whatever is in the way. A line you have steered with `between` or `below <node>` keeps to what you said instead.
+A line never passes through a box. It takes the shortest way between its ends that goes through none, leaving a named side heading straight out and arriving at one heading straight in, with as few turns as that length allows. When the direct line is clear, that is the line you get. When it is not, the line goes round whatever is in the way. A line you have steered with `between` or `below <node>` finds its way the same way, keeping to what you said as well.
 
 ```
 node parser "Parser"
@@ -452,9 +452,9 @@ That line leaves Parser heading left and has to arrive at Renderer from the righ
 
 The same rule covers every other case: sides at right angles where one faces away from the other end, two ends naming the same side with one node behind the other, a node back to itself, and a line with no side named that has a box between its ends. Each goes the shortest way round. An end with no side named leaves or arrives by whichever of its box's sides makes the way shortest.
 
-Several lines along the same stretch take a lane each, side by side, instead of drawing on top of one another. The text rides on the line's longest straight piece that it does not land on a box from, and never changes which way the line goes.
+Several lines along the same stretch take a lane each, side by side, instead of drawing on top of one another, nested so that none crosses another where it need not. Where one of them carries its text on that stretch, the others keep clear of the text as well as the line. The text rides on the line's longest straight piece that it does not land on a box from, and never changes which way the line goes.
 
-A curved line and a square one take the same way; the curved one sweeps its turns. At an arrowhead, the line always finishes straight, so the head points square into the side.
+A curved line and a square one take the same way. The square one turns at corners. The curved one sweeps through them, each sweep as wide as the room around it allows without coming near a box or another line, and a line stepping sideways and carrying on the way it was going is one S. Where the room is tight a sweep comes close to a rounded corner; where there is room it flows. At an arrowhead, the line always finishes straight, so the head points square into the side.
 
 When there is no way at all — the side you named is flush against another box — the file is refused with the reason: `edge a -> b: cannot leave a's right side, b is against it`.
 
@@ -507,7 +507,7 @@ The bow is the shortfall, not a style — nothing bends until the side is full, 
 edge dumps.db1 -> hub  "rclone"  between desktop1 and laptop1  from: right  to: left
 ```
 
-It says nothing about the rest of the line. The clause binds only the stretch where the line is actually passing that pair — where it enters the span the two of them occupy, it is in the gap between them, and before and after it goes wherever its ends take it. The line is drawn as a curve into the gap, a straight run along it, and a curve out to its far end.
+It says nothing about the rest of the line. The clause binds only the stretch where the line is actually passing that pair — where it enters the span the two of them occupy, it is in the gap between them, and before and after it goes wherever its ends take it. The line takes the shortest way into the gap that goes round every box and keeps its distance from them, runs straight along it, and takes the shortest way out to its far end, as any line does (see "Going round boxes"). Its text rides in the gap.
 
 Which gap is meant is usually derived, not stated. One of the two is above the other, or one is left of the other, and whichever it is says which axis the gap binds — so a channel between something above and something below constrains height, and one between something left and something right constrains width, and in neither case does the file mention an axis at all.
 
@@ -521,7 +521,7 @@ edge c -> d  "threaded"  between a and b vertically
 
 Leave it out on a diagonal pair and the error asks for it, in your own node names. Write it where it was not needed and it is checked rather than quietly dropped, so a pair that is only apart vertically will tell you that `horizontally` is wrong. A pair that touches or overlaps has no gap at all, whatever you write, and naming a pair the edge never actually passes is an error too.
 
-Several edges may share one channel, and they take a lane each. As with attachments on a side, which edge gets which lane is derived from where their ends sit, so lines through a channel come out in the order their ends are in and do not cross. The lanes are spaced by what is actually running along them: a text's depth where an edge with text runs, an arrow's width where none does.
+Several edges may share one channel, and they take a lane each, found as every line's lane is (see "Going round boxes"): side by side, arranged so they do not cross where they need not. The lanes are spaced by what is actually running along them: clear of a text where an edge with text runs, an arrow's width apart where none does.
 
 A named channel does not widen. It is measured off the layout you described, so if you name a gap too narrow for the lines you put through it they crowd together rather than pushing the two nodes apart. That is the difference between this and a text making room for itself, above: there, the corridor is the gap between the edge's own two ends, and opening it moves them apart exactly as anything else put between them would. Here the pair is named by an edge merely passing through, and nothing yet lets an edge bid into a gap it is only a visitor in. It is the remaining half and it is not built.
 
@@ -546,7 +546,7 @@ node b "B"  below a
 edge a -> b  from: top  to: bottom  left of a  right of b
 ```
 
-That line leaves the top of A, goes round A's left, crosses over in the gap between the two, passes B on the right, and turns up into B's bottom. The line is drawn as straight stretches joined by rounded corners, each stretch as close to the two ends as its clauses allow, and pushed further out, the way its clause already points, by any node sitting on it.
+That line leaves the top of A, goes round A's left, crosses over in the gap between the two, passes B on the right, and turns up into B's bottom. It finds its way as any line does (see "Going round boxes"): each clause closes off one side of its node — `below resolver` everything above Resolver, within Resolver's width — and the line takes the shortest way that keeps out of those as well as out of every box. Lines told the same things take a lane each rather than one path between them.
 
 One clause may name several nodes, and it is not shorthand for several clauses. `below a and b` is below the box bounding both, so it covers the stretch between them too:
 
@@ -563,15 +563,15 @@ One edge may pass some nodes above or below and others left or right. Passing ab
 
 ```
 node a "A"
-node m "M"  right of a
-node n "N"  below m  right of m
-node b "B"  below n  right of n
-edge a -> b  below m  left of n
+node n "N"  below a
+node m "M"  below n
+node b "B"  right of m  (gap: 80)
+edge a -> b  left of n  above m
 ```
 
-That line leaves the bottom of A, runs across just under M, turns down on N's left, and runs across into B. The clauses read as before: `left of n` binds only where the line is level with N, so the last stretch passing under N is not held to it.
+With no clauses that line would run straight from A to B. `left of n` sends it down N's left, and `above m` brings it across between N and M into B, rather than round under M. The clauses read as before: `left of n` binds only where the line is level with N, so the stretch running across below N is not held to it.
 
-A side named at an end says which way the line goes first: `from: right` starts it across, `from: bottom` starts it down. With no side named at either end it goes across first, then down.
+A side named at an end says which way the line goes first: `from: right` starts it across, `from: bottom` starts it down. With no side named, the line takes whichever way keeps the clauses with the fewest turns, and a straight line that already keeps them stays straight.
 
 Clauses of one kind may sit on different legs. Here the line goes over P on the way out, down past N, and under M on the way in, turning twice:
 
@@ -591,11 +591,11 @@ Refused, each by name:
 - **Clauses that cannot all hold** at one point, as above.
 - **A crossing with no room.** Two clauses on opposite sides need a gap between their nodes to cross over in. Placed flush — `gap: 0` — there is none, and the error says to give the placement a gap or drop a clause. The gap is never opened for the line: you wrote how far apart those two are.
 - **A node the line never passes.** `below z` on a line that never goes by Z says nothing.
-- **Both kinds where no way of turning keeps them all.** The error names the clauses, or the one reason if every way fails for the same one.
+- **No way keeps them all.** Where the clauses and the boxes between them leave no way through, the error names every clause.
 - **`between` with a side.** An edge passing between two things already has a side of each.
 - **A part of a node, or a gap.** A line passes a whole box, and passes it as close as reads clearly.
 
-An end with no side named leaves from the side facing where the line is going.
+An end with no side named leaves by whichever side makes the way shortest.
 
 ### How the line is drawn
 
@@ -1068,6 +1068,11 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+- A fix, no syntax change. Lines told which side of a node to pass (`below a`) or which gap to go through (`between a and b`) now find their way as every other line does, so they take lanes and keep their distance from boxes, and two lines through one gap no longer cross where they need not. Several identical `below a` lines used to be drawn on one path, reading as one line with three arrowheads, and a `between` line could run a couple of pixels from a box and come into its target down the target's own edge.
+- A curved line that goes round something now sweeps through its turns instead of cornering, as widely as the room allows; a line that steps sideways and carries on is one S. `path: square, corners: rounded` is the way to get the cornered look. Existing diagrams with a line going round a box, a clause or a `between` will look different.
+
 **0.12.0**
 
 - Diagrams can be written straight into a web page. Load `dist/element.js` from the package, and each `<reladraw-diagram>` element is drawn in place from the source inside it, with `theme=` choosing the colors. See "In a web page" in the README.
@@ -1156,7 +1161,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal belo
 
 Open questions the benchmark raised, recorded so a later session does not rediscover them.
 
-- ~~One edge passing some nodes above or below and others left or right — an L-shaped line, across under one node and then down past another — is refused today.~~ Answered in 0.6.0: such an edge turns between the two kinds as few times as it can, and where two orders both fit, a standing rule picks — a side named at an end says which way the line goes first, and with none named it goes across first. See "Passing on one side of a node" above.
+- ~~One edge passing some nodes above or below and others left or right — an L-shaped line, across under one node and then down past another — is refused today.~~ Answered in 0.6.0: such an edge turns between the two kinds as few times as it can, and where two orders both fit, a standing rule picks — a side named at an end says which way the line goes first, and with none named it goes across first. Since the change listed under Unreleased in the changelog, such a line takes whichever way keeps its clauses with the fewest turns, and the across-first rule no longer applies. See "Passing on one side of a node" above.
 - Named gaps are the first step toward numbers, but making them minimums took most of the pressure off: they now set how much a diagram breathes, never whether something fits. Whether four names is the right number is still open.
 - Four machines each holding a `files` child with the same text means writing the same line four times. This is the strongest case for a set-level declaration, for terseness rather than for placement.
 - The 2×2 arrangement around a hub is four independent statements, so a fifth machine has no slot to reflow into. There are only eight directions.

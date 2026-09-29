@@ -162,6 +162,11 @@ Reading colors out of a reference image (all take any PNG):
                                  each one's size. With out, also writes a picture
                                  of the difference there. For telling whether a
                                  PNG that is not byte-identical actually moved.
+  sidebyside <a> <b> <out.png>  Put two pictures next to each other, each trimmed
+                                 to its drawing, a strip between. Either may be an
+                                 SVG, which is screenshotted first. For judging
+                                 a MOVED example: the snapshot's SVG against the
+                                 new render.
   pixel <img> <x> <y>           Hex color of one pixel
   palette <img> [WxH+X+Y] [n]   The n most common colors in a region, biggest
                                  first. Region defaults to the whole image,
@@ -834,6 +839,27 @@ PY
       im "$a" "$b" -compose difference -composite -negate "$3"
       echo "$3"
     fi
+    ;;
+  sidebyside)
+    a="${1:?first picture required}"
+    b="${2:?second picture required}"
+    out="${3:?output path required}"
+    work="$(mktemp -d)"
+    n=0
+    for pic in "$a" "$b"; do
+      n=$((n + 1))
+      case "$pic" in
+        *.svg)
+          size="$(grep -oE '<svg[^>]* width="[0-9]+" height="[0-9]+"' "$pic" | head -1 | sed -E 's/.*width="([0-9]+)" height="([0-9]+)"/\1x\2/')"
+          "$0" screenshot "$pic" "$work/$n.png" "$size" >/dev/null
+          ;;
+        *) cp "$pic" "$work/$n.png" ;;
+      esac
+      im "$work/$n.png" -trim +repage "$work/$n.png"
+    done
+    im "$work/1.png" "$work/2.png" -background '#333333' -splice 12x0 +append "$out"
+    rm -rf "$work"
+    echo "$out"
     ;;
   pixel)
     img="${1:?image path required}"

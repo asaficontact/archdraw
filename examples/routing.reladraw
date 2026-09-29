@@ -1,6 +1,8 @@
 // Every routing bug reported so far, one row each, the line's text saying
-// where it was reported. Each of these was drawn through a box at some point.
-// Every line now takes the shortest way round that passes through none.
+// where it was reported. Each of these was drawn through a box, on top of
+// another line, or hard against a box's edge at some point. Every line now
+// takes the shortest way round that passes through none, keeps a lane of its
+// own, and keeps its distance.
 
 // Hacker News, 2026-09-26: ends facing away across a row. The line ran
 // straight through the middle node, its text sitting on it.
@@ -65,3 +67,20 @@ node x "X"  right of f  (gap: wide)
 node y "Y"  right of x
 node z "Z"  right of y
 edge x -> z  "no sides named"
+
+// Three lines told the same thing, 2026-09-27. "below ra" lines were drawn on
+// one path, so the three read as one line with three arrowheads. They now take
+// a lane each, nested so that none crosses another.
+node ra "A"  below g  (gap: wide)
+node rb "B"  right of ra
+edge ra -> rb  from: left  to: right  below ra
+edge ra -> rb  from: left  to: right  below ra
+edge ra -> rb  from: left  to: right  below ra
+
+// Through a named gap, 2026-09-28. The line ran about 2px from Lower, then
+// came into Lowest's right side down Lowest's own edge. It now keeps clear of
+// both and comes into the side from outside.
+node west "West"  right of rb  (gap: wide)
+node lower "Lower"  below west  (gap: tight)
+node lowest "Lowest"  below lower  (gap: normal)
+edge west -> lowest  "between"  from: left  to: right  between lower and lowest
