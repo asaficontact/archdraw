@@ -1112,6 +1112,13 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+No syntax changes, and no file that worked is refused.
+
+- Diagrams with many lines draw far faster. Since 0.13.0, the time to find the lines' ways grew much faster than the number of lines: a tangled diagram of 45 boxes and 48 lines took over half an hour. It now takes a few seconds, and ten lines take under one. No example diagram draws differently.
+- After every line is placed, lines that cross are placed again in the other order, to cross fewer. That now stops after as many attempts as there are lines. In a very tangled diagram a line may cross another where 0.13.0 and 0.14.0 found a way round; `from:`/`to:`, `below` and `between` say where a line should go.
+
 **0.14.0**
 
 One breaking change: on an edge written with `<-`, `from:` and `to:` now name the sides of the first and second names written. They used to follow the arrow, so `disk <- writer  from: bottom` meant Writer's bottom; it now means Disk's. Swap the two on any `<-` edge that names a side. No other file draws differently.

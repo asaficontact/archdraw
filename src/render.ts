@@ -2271,15 +2271,21 @@ function planWays(
   // Which line takes the inside of a shared stretch depends on which was placed
   // first, and the wrong order makes two lines cross where they need not. So a
   // pair that crosses is placed again the other way round, and kept that way if
-  // it crosses less.
+  // it crosses less. This is tidying, not a promise: the pairs are tried a
+  // fixed number of times over, however tangled the diagram, since trying every
+  // pair that crossed made a diagram of forty lines take minutes. A count, not a
+  // clock, so a file draws the same on every machine. A writer who wants a line
+  // somewhere in particular says so.
   const crossingsOf = (edge: LayoutEdge): number =>
     order.reduce((sum, other) => (other === edge ? sum : sum + linesCross(found.get(edge)!.points, found.get(other)!.points)), 0);
-  for (let pass = 0; pass < 3; pass += 1) {
+  let tries = order.length * UNCROSS_TRIES;
+  for (let pass = 0; pass < 3 && tries > 0; pass += 1) {
     let better = false;
-    for (let i = 0; i < order.length; i += 1) {
-      for (let j = i + 1; j < order.length; j += 1) {
+    for (let i = 0; i < order.length && tries > 0; i += 1) {
+      for (let j = i + 1; j < order.length && tries > 0; j += 1) {
         const [first, second] = [order[i]!, order[j]!];
         if (linesCross(found.get(first)!.points, found.get(second)!.points) === 0) continue;
+        tries -= 1;
         const before = crossingsOf(first) + crossingsOf(second);
         const kept = [found.get(first)!, found.get(second)!] as const;
         const rest = order.filter((edge) => edge !== first && edge !== second);
@@ -2633,6 +2639,9 @@ function textOnWay(
 /** How much a turn costs the search, in the same units as length. */
 const SEARCH_TURN = SEPARATION_GAP * 2;
 
+/** How many crossing pairs, per line placed, may be placed again the other way round. */
+const UNCROSS_TRIES = 1;
+
 /**
  * The searched way for one edge, or one half of a `between` edge. A named side
  * is fixed; an end with no side named may leave or arrive by any of its box's
@@ -2747,6 +2756,9 @@ function searchWay(
           taken,
           lane,
           ...more,
+          // Only a way cheaper than the best so far is taken, so a search that
+          // cannot find one stops early.
+          limit: best ? best.cost - 1e-6 : Infinity,
           bounds: wallOf(grow(
             nodes.map((node) => extentOfBox(faceOf(node))).reduce(union),
             ROUTE_STUB * 4,

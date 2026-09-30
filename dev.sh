@@ -136,6 +136,12 @@ Commands:
   against <dir>                 Render every example with the working tree and
                                  say which differ from the SVGs `snapshot` put
                                  in <dir>.
+  stress [full]                 Is routing lines still fast? Times the library on
+                                 made-up diagrams of 45 boxes and 5, 10 and 20
+                                 lines, stopping at the first over its limit, in
+                                 a few seconds. `full` goes on to 30 and 48 lines.
+                                 Run after changing how lines are routed; it
+                                 builds first.
   clicks <file.svg> <x> <y> ... What a browser would follow at each point, or
                                  "nothing". A `url:` is the one thing in the
                                  output a picture cannot show, and the obvious
@@ -764,6 +770,10 @@ PY
       fi
     done
     echo "$moved of $(ls examples/*.reladraw | wc -l | tr -d ' ') examples differ from $dir"
+    ;;
+  stress)
+    compile
+    node tools/stress.mjs "$@"
     ;;
   pictures)
     # The end-to-end counterpart to `regress`: each side renders its *own*

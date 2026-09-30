@@ -83,6 +83,12 @@ export interface SearchOptions {
    * cannot be gone round at its far end.
    */
   bounds?: SearchWall;
+  /**
+   * A cost the line is no use at unless it comes in under: the cheapest way
+   * already found between another pair of sides. The search gives up as soon
+   * as it cannot.
+   */
+  limit?: number;
 }
 
 /** A gap a line must pass through. See `SearchOptions.gate`. */
@@ -126,6 +132,9 @@ export function searchRoute(
   const back = reach(end, options.ownEnd);
   if (!out || !back) return undefined;
   if (inside(out, walls) || inside(back, walls)) return undefined;
+  // No way between the two is shorter than straight across and straight down.
+  const limit = options.limit ?? Infinity;
+  if (Math.abs(back.x - out.x) + Math.abs(back.y - out.y) - 1e-6 >= limit) return undefined;
 
   const bounds = options.bounds;
   const gate = options.gate;
@@ -151,7 +160,8 @@ export function searchRoute(
   const iy = new Map(ys.map((y, index) => [y, index]));
   const width = xs.length;
   const height = ys.length;
-  const open = (i: number, j: number): boolean => !inside({ x: xs[i]!, y: ys[j]! }, walls);
+  const steps = stepTable(xs, ys, walls, clear, options.taken, spacing, ownHalf, (a, b) => (inGate(a, b) ? ownHalf : 0));
+  const open = (i: number, j: number): boolean => steps.open[j * width + i] === 1;
 
   // Four headings: 0 right, 1 down, 2 left, 3 up.
   const STEP = [
@@ -182,26 +192,38 @@ export function searchRoute(
   const state = (i: number, j: number, h: number, p: number): number => ((j * width + i) * 4 + h) * 2 + p;
   const done = gate ? 1 : 0;
 
+  // The search reaches out toward the end first: a state waits by what it has
+  // cost so far plus the least the rest could cost, straight across and
+  // straight down to the end. It does not settle each state once, since a
+  // way just as long can arrive later with a better tie-break; it keeps on
+  // until nothing waiting could come in as cheap as the end already has, and
+  // what it finds is exactly what searching every direction alike would.
+  const toGo = (current: number): number => {
+    const cell = (current - (current % 8)) / 8;
+    const i = cell % width;
+    return Math.abs(xs[i]! - back.x) + Math.abs(ys[(cell - i) / width]! - back.y);
+  };
   const heap = new MinHeap();
   const begin = state(si, sj, first, 0);
+  const goal = state(ti, tj, last, done);
   cost[begin] = 0;
   tie[begin] = 0;
-  heap.push(begin, 0, 0);
+  heap.push(begin, toGo(begin), 0);
 
-  let goal = -1;
   while (heap.size > 0) {
-    const [current, c, t] = heap.pop();
-    if (c > cost[current]! || (c === cost[current]! && t > tie[current]!)) continue;
+    const [current, f, t] = heap.pop();
+    const c = cost[current]!;
+    const due = c + toGo(current);
+    if (f > due || (f === due && t > tie[current]!)) continue;
+    // Everything still waiting costs at least this much.
+    if (f >= limit || f > cost[goal]! + 1e-9) break;
     const p = current % 2;
     const rest = (current - p) / 2;
     const h = rest % 4;
     const cell = (rest - h) / 4;
     const i = cell % width;
     const j = (cell - i) / width;
-    if (i === ti && j === tj && h === last && p === done) {
-      goal = current;
-      break;
-    }
+    if (current === goal) continue;
     for (let next = 0; next < 4; next += 1) {
       // A line never doubles straight back on itself.
       if ((next + 2) % 4 === h) continue;
@@ -213,10 +235,12 @@ export function searchRoute(
       const ni = i + STEP[next]![0];
       const nj = j + STEP[next]![1];
       if (ni < 0 || nj < 0 || ni >= width || nj >= height || !open(ni, nj)) continue;
+      // A step is filed under the point it starts from on its way right or down.
+      const axis = next % 2;
+      const key = next < 2 ? j * width + i : nj * width + ni;
+      if (steps.closed[axis]![key] === 1) continue;
       const a = { x: xs[i]!, y: ys[j]! };
       const b = { x: xs[ni]!, y: ys[nj]! };
-      const own = inGate(a, b) ? ownHalf : 0;
-      if (blocked(a, b, walls) || alongTaken(a, b, options.taken, spacing, own)) continue;
       // Passing the gate: a stretch through it, reaching the line at `at`.
       const through = inGate(a, b) &&
         Math.min(gate!.run === 'x' ? a.x : a.y, gate!.run === 'x' ? b.x : b.y) <= gate!.at + 0.01 &&
@@ -226,8 +250,8 @@ export function searchRoute(
       // a narrow gap, but where there is room it keeps its distance. Crossing a
       // line already placed costs what a turn does, so of two ways much the
       // same length the one that crosses nothing wins.
-      const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y) + crowding(a, b, walls, clear) +
-        turn * crossings(a, b, options.taken);
+      const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y) + steps.crowd[axis]![key]! +
+        turn * steps.cross[axis]![key]!;
       // Higher up for a stretch across, further right for one down: a smaller
       // tie-break is preferred, so the across level counts as it is and the
       // down level counts negated.
@@ -235,14 +259,14 @@ export function searchRoute(
       relax(current, state(ni, nj, next, np), c + length, t + lean);
     }
   }
-  if (goal < 0) return undefined;
+  if (!(cost[goal]! < limit)) return undefined;
 
   function relax(previous: number, next: number, c: number, t: number): void {
     if (c < cost[next]! - 1e-9 || (Math.abs(c - cost[next]!) <= 1e-9 && t < tie[next]!)) {
       cost[next] = c;
       tie[next] = t;
       from[next] = previous;
-      heap.push(next, c, t);
+      heap.push(next, c + toGo(next), t);
     }
   }
 
@@ -345,85 +369,148 @@ function inside(point: SearchPoint, walls: SearchWall[]): boolean {
 
 /** Whether a level or upright stretch passes through the inside of any wall. */
 function blocked(a: SearchPoint, b: SearchPoint, walls: SearchWall[]): boolean {
+  return walls.some((wall) => blocks(a, b, wall));
+}
+
+/** Whether a level or upright stretch passes through the inside of one wall. */
+function blocks(a: SearchPoint, b: SearchPoint, wall: SearchWall): boolean {
   const minX = Math.min(a.x, b.x);
   const maxX = Math.max(a.x, b.x);
   const minY = Math.min(a.y, b.y);
   const maxY = Math.max(a.y, b.y);
-  return walls.some((wall) => {
-    if (minY === maxY) return minY > wall.minY && minY < wall.maxY && maxX > wall.minX && minX < wall.maxX;
-    return minX > wall.minX && minX < wall.maxX && maxY > wall.minY && minY < wall.maxY;
-  });
+  if (minY === maxY) return minY > wall.minY && minY < wall.maxY && maxX > wall.minX && minX < wall.maxX;
+  return minX > wall.minX && minX < wall.maxX && maxY > wall.minY && minY < wall.maxY;
 }
 
 /**
- * How much of a stretch runs within `clear` of a wall's side, alongside it:
- * the longest such run against any one wall.
+ * Every single step through the grid — from a point to its neighbor on the
+ * right, or the one below — and what it costs beyond its length: whether it is
+ * closed, by a wall or by running along a placed line; how far it runs close
+ * beside a wall; how many placed lines it crosses. The search takes each step
+ * many times over, once for each heading it arrives with, so these are worked
+ * out here once, and each wall and each placed stretch is tested only against
+ * the steps that lie near it. A step is filed at the index of the point it
+ * starts from: `[0]` the step right, `[1]` the step down.
  */
-function crowding(a: SearchPoint, b: SearchPoint, walls: SearchWall[], clear: number): number {
+function stepTable(
+  xs: number[],
+  ys: number[],
+  walls: SearchWall[],
+  clear: number,
+  taken: SearchPoint[][],
+  spacing: (line: number, stretch: number, own: number) => number,
+  widest: number,
+  ownAt: (a: SearchPoint, b: SearchPoint) => number,
+): { open: Uint8Array; closed: Uint8Array[]; crowd: Float64Array[]; cross: Int32Array[] } {
+  const width = xs.length;
+  const height = ys.length;
+  const cells = width * height;
+  const open = new Uint8Array(cells).fill(1);
+  const closed = [new Uint8Array(cells), new Uint8Array(cells)];
+  const crowd = [new Float64Array(cells), new Float64Array(cells)];
+  const cross = [new Int32Array(cells), new Int32Array(cells)];
+  // The indices of the tracks lying within `lo`..`hi`, with one to spare either
+  // side: a range to test exactly, never a test itself.
+  const near = (values: number[], lo: number, hi: number): [number, number] =>
+    [Math.max(0, firstAtLeast(values, lo) - 1), Math.min(values.length - 1, firstAtLeast(values, hi) + 1)];
+  const each = (
+    [i0, i1]: [number, number],
+    [j0, j1]: [number, number],
+    visit: (axis: number, a: SearchPoint, b: SearchPoint, key: number) => void,
+  ): void => {
+    for (let j = j0; j <= j1; j += 1) {
+      for (let i = i0; i <= i1; i += 1) {
+        const a = { x: xs[i]!, y: ys[j]! };
+        if (i + 1 < width) visit(0, a, { x: xs[i + 1]!, y: ys[j]! }, j * width + i);
+        if (j + 1 < height) visit(1, a, { x: xs[i]!, y: ys[j + 1]! }, j * width + i);
+      }
+    }
+  };
+
+  for (const wall of walls) {
+    const [i0, i1] = near(xs, wall.minX, wall.maxX);
+    const [j0, j1] = near(ys, wall.minY, wall.maxY);
+    for (let j = j0; j <= j1; j += 1) {
+      for (let i = i0; i <= i1; i += 1) {
+        const x = xs[i]!;
+        const y = ys[j]!;
+        if (x > wall.minX && x < wall.maxX && y > wall.minY && y < wall.maxY) open[j * width + i] = 0;
+      }
+    }
+    each([i0, i1], [j0, j1], (axis, a, b, key) => {
+      if (blocks(a, b, wall)) closed[axis]![key] = 1;
+    });
+    each(near(xs, wall.minX - clear, wall.maxX + clear), near(ys, wall.minY - clear, wall.maxY + clear), (axis, a, b, key) => {
+      crowd[axis]![key] = Math.max(crowd[axis]![key]!, crowding(a, b, wall, clear));
+    });
+  }
+  taken.forEach((line, which) => {
+    for (let index = 0; index + 1 < line.length; index += 1) {
+      const [p, q] = [line[index]!, line[index + 1]!];
+      const reach = spacing(which, index, widest);
+      const xr = near(xs, Math.min(p.x, q.x) - reach, Math.max(p.x, q.x) + reach);
+      const yr = near(ys, Math.min(p.y, q.y) - reach, Math.max(p.y, q.y) + reach);
+      each(xr, yr, (axis, a, b, key) => {
+        if (runsAlong(a, b, p, q, spacing(which, index, ownAt(a, b)))) closed[axis]![key] = 1;
+        if (crosses(a, b, p, q)) cross[axis]![key] = cross[axis]![key]! + 1;
+      });
+    }
+  });
+  return { open, closed, crowd, cross };
+}
+
+/** The index of the first of the sorted values at least `value`, or their count if none is. */
+function firstAtLeast(values: number[], value: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (values[mid]! < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** How much of a stretch runs within `clear` of one wall's side, alongside it; 0 if none does. */
+function crowding(a: SearchPoint, b: SearchPoint, wall: SearchWall, clear: number): number {
   const across = Math.abs(a.y - b.y) < 0.5;
   const level = across ? a.y : a.x;
   const from = across ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
   const to = across ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
-  let worst = 0;
-  for (const wall of walls) {
-    const [lo, hi] = across ? [wall.minY, wall.maxY] : [wall.minX, wall.maxX];
-    const [alo, ahi] = across ? [wall.minX, wall.maxX] : [wall.minY, wall.maxY];
-    const near = (level > lo - clear + 0.01 && level <= lo) || (level >= hi && level < hi + clear - 0.01);
-    if (!near) continue;
-    worst = Math.max(worst, Math.min(to, ahi) - Math.max(from, alo));
-  }
-  return worst;
+  const [lo, hi] = across ? [wall.minY, wall.maxY] : [wall.minX, wall.maxX];
+  const [alo, ahi] = across ? [wall.minX, wall.maxX] : [wall.minY, wall.maxY];
+  const near = (level > lo - clear + 0.01 && level <= lo) || (level >= hi && level < hi + clear - 0.01);
+  return near ? Math.max(0, Math.min(to, ahi) - Math.max(from, alo)) : 0;
 }
 
 /**
- * Whether a stretch runs along a placed line, for any distance, closer than
- * the spacing between the two there: a lane, or clear of a text either carries.
+ * Whether a stretch runs along one stretch of a placed line, for any distance,
+ * closer than `spacing`: a lane, or clear of a text either carries.
  */
-function alongTaken(
-  a: SearchPoint,
-  b: SearchPoint,
-  taken: SearchPoint[][],
-  spacing: (line: number, stretch: number, own: number) => number,
-  own: number,
-): boolean {
+function runsAlong(a: SearchPoint, b: SearchPoint, p: SearchPoint, q: SearchPoint, spacing: number): boolean {
   const across = Math.abs(a.y - b.y) < 0.5;
+  if ((Math.abs(p.y - q.y) < 0.5) !== across) return false;
   const level = across ? a.y : a.x;
+  const other = across ? p.y : p.x;
+  if (Math.abs(other - level) >= spacing - 0.5) return false;
   const lo = across ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
   const hi = across ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
-  for (const [which, line] of taken.entries()) {
-    for (let index = 0; index + 1 < line.length; index += 1) {
-      const [p, q] = [line[index]!, line[index + 1]!];
-      const pAcross = Math.abs(p.y - q.y) < 0.5;
-      if (pAcross !== across) continue;
-      const other = across ? p.y : p.x;
-      if (Math.abs(other - level) >= spacing(which, index, own) - 0.5) continue;
-      const pLo = across ? Math.min(p.x, q.x) : Math.min(p.y, q.y);
-      const pHi = across ? Math.max(p.x, q.x) : Math.max(p.y, q.y);
-      if (Math.min(hi, pHi) - Math.max(lo, pLo) > 0.5) return true;
-    }
-  }
-  return false;
+  const pLo = across ? Math.min(p.x, q.x) : Math.min(p.y, q.y);
+  const pHi = across ? Math.max(p.x, q.x) : Math.max(p.y, q.y);
+  return Math.min(hi, pHi) - Math.max(lo, pLo) > 0.5;
 }
 
-/** How many stretches of placed lines a stretch crosses square on, touching neither end of either. */
-function crossings(a: SearchPoint, b: SearchPoint, taken: SearchPoint[][]): number {
+/** Whether a stretch crosses one stretch of a placed line square on, touching neither end of either. */
+function crosses(a: SearchPoint, b: SearchPoint, p: SearchPoint, q: SearchPoint): boolean {
   const across = Math.abs(a.y - b.y) < 0.5;
+  if ((Math.abs(p.y - q.y) < 0.5) === across) return false;
   const level = across ? a.y : a.x;
   const lo = across ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
   const hi = across ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
-  let found = 0;
-  for (const line of taken) {
-    for (let index = 0; index + 1 < line.length; index += 1) {
-      const [p, q] = [line[index]!, line[index + 1]!];
-      const pAcross = Math.abs(p.y - q.y) < 0.5;
-      if (pAcross === across) continue;
-      const at = across ? p.x : p.y;
-      const pLo = across ? Math.min(p.y, q.y) : Math.min(p.x, q.x);
-      const pHi = across ? Math.max(p.y, q.y) : Math.max(p.x, q.x);
-      if (at > lo + 0.5 && at < hi - 0.5 && level > pLo + 0.5 && level < pHi - 0.5) found += 1;
-    }
-  }
-  return found;
+  const at = across ? p.x : p.y;
+  const pLo = across ? Math.min(p.y, q.y) : Math.min(p.x, q.x);
+  const pHi = across ? Math.max(p.y, q.y) : Math.max(p.x, q.x);
+  return at > lo + 0.5 && at < hi - 0.5 && level > pLo + 0.5 && level < pHi - 0.5;
 }
 
 /** The points with every one dropped that sits on a straight run between its neighbors. */
