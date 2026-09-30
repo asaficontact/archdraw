@@ -198,10 +198,12 @@ export function searchRoute(
   // way just as long can arrive later with a better tie-break; it keeps on
   // until nothing waiting could come in as cheap as the end already has, and
   // what it finds is exactly what searching every direction alike would.
+  // Until the line has passed its gate, that is by way of the gate.
   const toGo = (current: number): number => {
     const cell = (current - (current % 8)) / 8;
     const i = cell % width;
-    return Math.abs(xs[i]! - back.x) + Math.abs(ys[(cell - i) / width]! - back.y);
+    const point = { x: xs[i]!, y: ys[(cell - i) / width]! };
+    return leastLength(point, back, current % 2 === 1 ? undefined : gate);
   };
   const heap = new MinHeap();
   const begin = state(si, sj, first, 0);
@@ -282,6 +284,18 @@ export function searchRoute(
   }
   path.reverse();
   return { points: straightRuns([start, ...path, end]), cost: cost[goal]! };
+}
+
+/**
+ * The shortest a right-angled line from `a` to `b` could be: straight across
+ * and straight down, or with a gate, across to its line at `at` and to a
+ * level within it on the way.
+ */
+function leastLength(a: SearchPoint, b: SearchPoint, gate: SearchGate | undefined): number {
+  if (!gate) return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  const [u, v, bu, bv] = gate.run === 'x' ? [a.x, a.y, b.x, b.y] : [a.y, a.x, b.y, b.x];
+  const off = Math.max(0, gate.lo - Math.max(v, bv), Math.min(v, bv) - gate.hi);
+  return Math.abs(u - gate.at) + Math.abs(gate.at - bu) + Math.abs(v - bv) + 2 * off;
 }
 
 /**

@@ -1112,6 +1112,12 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+No syntax changes, and no file that worked is refused. No example diagram draws differently.
+
+- Faster: lines steered with `between` in a busy diagram. When looking for its way, such a line didn't account for the gap it still had to pass through, so it searched much of the diagram before finding it. A test diagram with four of them among forty-four other lines drew in 6.8 seconds, and now draws in about 5.5.
+
 **0.14.3**
 
 No syntax changes, and no file that worked is refused. No example diagram draws differently.
