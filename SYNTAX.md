@@ -1,4 +1,4 @@
-# Syntax reference — 0.14.1
+# Syntax reference — 0.14.2
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1112,7 +1112,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.14.2**
 
 No syntax changes, and no file that worked is refused.
 
