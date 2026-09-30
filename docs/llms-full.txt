@@ -1362,6 +1362,7 @@ No syntax changes, and no file that worked is refused.
 
 - Many copies of one line draw far faster. Lines with the same two ends, the same sides, the same clauses and no text are now drawn as one line and its copies, each a lane further out, instead of each finding its own way round the copies before it. Fifteen copies of `edge a -> b  from: left  to: right` took about a third of a second and forty took two and a half; forty now take half a second. Where such copies used to split, some going over the top and some underneath, they now stay together. A copy that would run into a box or cross a line the first one does not is still found as before.
 - Curved lines in busy diagrams draw faster. No picture changes.
+- A fix: many curved lines into one side could hang the page. With twenty-two copies of `edge a -> b  from: right  to: left`, some lines had no room left to curve before the arrowhead, and the tool kept trying ever smaller curves thousands of times. It now stops at the smallest, and the same file draws in a tenth of a second.
 
 **0.14.1**
 

@@ -3223,9 +3223,13 @@ function sweptPath(
       const p3 = along(corner, dout, b);
       return [p0, along(p0, din, a * kappa), along(p3, dout, -b * kappa), p3];
     };
+    // Within half a pixel of the smallest is the smallest: where an end piece
+    // has no room left, the smallest is zero, which shrinking never reaches,
+    // and twenty-two lines into one side took the page down.
+    const shrink = (size: number): number => (size * 0.85 < least + 0.5 ? least : size * 0.85);
     while ((a > least || b > least) && !clear(...quarter(a, b))) {
-      a = Math.max(least, a * 0.85);
-      b = Math.max(least, b * 0.85);
+      a = shrink(a);
+      b = shrink(b);
     }
     curve(...quarter(a, b));
   }
