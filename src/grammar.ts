@@ -27,7 +27,7 @@
  * them.
  */
 
-import { DIRECTIONS, POSITIONS, SIDES, PASSAGE_AXES } from './ast.js';
+import { DIRECTIONS, MARKS, POSITIONS, SIDES, PASSAGE_AXES } from './ast.js';
 
 /** What a span of source is, for coloring. */
 export type TokenKind =
@@ -41,7 +41,7 @@ export type TokenKind =
   | 'keyword'
   /** The name a statement declares, right after its keyword. */
   | 'name'
-  /** `->` and `<->`. */
+  /** `->`, `<-`, `<->`, and `--` or `-` for a plain line. */
   | 'arrow'
   /** Placement and edge vocabulary: `right`, `of`, `level`, `with`, `and`, `between`, … */
   | 'relation'
@@ -111,6 +111,10 @@ function alternation(words: readonly string[]): string {
  * A name may contain dots (containment) and hyphens, which is why the word
  * pattern is what it is rather than `\w+`.
  */
+/** One end of an arrow: a mark word or glyph, bare or bracketed. Words first, so `odot` is not `o`. */
+const MARK_WORD = `(?:${[...MARKS].sort((a, b) => b.length - a.length).join('|')}|<\\||\\|>|[<>*o|])`;
+const ARROW_MARK = `(?:\\[${MARK_WORD}\\]|\\(${MARK_WORD}\\)|${MARK_WORD})`;
+
 export const PATTERNS = {
   comment: '\\/\\/.*',
   // The closing quote is optional: every string is unterminated for as long as
@@ -118,8 +122,10 @@ export const PATTERNS = {
   // rest of the file on every keystroke.
   string: '"(?:\\\\.|[^"\\\\])*"?',
   keyword: `(?:${alternation(STATEMENT_KEYWORDS)})\\b`,
-  // `<->` first, or `<-` would match its opening half and leave a stray `>`.
-  arrow: '<->|->|<-',
+  // A mark, one or two dashes, a mark — `->`, `o--odiamond`, `[dot]-`. It must
+  // end the token, so a hyphenated name stays a word. A mark written apart in
+  // brackets, `[dot] -- [arrow]`, colors as plain words either side of `--`.
+  arrow: `${ARROW_MARK}?-{1,2}${ARROW_MARK}?(?=[ \\t]|$)`,
   attribute: '[A-Za-z][A-Za-z0-9_-]*:',
   color: '#[0-9A-Fa-f]{3,8}\\b',
   relation: `(?:${alternation(RELATION_WORDS)})\\b`,

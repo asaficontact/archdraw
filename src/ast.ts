@@ -400,12 +400,41 @@ export interface NodeStmt {
   line: number;
 }
 
+/**
+ * What may be drawn at an end of a line. The `o` prefix is the outlined form of
+ * the shape, one rule for every shape; `none` says there is definitely nothing,
+ * where an end with no mark written leaves it to a style.
+ */
+export const MARKS = ['arrow', 'oarrow', 'dot', 'odot', 'diamond', 'odiamond', 'bar', 'none'] as const;
+
+export type Mark = (typeof MARKS)[number];
+
+/**
+ * The glyphs that stand for a mark, by the end they are written at. A glyph
+ * that points is spelled the way it points, so `<` is the arrow at the left end
+ * and `>` the one at the right, which is what makes `<->` read. The diamonds
+ * have none: nothing would explain itself, and `<>` is two arrows.
+ */
+export const MARK_GLYPHS: Record<'from' | 'to', Record<string, Mark>> = {
+  from: { '<': 'arrow', '<|': 'oarrow', '*': 'dot', o: 'odot', '|': 'bar' },
+  to: { '>': 'arrow', '|>': 'oarrow', '*': 'dot', o: 'odot', '|': 'bar' },
+};
+
+/** The marks written in an edge's arrow, by end. An end with none written is absent. */
+export interface EdgeMarks {
+  from?: Mark;
+  to?: Mark;
+}
+
 export interface EdgeStmt {
   kind: 'edge';
+  /** The first name written. `from:` and `to:` follow writing order, never the arrow. */
   from: string;
   to: string;
-  /** `<->` rather than `->`. */
-  both: boolean;
+  /** The arrow as written, `->` or `o--odiamond`, for quoting back. */
+  arrow: string;
+  /** The marks the arrow writes at each end: `->` is an arrow at `to`, `<-` one at `from`. */
+  marks: EdgeMarks;
   text?: string;
   /** The text's bracketed modifiers, as written. Usually empty. */
   textAttrs: Attrs;
@@ -554,7 +583,7 @@ export const ATTR_KEYS: Record<Kind, readonly string[]> = {
   shape: ['style', 'gap', 'overlap', 'contents', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
   icon: ['style', 'gap', 'overlap', 'icon', 'text', 'url'],
   none: ['style', 'gap', 'overlap', 'shape', 'text', 'url'],
-  edge: ['style', 'from', 'to', 'line', 'text', 'url'],
+  edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
 };
 
 /**

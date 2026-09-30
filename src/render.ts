@@ -15,7 +15,7 @@ import {
   textStyleFor,
   widestLine,
 } from './constants.js';
-import type { Attrs, Axis } from './ast.js';
+import type { Attrs, Axis, Mark } from './ast.js';
 import { describeAxis } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
@@ -90,7 +90,7 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
       sweepObstacles(edge, layout.nodes),
       [...swept, ...coming],
       arrowLength(edge.look.thickness),
-      edge.both,
+      edge.marks,
     );
     sweeps.set(edge, d);
     swept.push(traceOf(`d="${d}"`));
@@ -146,12 +146,19 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     height: Math.ceil(ink.maxY) - Math.floor(ink.minY),
   };
 
-  const arrowColors = new Set(layout.edges.map((edge) => lineOf(edge.appearance, theme, theme.edge)));
+  // One marker for each mark in each line color the drawing actually uses.
+  const markers = new Map<string, [Mark, string]>();
+  for (const edge of layout.edges) {
+    const color = lineOf(edge.appearance, theme, theme.edge);
+    for (const mark of [edge.marks.from, edge.marks.to]) {
+      if (mark !== 'none') markers.set(markerId(mark, color), [mark, color]);
+    }
+  }
 
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
     '  <defs>',
-    ...[...arrowColors].map((color) => arrowMarker(color)),
+    ...[...markers.values()].map(([mark, color]) => markMarker(mark, color, theme.background)),
     // Each mask covers the whole page, in page units: the default region is the
     // line's own bounding box, which a straight level line gives no height, and
     // the line would vanish entirely.
@@ -506,8 +513,9 @@ function drawEdge(
   const color = lineOf(edge.appearance, theme, theme.edge);
   const stroke = strokeOf(color, edge.look);
 
-  const markerEnd = ` marker-end="url(#${markerId(color)})"`;
-  const markerStart = edge.both ? ` marker-start="url(#${markerId(color)}-back)"` : '';
+  const markerEnd = edge.marks.to !== 'none' ? ` marker-end="url(#${markerId(edge.marks.to, color)})"` : '';
+  const markerStart =
+    edge.marks.from !== 'none' ? ` marker-start="url(#${markerId(edge.marks.from, color)})"` : '';
 
   // A named side is a statement about how the line should leave or arrive, so
   // it is drawn as a curve that actually does leave and arrive that way. With
@@ -2840,8 +2848,8 @@ function sideCurve(
     arrowed && anchor.side !== undefined
       ? { x: anchor.x + anchor.tx * head, y: anchor.y + anchor.ty * head }
       : { x: anchor.x, y: anchor.y };
-  const p0 = tip(start, edge.both);
-  const p3 = tip(end, true);
+  const p0 = tip(start, edge.marks.from !== 'none');
+  const p3 = tip(end, edge.marks.to !== 'none');
   const reach = controlReach(start, end);
   // A bundle whose sides were too short to spread it takes the rest of the
   // room in the middle — see `bowBundles`. Displacing both control points
@@ -2993,7 +3001,7 @@ function sweptPath(
   boxes: Extent[],
   neighbors: Point[][],
   arrow: number,
-  both: boolean,
+  marks: { from: Mark; to: Mark },
 ): string {
   const kappa = 0.5523;
   const count = points.length;
@@ -3006,8 +3014,8 @@ function sweptPath(
   // How much of a piece one of its turns may take.
   const room = (leg: number): number => {
     const length = legLength(leg);
-    if (leg === 0) return Math.max(0, length - (both ? arrow : 0));
-    if (leg === count - 2) return Math.max(0, length - arrow);
+    if (leg === 0) return Math.max(0, length - (marks.from !== 'none' ? arrow : 0));
+    if (leg === count - 2) return Math.max(0, length - (marks.to !== 'none' ? arrow : 0));
     return length / 2;
   };
   const cubicAt = (p0: Point, c1: Point, c2: Point, p3: Point, t: number): Point => {
@@ -3247,20 +3255,48 @@ function impliedSide(edge: LayoutEdge, key: 'from' | 'to'): AttachSide | undefin
   return key === 'from' ? across : upDown;
 }
 
-function arrowMarker(color: string): string {
-  const id = markerId(color);
+/**
+ * The shape of each mark, in a 10 by 10 box whose right edge is the end of the
+ * line, pointing along it. The marker scales with the stroke, so a unit is 0.7
+ * of the line's width and an outline of 1.4 units is as thick as the line.
+ *
+ * An outlined mark is filled with the page's background so the line running
+ * under it does not show through. Over a filled container that is the wrong
+ * color inside the outline; nothing has hit it yet.
+ */
+function markShape(mark: Mark, color: string, background: string): string {
+  const outline = `fill="${background}" stroke="${color}" stroke-width="1.4"`;
+  switch (mark) {
+    case 'arrow':
+      return `<path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/>`;
+    case 'oarrow':
+      return `<path d="M 0.7 1.2 L 9.3 5 L 0.7 8.8 z" ${outline}/>`;
+    case 'dot':
+      return `<circle cx="5" cy="5" r="4" fill="${color}"/>`;
+    case 'odot':
+      return `<circle cx="5.3" cy="5" r="3.4" ${outline}/>`;
+    case 'diamond':
+      return `<path d="M 0 5 L 5 1.2 L 10 5 L 5 8.8 z" fill="${color}"/>`;
+    case 'odiamond':
+      return `<path d="M 0.9 5 L 5 1.9 L 9.1 5 L 5 8.1 z" ${outline}/>`;
+    case 'bar':
+      return `<rect x="5.5" y="0.5" width="1.4" height="9" fill="${color}"/>`;
+    case 'none':
+      return '';
+  }
+}
+
+/** One marker, drawn at either end: `auto-start-reverse` turns it round at the start. */
+function markMarker(mark: Mark, color: string, background: string): string {
   return [
-    `    <marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="${ARROW_MARKER_WIDTH}" markerHeight="${ARROW_MARKER_WIDTH}" orient="auto-start-reverse">`,
-    `      <path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/>`,
-    '    </marker>',
-    `    <marker id="${id}-back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="${ARROW_MARKER_WIDTH}" markerHeight="${ARROW_MARKER_WIDTH}" orient="auto-start-reverse">`,
-    `      <path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/>`,
+    `    <marker id="${markerId(mark, color)}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="${ARROW_MARKER_WIDTH}" markerHeight="${ARROW_MARKER_WIDTH}" orient="auto-start-reverse">`,
+    `      ${markShape(mark, color, background)}`,
     '    </marker>',
   ].join('\n');
 }
 
-function markerId(color: string): string {
-  return `arrow-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
+function markerId(mark: Mark, color: string): string {
+  return `${mark}-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
 }
 
 // --- small shared pieces ------------------------------------------------------

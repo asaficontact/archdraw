@@ -1,0 +1,39 @@
+// What can be drawn at each end of a line. The arrow is a mark, a line, a mark:
+// a word or a glyph at either end of one or two dashes, either end left off.
+
+style label  text: (color: theme-muted)
+
+node plain   "plain"
+node plain2  "a -- b"      right of plain (gap: wide)  style: label
+edge plain -- plain2
+
+node arrows  "arrows"      below plain
+node arrows2 "a <-> b"     right of arrows (gap: wide)  style: label
+edge arrows <-> arrows2
+
+node uml     "inherits"    below arrows
+node uml2    "a --|> b"    right of uml (gap: wide)  style: label
+edge uml --|> uml2
+
+node whole   "composed"    below uml
+node whole2  "a diamond--> b"  right of whole (gap: wide)  style: label
+edge whole diamond--> whole2
+
+node part    "aggregates"  below whole
+node part2   "a odiamond-- b"  right of part (gap: wide)  style: label
+edge part odiamond-- part2
+
+node dots    "dots"        below part
+node dots2   "a *--o b"    right of dots (gap: wide)  style: label
+edge dots *--o dots2
+
+node bars    "bars"        below dots
+node bars2   "a |--| b"    right of bars (gap: wide)  style: label
+edge bars |--| bars2
+
+// A style can carry marks too. It fills only the ends the arrow leaves blank,
+// so here the arrow's own head stays and the style adds a dot at the start.
+style tracked  from-mark: dot  to-mark: oarrow
+node styled  "styled"      below bars
+node styled2 "a --> b, with a style"  right of styled (gap: wide)  style: label
+edge styled --> styled2  style: tracked

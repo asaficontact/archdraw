@@ -1,4 +1,4 @@
-import type { Attrs, Axis, Direction, Kind, Placement } from './ast.js';
+import type { Attrs, Axis, Direction, Kind, Mark, Placement } from './ast.js';
 import type { Line } from './text.js';
 import type { Body } from './icons.js';
 
@@ -125,7 +125,8 @@ export interface LayoutNode {
 export interface LayoutEdge {
   from: LayoutNode;
   to: LayoutNode;
-  both: boolean;
+  /** What is drawn at each end, settled: the arrow, then the edge's own attributes, then its style. */
+  marks: { from: Mark; to: Mark };
   text?: string;
   /** The text split into the lines that will be drawn, each as its runs. */
   lines?: Line[];

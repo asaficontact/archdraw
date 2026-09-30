@@ -16,11 +16,12 @@ edge sink -> quiet  from: right  to: left
 // Going downward the text is only a line deep, so it opens the gap by one line
 // and hangs out either side.
 //
-// Written with `<-`, which is the same edge as `writer -> disk` and draws the
-// same picture. It just puts the node the line is about first.
+// Written with `<-`, which draws the same picture as `writer -> disk`. It just
+// puts the node the line is about first. `from:` is still the first name
+// written, so it names Disk's side.
 node writer "Writer"  right of resolver (gap: wide)  style: plain
 node disk   "Disk"    below writer                  style: plain
-edge disk <- writer  "flushed to disk"  from: bottom  to: top
+edge disk <- writer  "flushed to disk"  from: top  to: bottom
 
 // Already wider than the text needs, so nothing moves.
 node roomy "Roomy"        below sink                                 style: plain

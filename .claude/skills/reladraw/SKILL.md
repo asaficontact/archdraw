@@ -151,9 +151,11 @@ node stack "Stack"  below wedge  right of wall (gap: tight)  gap: wide
 edge <from> -> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [above|below|left of|right of <node> ...] [attributes]
 ```
 
-`<-` and `<->` also work; `a <- b` is exactly `b -> a` drawn the same way, and lets you write the subject first. Endpoints may be nested (`server.api`).
+`<-` and `<->` also work, and `--` is a plain line; `a <- b` draws the same as `b -> a` and lets you write the subject first. Endpoints may be nested (`server.api`).
 
-`from:` and `to:` name a side — `top`, `bottom`, `left`, `right` — and turn the line into a curve that actually leaves and arrives that way. Name them when it matters which side a line meets a box on.
+Each end may carry a mark, written in the arrow: `arrow` (glyph `>`/`<`), `oarrow` (`|>`/`<|`), `dot` (`*`), `odot` (`o`), `diamond`, `odiamond`, `bar` (`|`), `none`. So `a <|-- b`, `a *--o b`, `a diamond--> b`. A mark touches the dashes or is bracketed (`[dot] -- b`). `from-mark:` and `to-mark:` say the same as attributes and can live in a style; they fill only ends the arrow leaves blank, and contradicting a mark written in the arrow is an error.
+
+`from:` and `to:` name a side of the first and second node written, whichever way the arrow points — `top`, `bottom`, `left`, `right` — and turn the line into a curve that actually leaves and arrives that way. Name them when it matters which side a line meets a box on.
 
 A line never passes through a box: every edge takes the shortest way between its ends that goes through none, going round whatever is in its way. Of two ways round that are equally short, it goes over the top (round the right for a column). An end with no side named leaves by whichever side makes the way shortest.
 

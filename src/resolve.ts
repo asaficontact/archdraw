@@ -10,11 +10,14 @@ import type {
   Placement,
   DefaultTarget,
   Document,
+  EdgeStmt,
+  Mark,
   Stmt,
 } from './ast.js';
 import {
   ALL_ATTR_KEYS,
   ATTR_KEYS,
+  MARKS,
   PART_SIDES,
   COLOR_KEYS,
   COLOR_PARTS,
@@ -553,6 +556,41 @@ function appearanceOf(attrs: Attrs, styles: Map<string, Attrs>, line: number): A
   return { ...merged, ...attrs };
 }
 
+/**
+ * What is drawn at one end of an edge. A mark written in the arrow is final:
+ * the edge's own `from-mark:` or `to-mark:` may repeat it but not contradict
+ * it, since both halves are on one line and whichever lost would be dead text.
+ * An end the arrow leaves blank is unsaid, and the edge's attribute, then its
+ * style, then nothing, fills it. Layering is between places, never within one.
+ */
+function markAt(end: 'from' | 'to', stmt: EdgeStmt, appearance: Attrs, what: string): Mark {
+  const key = `${end}-mark`;
+  const check = (value: string): Mark => {
+    if (!(MARKS as readonly string[]).includes(value)) {
+      throw new SourceError(
+        `edge ${what}: "${key}: ${value}" is not a mark — use ${MARKS.join(', ')}`,
+        stmt.line,
+      );
+    }
+    return value as Mark;
+  };
+  const written = stmt.marks[end];
+  const own = stmt.attrs[key];
+  if (written !== undefined) {
+    if (own !== undefined && check(own) !== written) {
+      throw new SourceError(
+        `edge ${what}: the arrow already puts ${written === 'none' ? 'nothing' : `a${/^[aeiou]/.test(written) ? 'n' : ''} ${written}`} ` +
+          `at ${stmt[end]}, and "${key}: ${own}" says otherwise. Say it once: leave that end of the ` +
+          `arrow blank and keep "${key}: ${own}", or drop "${key}:"`,
+        stmt.line,
+      );
+    }
+    return written;
+  }
+  const given = appearance[key];
+  return given === undefined ? 'none' : check(given);
+}
+
 function buildEdges(
   statements: Stmt[],
   byName: Map<string, LayoutNode>,
@@ -608,7 +646,7 @@ function buildEdges(
       };
     });
     const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
-    const what = `${stmt.from} -> ${stmt.to}`;
+    const what = `${stmt.from} ${stmt.arrow} ${stmt.to}`;
     checkAttrs('edge', what, stmt.attrs, stmt.line);
     checkStyleUse('edge', what, stmt.attrs, styles, stmt.line);
     if (stmt.attrs['url'] !== undefined && stmt.text === undefined) {
@@ -626,7 +664,10 @@ function buildEdges(
     edges.push({
       from,
       to,
-      both: stmt.both,
+      marks: {
+        from: markAt('from', stmt, appearance, what),
+        to: markAt('to', stmt, appearance, what),
+      },
       textAttrs,
       ...(stmt.text !== undefined
         ? { text: stmt.text, lines: linesFor(stmt.text, textAttrs, `edge ${what}`, stmt.line) }
@@ -1830,10 +1871,11 @@ function corridorsIn(
     const from = locate(edge.from);
     const to = locate(edge.to);
     if (!from || !to || from.index === to.index) continue;
-    // With no text, the gap still has to show a run of line behind each head,
+    // With no text, the gap still has to show a run of line behind each mark,
     // or two stacked children with an arrow between them draw as a head alone.
+    const marked = [edge.marks.from, edge.marks.to].filter((mark) => mark !== 'none').length;
     if (edge.text === undefined) {
-      const bare = BARE_EDGE_RUN + arrowLength(edge.look.thickness) * (edge.both ? 2 : 1);
+      const bare = BARE_EDGE_RUN + arrowLength(edge.look.thickness) * marked;
       corridors.push({
         edge,
         from,
@@ -1848,10 +1890,12 @@ function corridorsIn(
     // at either end. The arrowhead is charged on both sides for the same reason:
     // it covers the head's length of the line it arrives on, and reserving that
     // at one end only would move the midpoint rather than lengthen the run. A
-    // thick line's head is longer, and takes the room it needs.
+    // thick line's head is longer, and takes the room it needs. A line with no
+    // mark at either end is charged for none.
+    const head = marked > 0 ? arrowLength(edge.look.thickness) : 0;
     const extent = (axis: Axis): number =>
       textExtent(edge.lines!, edge.textAttrs, axis, measurer, fontSize, edge.line) +
-      (TEXT_CLEARANCE + arrowLength(edge.look.thickness)) * 2;
+      (TEXT_CLEARANCE + head) * 2;
     corridors.push({
       edge,
       from,

@@ -60,6 +60,7 @@ const OFFERED = [
   ['overhang', 'outside the nodes', 'Edges that run past the nodes, and the page grows to hold them.'],
   ['routing', 'going round boxes', 'Every routing bug reported so far, each line now going the shortest way round.'],
   ['lines', 'line styles', 'Curved, square and straight lines, dashes, and how crossings are drawn.'],
+  ['marks', 'line ends', 'Arrowheads, dots, diamonds and bars at either end of a line, or none.'],
 ];
 
 const IMPORT = /^import\s+[\s\S]*?\s+from\s+'([^']+)';$/gm;

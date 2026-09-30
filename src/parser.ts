@@ -7,7 +7,9 @@ import type {
   DefaultTarget,
   DiagramStmt,
   Document,
+  EdgeMarks,
   EdgeStmt,
+  Mark,
   OffsetPlacement,
   Part,
   Passage,
@@ -33,6 +35,8 @@ import {
   PLACEMENT_KEYS,
   BOUNDARY_PARTS,
   INWARD,
+  MARKS,
+  MARK_GLYPHS,
   OPPOSITE,
   isDirection,
   isPart,
@@ -647,29 +651,120 @@ function parseNode(head: Token[], line: number): NodeStmt {
   };
 }
 
-/**
- * `edge <from> -> <to> ["<text>"] [between <a> and <b>]`, with `<->` for a
- * two-headed arrow and `<-` for one pointing the other way.
- *
- * `a <- b` is exactly `b -> a` and carries no meaning of its own downstream.
- * What it buys is the ordering: the name written first is the one the line is
- * about, and plenty of edges have the target as their subject.
- */
-const ARROWS = ['->', '<->', '<-'];
+const NEEDS_ARROW = 'an edge needs a line between its endpoints: "->", "<-", "<->" or "--"';
 
+/**
+ * The arrow between an edge's two names: a mark, a shaft, a mark. The shaft is
+ * `-` or `--`, and either mark may be left off, so `--` is a plain line and
+ * `<->` an arrow at each end.
+ *
+ * A mark is a word or a glyph, bare or in `()` or `[]`, and it must touch the
+ * dashes or be bracketed: `edge a -- dot b` would otherwise read like a line to
+ * a node named `dot`. So a bracketed mark may stand apart, which is why the
+ * arrow can span several tokens — `[dot] -- [arrow]` is three, and `(dot)` is
+ * three on its own, since the lexer splits a bracket that opens a token.
+ */
+function readArrow(head: Token[], line: number): { text: string; marks: EdgeMarks; next: number } {
+  let at = 2;
+  const pieces: string[] = [];
+  const bracketed = (): void => {
+    const token = head[at];
+    if (!token || token.quoted) return;
+    if (token.text === '(' && head[at + 2]?.text === ')' && !head[at + 1]!.quoted) {
+      pieces.push(`(${head[at + 1]!.text})`);
+      at += 3;
+    } else if (/^\[[^\]]*\]$/.test(token.text)) {
+      pieces.push(token.text);
+      at += 1;
+    }
+  };
+
+  bracketed();
+  const shaft = head[at];
+  if (!shaft || shaft.quoted || !shaft.text.includes('-')) throw new SourceError(NEEDS_ARROW, line);
+  pieces.push(shaft.text);
+  at += 1;
+  if (shaft.text.endsWith('-')) bracketed();
+
+  const text = pieces.join('');
+  const parts = /^([^-]*)(-+)([^-]*)$/.exec(text);
+  if (!parts) {
+    throw new SourceError(`"${text}" is not an arrow — the line is one run of dashes, with a mark at either end`, line);
+  }
+  if (parts[2]!.length > 2) {
+    throw new SourceError(`"${text}" has ${parts[2]!.length} dashes — the line is "-" or "--"`, line);
+  }
+  const from = readMark(parts[1]!, 'from', text, line);
+  const to = readMark(parts[3]!, 'to', text, line);
+  return {
+    text,
+    marks: { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) },
+    next: at,
+  };
+}
+
+/** One end of an arrow, as written: a mark word or glyph, perhaps bracketed, or nothing. */
+function readMark(written: string, end: 'from' | 'to', arrow: string, line: number): Mark | undefined {
+  if (written === '') return undefined;
+  const inner = /^\((.*)\)$/.exec(written)?.[1] ?? /^\[(.*)\]$/.exec(written)?.[1] ?? written;
+  if ((MARKS as readonly string[]).includes(inner)) return inner as Mark;
+  const glyph = MARK_GLYPHS[end][inner];
+  if (glyph !== undefined) return glyph;
+
+  const other = end === 'from' ? 'to' : 'from';
+  const turned = MARK_GLYPHS[other][inner];
+  if (turned !== undefined) {
+    // A pointing glyph written at the end it points away from: `>--` or `--<`.
+    const right = Object.entries(MARK_GLYPHS[end]).find(([, mark]) => mark === turned)![0];
+    throw new SourceError(
+      `"${arrow}": "${inner}" points the other way — at the ${end === 'from' ? 'left' : 'right'} end ` +
+        `the ${turned} is "${right}", or write the word "${turned}"`,
+      line,
+    );
+  }
+  throw new SourceError(
+    `"${arrow}": "${inner}" is not a mark. The marks are ${MARKS.join(', ')}, and the glyphs ` +
+      `${Object.keys(MARK_GLYPHS.to).join(' ')} and ${Object.keys(MARK_GLYPHS.from).filter((g) => !(g in MARK_GLYPHS.to)).join(' ')}`,
+    line,
+  );
+}
+
+/**
+ * `edge <from> <arrow> <to> ["<text>"] [between <a> and <b>]`. The arrow is
+ * read by `readArrow`.
+ *
+ * `from` and `to` are the order the names are written in, never the arrow's
+ * direction: `a <- b` is `a` then `b` with an arrow at `a`. With a mark at each
+ * end many lines have no direction at all, and the written order is the one
+ * every edge has — so `from:` names the first name's side on every edge.
+ */
 function parseEdge(head: Token[], line: number): EdgeStmt {
   const left = requireName(head[1], 'edge', line);
-  const arrow = head[2];
-  if (!arrow || arrow.quoted || !ARROWS.includes(arrow.text)) {
-    throw new SourceError('an edge needs "->", "<-" or "<->" between its endpoints', line);
-  }
-  const rightToken = head[3];
+  const arrow = readArrow(head, line);
+  const rightToken = head[arrow.next];
   if (!rightToken || rightToken.quoted) {
     throw new SourceError('an edge needs a node on the right of the arrow', line);
   }
-  const back = arrow.text === '<-';
 
-  let at = 4;
+  let at = arrow.next + 1;
+  const stray = head[at];
+  if (
+    stray &&
+    !stray.quoted &&
+    !isAttrKey(stray) &&
+    stray.text !== '(' &&
+    stray.text !== 'between' &&
+    !isDirection(stray.text) &&
+    ((MARKS as readonly string[]).includes(rightToken.text) || Object.hasOwn(MARK_GLYPHS.to, rightToken.text))
+  ) {
+    // `edge a -- dot b`: a mark standing apart, which reads as a node named
+    // `dot`. Said outright rather than left to the "not a direction" error.
+    throw new SourceError(
+      `edge ${left} ${arrow.text} ${rightToken.text} ${stray.text}: a mark touches the dashes or is ` +
+        `in brackets — write "${arrow.text}${rightToken.text}" or "${arrow.text} [${rightToken.text}]"`,
+      line,
+    );
+  }
   const textToken = head[at]?.quoted ? head[at] : undefined;
   if (textToken) at += 1;
 
@@ -752,9 +847,10 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
   return {
     kind: 'edge',
     textAttrs: bracket.values,
-    from: back ? rightToken.text : left,
-    to: back ? left : rightToken.text,
-    both: arrow.text === '<->',
+    from: left,
+    to: rightToken.text,
+    arrow: arrow.text,
+    marks: arrow.marks,
     ...(textToken ? { text: textToken.text } : {}),
     ...(between ? { between } : {}),
     ...(passes.length > 0 ? { passes } : {}),

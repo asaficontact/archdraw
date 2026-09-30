@@ -396,12 +396,55 @@ Separation leaves a tight gap, deliberately small — enough to read as two node
 ## Edges
 
 ```
-edge <from> -> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [attributes]
-edge <to> <- <from> ["<text>"] [between <a> and <b> [vertically|horizontally]] [attributes]
-edge <from> <-> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [attributes]
+edge <from> <arrow> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [attributes]
 ```
 
-`a <- b` is exactly `b -> a` — same arrow, same picture. What changes is which name you write first, and that is worth having: the first name reads as the subject of the line, and plenty of edges are about the thing the arrow points at rather than the thing it leaves. `from:` and `to:` follow the arrow, not the writing order, so they still name the tail and the head.
+```
+edge a -> b       // an arrow at b
+edge a <- b       // an arrow at a
+edge a <-> b      // one at each end
+edge a -- b       // a plain line
+```
+
+`a <- b` draws the same picture as `b -> a`. What changes is which name you write first, and that is worth having: the first name reads as the subject of the line, and plenty of edges are about the thing the arrow points at rather than the thing it leaves. **`from:` and `to:` follow the writing order**, never the arrow: `from:` is always the first name's side and `to:` the second's, whichever way the arrow points.
+
+### What is drawn at each end
+
+The arrow is a mark, a line, a mark. The line is `-` or `--`, the two meaning the same, and either mark may be left off. A mark is a word, or a glyph that stands for one:
+
+| mark | draws | glyph |
+|---|---|---|
+| `arrow` | a filled arrowhead | `>` at the right end, `<` at the left |
+| `oarrow` | an outlined arrowhead | `\|>` at the right end, `<\|` at the left |
+| `dot` | a filled circle | `*` |
+| `odot` | an outlined circle | `o` |
+| `diamond` | a filled diamond | |
+| `odiamond` | an outlined diamond | |
+| `bar` | a stroke across the line | `\|` |
+| `none` | nothing | |
+
+The `o` in front means outlined, for every shape. A glyph that points is spelled the way it points, which is why `<->` reads as it does. So these are all the same arrow, and you write whichever reads best to you:
+
+```
+edge a o--> b
+edge a odot--arrow b
+edge a (odot)--(arrow) b
+edge a [odot] -- [arrow] b
+```
+
+A mark touches the dashes or is in brackets. `edge a -- dot b` is an error, because it reads just as well as a plain line to a node named `dot`.
+
+**Marks as attributes.** `from-mark:` and `to-mark:` say the same thing, one end at a time, and they are how a style carries marks:
+
+```
+style inherits  to-mark: oarrow
+edge dog -- animal  style: inherits
+edge cat -- animal  style: inherits
+```
+
+**An end with nothing written is left open, not empty.** `dog -- animal` is plain until something says otherwise, and here the style does. `none` is the word for "nothing at this end, whatever the style says": `edge a none--> b`, or `from-mark: none`.
+
+**A mark written in the arrow is final.** The edge's own `to-mark:` may repeat it but not contradict it — `edge a --> b  to-mark: dot` is an error, since both halves are on one line and one of them would be dead text. A style fills only the ends the arrow leaves open: a style giving every end a `bar`, applied to `a --> b`, draws a bar at `a` and still the arrow at `b`.
 
 Endpoints may be nested (`desktop1.files`). An edge never says where a node goes and routing is the renderer's problem, with one exception: an edge with text claims room in the gap it crosses, which is the next section.
 
@@ -454,7 +497,7 @@ The same rule covers every other case: sides at right angles where one faces awa
 
 Several lines along the same stretch take a lane each, side by side, instead of drawing on top of one another, nested so that none crosses another where it need not. Where one of them carries its text on that stretch, the others keep clear of the text as well as the line. The text rides on the line's longest straight piece that it does not land on a box from, and never changes which way the line goes.
 
-A curved line and a square one take the same way. The square one turns at corners. The curved one sweeps through them, each sweep as wide as the room around it allows without coming near a box or another line, and a line stepping sideways and carrying on the way it was going is one S. Where the room is tight a sweep comes close to a rounded corner; where there is room it flows. At an arrowhead, the line always finishes straight, so the head points square into the side.
+A curved line and a square one take the same way. The square one turns at corners. The curved one sweeps through them, each sweep as wide as the room around it allows without coming near a box or another line, and a line stepping sideways and carrying on the way it was going is one S. Where the room is tight a sweep comes close to a rounded corner; where there is room it flows. At an arrowhead or any other mark, the line always finishes straight, so the mark points square into the side.
 
 When there is no way at all — the side you named is flush against another box — the file is refused with the reason: `edge a -> b: cannot leave a's right side, b is against it`.
 
@@ -769,6 +812,7 @@ Every attribute, and what takes one. The kinds here are what a node's **body** i
 | `shape` | ✓ | | ✓ | | the outline the node is drawn with, `none` included |
 | `icon` | | ✓ | | | the picture the node is drawn as |
 | `from` `to` | | | | ✓ | which side the line leaves and arrives on |
+| `from-mark` `to-mark` | | | | ✓ | what is drawn at each end — see "What is drawn at each end" |
 | `fill` | ✓ | | | | color — see "A color names the part it colors" |
 | `border` | ✓ | | | | color |
 | `text` | ✓ | ✓ | ✓ | ✓ | the text's properties, in brackets — a style's form of what a node or an edge writes after its own words |
@@ -849,7 +893,7 @@ A color attribute says which part of a thing it colors, and a part exists only o
 | `fill` | the area inside the outline | a node |
 | `border` | the outline | a node |
 | `text: (color: …)` | the text | every node, and an edge |
-| `line` | the drawn line and its arrowheads | an edge |
+| `line` | the drawn line and the marks at its ends | an edge |
 
 A word written on a kind that has no such part is refused by name, and the error lists the parts that kind does have — `border:` on a node with no body is a mistake, not something to ignore, for the same reason an unknown `diagram` key is.
 
@@ -1067,6 +1111,13 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+One breaking change: on an edge written with `<-`, `from:` and `to:` now name the sides of the first and second names written. They used to follow the arrow, so `disk <- writer  from: bottom` meant Writer's bottom; it now means Disk's. Swap the two on any `<-` edge that names a side. No other file draws differently.
+
+- A line can have no arrowhead: `edge a -- b`, or `edge a - b`.
+- Each end of a line can carry a mark: an arrowhead filled or outlined, a dot, a diamond or a bar, written in the arrow (`a o--> b`, `a diamond--arrow b`) or as `from-mark:` and `to-mark:`, which a style can carry. See "What is drawn at each end".
 
 **0.13.0**
 
