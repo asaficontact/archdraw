@@ -5818,6 +5818,9 @@ function planWays(edges, nodes, ends, corridors, measurer, fontSize) {
             ...(edge.passes ?? []).map((pass) => pass.written),
         ].join(' ');
     };
+    // Each line of such a group after the first, and the line it is drawn as a
+    // copy of: the one a lane inside it.
+    const copies = new Map();
     for (let index = 0; index < wanted.length; index += 1) {
         const key = sameWay(wanted[index]);
         const group = wanted.filter((edge) => sameWay(edge) === key);
@@ -5837,6 +5840,14 @@ function planWays(edges, nodes, ends, corridors, measurer, fontSize) {
         rest.splice(index, 0, ...ordered);
         wanted.splice(0, wanted.length, ...rest);
         index += group.length - 1;
+        // A text widens the lane it rides in, which a copy cannot know; those are searched.
+        const named = (edge) => {
+            const { start, end } = ends.get(edge);
+            return start.side !== undefined && end.side !== undefined;
+        };
+        if (ordered.every((edge) => edge.lines === undefined && named(edge))) {
+            ordered.slice(1).forEach((edge, at) => copies.set(edge, ordered[at]));
+        }
     }
     // Where several lines leave one side, their ends may be squeezed closer than
     // a lane; the lines then run out of them that close together, and the lanes
@@ -5957,8 +5968,70 @@ function planWays(edges, nodes, ends, corridors, measurer, fontSize) {
         found.set(edge, way);
         ends.set(edge, { start: way.start, end: way.end });
     };
+    // A line identical to one already placed is that line moved out by a lane,
+    // not a search of its own: the same way, every stretch shifted to the same
+    // side by the distance between their ends. Searching each afresh, keeping
+    // clear of every copy before it, made fifteen identical lines take as long as
+    // a tangled diagram. Where the copy would not do — its ends do not line up
+    // with the shift, a stretch folds up, it meets a box, crowds or crosses a line
+    // the first does not — the line is searched for as any other.
+    const copyOf = (edge, inside, placed) => {
+        const { start, end } = planned.get(edge);
+        const base = found.get(inside).points;
+        const count = base.length - 1;
+        if (count < 1)
+            return undefined;
+        const heading = base.slice(1).map((q, index) => {
+            const p = base[index];
+            const length = Math.hypot(q.x - p.x, q.y - p.y);
+            return { x: (q.x - p.x) / length, y: (q.y - p.y) / length, length };
+        });
+        if (heading.some((one) => one.length < 0.5 || (Math.abs(one.x) > 1e-6 && Math.abs(one.y) > 1e-6)))
+            return undefined;
+        const normal = heading.map((one) => ({ x: -one.y, y: one.x }));
+        const along = (from, to, axis) => (to.x - from.x) * axis.x + (to.y - from.y) * axis.y;
+        const shift = along(base[0], start, normal[0]);
+        if (Math.abs(shift) < 0.5 || Math.abs(along(base[0], start, heading[0])) > 0.5)
+            return undefined;
+        if (Math.abs(along(base[count], end, normal[count - 1]) - shift) > 0.5 || Math.abs(along(base[count], end, heading[count - 1])) > 0.5) {
+            return undefined;
+        }
+        const points = [{ x: start.x, y: start.y }];
+        for (let index = 1; index < count; index += 1) {
+            const [p, q] = [normal[index - 1], normal[index]];
+            const turns = Math.abs(p.x * q.x + p.y * q.y) < 0.5;
+            const v = base[index];
+            points.push(turns ? { x: v.x + shift * (p.x + q.x), y: v.y + shift * (p.y + q.y) } : { x: v.x + shift * q.x, y: v.y + shift * q.y });
+        }
+        points.push({ x: end.x, y: end.y });
+        for (let index = 0; index < count; index += 1) {
+            const [p, q] = [points[index], points[index + 1]];
+            if (along(p, q, heading[index]) < 0.5)
+                return undefined;
+        }
+        const inner = points.slice(1, -1);
+        const walls = nodes
+            .filter((node) => !contains(node, edge.from) && !contains(node, edge.to))
+            .map((node) => grow(extentOfBox(faceOf(node)), ATTACH_MARGIN - 0.5));
+        const own = [edge.from, edge.to].map((node) => grow(extentOfBox(faceOf(node)), ATTACH_MARGIN - 0.5));
+        const fences = (edge.passes ?? []).map((pass) => fenceOf(pass, 0));
+        if (!wayClear(points, [...obstaclesFor(edge, nodes), ...walls]) || !wayClear(inner, [...own, ...fences]) || !passesAll(edge, points)) {
+            return undefined;
+        }
+        const lane = laneFor(edge);
+        for (const other of placed) {
+            const theirs = found.get(other).points;
+            if (linesCross(points, theirs) > linesCross(base, theirs))
+                return undefined;
+            if (other !== inside && crowds(points, theirs, lane))
+                return undefined;
+        }
+        return { start, end, points, mid: textOnWay(points, edge, nodes, measurer, fontSize) };
+    };
     for (const edge of wanted) {
-        settle(edge, place(edge, [...order]));
+        const inside = copies.get(edge);
+        const copy = inside && found.has(inside) ? copyOf(edge, inside, [...order]) : undefined;
+        settle(edge, copy ?? place(edge, [...order]));
         order.push(edge);
     }
     // Which line takes the inside of a shared stretch depends on which was placed
@@ -6013,6 +6086,27 @@ function planWays(edges, nodes, ends, corridors, measurer, fontSize) {
         routes.set(edge, { points, mid });
     }
     return routes;
+}
+/**
+ * Whether two lines run side by side, along the same stretch, nearer than a
+ * lane apart — which a line found by search never does.
+ */
+function crowds(a, b, lane) {
+    for (let i = 0; i + 1 < a.length; i += 1) {
+        const [p, q] = [a[i], a[i + 1]];
+        const level = Math.abs(p.y - q.y) < 0.5;
+        for (let j = 0; j + 1 < b.length; j += 1) {
+            const [r, s] = [b[j], b[j + 1]];
+            if (level !== Math.abs(r.y - s.y) < 0.5)
+                continue;
+            const [across, lo, hi, otherAcross, otherLo, otherHi] = level
+                ? [p.y, Math.min(p.x, q.x), Math.max(p.x, q.x), r.y, Math.min(r.x, s.x), Math.max(r.x, s.x)]
+                : [p.x, Math.min(p.y, q.y), Math.max(p.y, q.y), r.x, Math.min(r.y, s.y), Math.max(r.y, s.y)];
+            if (Math.min(hi, otherHi) - Math.max(lo, otherLo) > 0.5 && Math.abs(across - otherAcross) < lane - 0.5)
+                return true;
+        }
+    }
+    return false;
 }
 /** How many times two lines cross, each drawn as straight pieces through its points. */
 function linesCross(a, b) {
@@ -6676,9 +6770,21 @@ function sweptPath(points, boxes, neighbors, arrow, marks) {
                 return false;
             }
         }
+        // A piece of another line wholly beyond the curve's reach, and its air,
+        // can neither cross it nor come near it.
+        const reach = {
+            minX: Math.min(...trace.map((point) => point.x)) - SWEEP_AIR,
+            maxX: Math.max(...trace.map((point) => point.x)) + SWEEP_AIR,
+            minY: Math.min(...trace.map((point) => point.y)) - SWEEP_AIR,
+            maxY: Math.max(...trace.map((point) => point.y)) + SWEEP_AIR,
+        };
         for (const line of neighbors) {
             for (let index = 0; index + 1 < line.length; index += 1) {
                 const [p, q] = [line[index], line[index + 1]];
+                if (Math.max(p.x, q.x) < reach.minX || Math.min(p.x, q.x) > reach.maxX)
+                    continue;
+                if (Math.max(p.y, q.y) < reach.minY || Math.min(p.y, q.y) > reach.maxY)
+                    continue;
                 for (let step = 0; step < steps; step += 1) {
                     if (intersect(trace[step], trace[step + 1], p, q))
                         return false;
