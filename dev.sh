@@ -116,11 +116,19 @@ Commands:
   before <file> [ref]           Render one example as <ref> renders it, into
                                  examples/out/<name>-before.png. `regress` says
                                  that something moved; this is how you see what.
-  regress [ref]                 Render every example with the working tree and
-                                 with the source at <ref> (default HEAD) and
-                                 report which ones moved. The check to run after
-                                 any renderer or resolver change: what the change
-                                 does not concern should be byte-identical.
+  pictures [ref]                Which pictures did this change move? The check to
+                                 run after changing the code or an example file.
+                                 Renders every example as <ref> (default HEAD)
+                                 has it, its own sources with its own build, and
+                                 as the working tree has it, and lists the ones
+                                 that differ. Anything listed that the change
+                                 was not meant to touch is a regression. It
+                                 compares SVG bytes, so a `url:` shows as moved
+                                 with no visible change; compare the PNGs.
+  regress [ref]                 Like `pictures`, but renders the working tree's
+                                 example files with both builds, to isolate a
+                                 code change. Only for when no example file
+                                 changed: an edited example shows as moved.
   snapshot <dir>                Render every example with the working tree into
                                  <dir>, as a baseline for `against`. For a long
                                  change built in steps on top of uncommitted
@@ -128,12 +136,6 @@ Commands:
   against <dir>                 Render every example with the working tree and
                                  say which differ from the SVGs `snapshot` put
                                  in <dir>.
-  pictures [ref]                Render every example as <ref> has it (its own
-                                 sources, its own build) and as the working tree
-                                 has it, and say which pictures changed. regress
-                                 holds the sources fixed to isolate the code, so
-                                 it cannot see an edit to an example file; this
-                                 is the other half.
   clicks <file.svg> <x> <y> ... What a browser would follow at each point, or
                                  "nothing". A `url:` is the one thing in the
                                  output a picture cannot show, and the obvious
