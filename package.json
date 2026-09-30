@@ -1,6 +1,6 @@
 {
   "name": "reladraw",
-  "version": "0.14.3",
+  "version": "0.14.4",
   "description": "A diagram language where you say where things go.",
   "type": "module",
   "bin": {
