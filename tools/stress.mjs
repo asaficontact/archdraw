@@ -14,7 +14,16 @@
 // twice what each level took when they were set, on the machine that set them:
 // room for a slower machine, not for a slower build.
 
+import { execSync } from 'node:child_process';
+import { appendFileSync, existsSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { compile } from '../dist/index.js';
+
+// Every run is added as a row to this file, so a slowdown shows against the
+// runs before it rather than only against the limits. Not tracked: the times
+// belong to the machine that took them, which the row names.
+const HISTORY = new URL('../stress-history.tsv', import.meta.url);
+const COLUMNS = ['when', 'commit', 'machine', '5 lines', '10 lines', '20 lines', '30 lines', '48 lines', 'result'];
 
 const LEVELS = [
   { lines: 5, limit: 1 },
@@ -48,6 +57,26 @@ function diagram(lines) {
   return out.join('\n');
 }
 
+// The commit the build came from, marked + when the source has changes not yet committed.
+function commit() {
+  try {
+    const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    const changed = execSync('git status --porcelain -- src tools', { encoding: 'utf8' }).trim() !== '';
+    return changed ? `${head}+` : head;
+  } catch {
+    return '';
+  }
+}
+
+function record(times, result) {
+  const row = [new Date().toISOString().slice(0, 16).replace('T', ' '), commit(), hostname()];
+  for (let index = 0; index < LEVELS.length; index += 1) row.push(times[index]?.toFixed(2) ?? '');
+  row.push(result);
+  const header = existsSync(HISTORY) ? '' : `${COLUMNS.join('\t')}\n`;
+  appendFileSync(HISTORY, `${header}${row.join('\t')}\n`);
+}
+
+const times = [];
 let level = 0;
 for (const { lines, limit } of full ? LEVELS : LEVELS.slice(0, QUICK)) {
   level += 1;
@@ -55,11 +84,15 @@ for (const { lines, limit } of full ? LEVELS : LEVELS.slice(0, QUICK)) {
   const began = performance.now();
   compile(source);
   const took = (performance.now() - began) / 1000;
+  times.push(took);
   const over = took > limit;
   console.log(`level ${level}  ${String(lines).padStart(2)} lines  ${took.toFixed(2)}s  (limit ${limit}s)${over ? '  TOO SLOW' : ''}`);
   if (over) {
+    record(times, `too slow at level ${level}`);
     console.log(`stopped at level ${level}: routing has become slower than it was`);
     process.exit(1);
   }
 }
+record(times, 'ok');
+console.log('recorded in stress-history.tsv');
 if (!full) console.log(`levels 1-${QUICK} in time; \`./dev.sh stress full\` runs all ${LEVELS.length}`);

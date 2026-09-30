@@ -141,7 +141,9 @@ Commands:
                                  lines, stopping at the first over its limit, in
                                  a few seconds. `full` goes on to 30 and 48 lines.
                                  Run after changing how lines are routed; it
-                                 builds first.
+                                 builds first. Each run adds a row to
+                                 stress-history.tsv (untracked): when, commit
+                                 (+ for uncommitted changes), machine, times.
   clicks <file.svg> <x> <y> ... What a browser would follow at each point, or
                                  "nothing". A `url:` is the one thing in the
                                  output a picture cannot show, and the obvious
