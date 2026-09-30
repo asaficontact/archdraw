@@ -35,11 +35,27 @@ export interface IconPath {
   stroke?: IconTone;
 }
 
-export interface Icon {
+/** A built-in picture, drawn in the theme's tones. */
+export interface DrawnIcon {
   /** Side of the square the paths are drawn on. Scaled to the drawn size. */
   readonly grid: number;
   readonly paths: readonly IconPath[];
 }
+
+/**
+ * A picture the author supplied as SVG, written into the output as a nested
+ * `<svg>` fitted to the icon's square. It keeps its own colors: a pasted
+ * drawing is drawn as it was drawn, on every theme. What it leaves to
+ * `currentColor` takes the theme's icon line color, which is how a
+ * one-color icon set follows the theme anyway.
+ */
+export interface PastedIcon {
+  /** The root element's attributes, less the ones the placement sets. */
+  readonly attrs: string;
+  readonly inner: string;
+}
+
+export type Icon = DrawnIcon | PastedIcon;
 
 const GRID = 24;
 /** Line width on the 24-unit grid, scaled with everything else. */
@@ -206,6 +222,7 @@ export function bodyFor(
   attrs: Record<string, string>,
   appearance: Record<string, string>,
   line: number,
+  declared: ReadonlyMap<string, Icon> = new Map(),
 ): Body {
   const wroteShape = attrs['shape'] !== undefined;
   const wroteIcon = attrs['icon'] !== undefined;
@@ -220,7 +237,7 @@ export function bodyFor(
     );
   }
 
-  if (icon !== undefined) return { kind: 'icon', icon: iconNamed(icon, line) };
+  if (icon !== undefined) return { kind: 'icon', icon: iconNamed(icon, line, declared) };
   if (shape === undefined) return PLAIN;
   if (shape === 'none') return { kind: 'none' };
   if ((OUTLINES as readonly string[]).includes(shape)) {
@@ -262,17 +279,113 @@ function refuse(message: string, line: number): never {
  * `DIAGRAM_KEYS` follows and it is here for the same reason: a misspelt
  * `icon: laptp` that quietly draws nothing is indistinguishable from the tool
  * being broken, and an author will stare at the file looking for the mistake in
- * the wrong place. Since the vocabulary is closed and short, the error can list
- * the whole of it.
+ * the wrong place. The vocabulary is short enough for the error to list all of
+ * it, the file's own icons included.
+ *
+ * An icon the file declares wins over a built-in of the same name, so an author
+ * who dislikes the drawing of `disk` can replace it everywhere at once.
  */
-export function iconNamed(named: string, line: number): Icon {
-  const icon = ICONS[named];
+export function iconNamed(named: string, line: number, declared: ReadonlyMap<string, Icon> = new Map()): Icon {
+  const icon = declared.get(named) ?? ICONS[named];
   if (icon === undefined) {
     const was = named === 'instance' ? ' — the cube was called `instance` until 0.3.0' : '';
+    const all = [...new Set([...ICON_NAMES, ...declared.keys()])];
+    throw new SourceError(`there is no icon called "${named}". The icons are ${all.join(', ')}${was}`, line);
+  }
+  return icon;
+}
+
+/**
+ * Read an author's SVG into an icon. `name` makes the drawing's own ids and
+ * class names unique, so two pasted icons that both call a gradient `a` do not
+ * paint with each other's.
+ *
+ * Refused, each by name: text with no `<svg>` in it, a drawing with no way to
+ * tell its size, and anything that runs script, which a diagram has no use for
+ * and a browser showing the diagram might execute.
+ */
+export function pastedIcon(source: string, name: string, line: number): PastedIcon {
+  const start = source.search(/<svg[\s>/]/);
+  if (start === -1) {
+    throw new SourceError(`icon "${name}" is not an SVG — it should contain an <svg> element`, line);
+  }
+  if (/<script[\s>]/i.test(source) || /\son[a-z]+\s*=/i.test(source)) {
     throw new SourceError(
-      `there is no icon called "${named}". The icons are ${ICON_NAMES.join(', ')}${was}`,
+      `icon "${name}" contains script, which a diagram has no use for and a browser showing it ` +
+        'might run — remove the <script> element or the on… attribute',
       line,
     );
   }
-  return icon;
+
+  const open = /^<svg((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(\/?)>/.exec(source.slice(start));
+  if (open === null) {
+    throw new SourceError(`icon "${name}" has an <svg> tag that does not close — it needs its >`, line);
+  }
+  const bodyStart = start + open[0].length;
+  const end = source.lastIndexOf('</svg>');
+  if (open[2] !== '/' && end < bodyStart) {
+    throw new SourceError(`icon "${name}" has no </svg> to end it`, line);
+  }
+  let inner = open[2] === '/' ? '' : source.slice(bodyStart, end);
+
+  const attrs = new Map<string, string>();
+  for (const [, key, value] of open[1]!.matchAll(/([^\s=]+)(?:\s*=\s*("[^"]*"|'[^']*'))?/g)) {
+    attrs.set(key!, value ?? '""');
+  }
+  // The placement sets where the drawing goes and how big it is, and a nested
+  // <svg> needs no namespace of its own.
+  const width = attrs.get('width');
+  const height = attrs.get('height');
+  for (const key of [...attrs.keys()]) {
+    if (['x', 'y', 'width', 'height', 'version'].includes(key) || key === 'xmlns' || key.startsWith('xmlns:')) {
+      attrs.delete(key);
+    }
+  }
+  if (!attrs.has('viewBox')) {
+    const number = (value: string | undefined) => Number(value?.slice(1, -1).replace(/px$/, ''));
+    const w = number(width);
+    const h = number(height);
+    if (!(w > 0 && h > 0)) {
+      throw new SourceError(
+        `icon "${name}" has no viewBox and no width and height to take one from, so there is no ` +
+          'telling how big its drawing is — add viewBox="0 0 <width> <height>"',
+        line,
+      );
+    }
+    attrs.set('viewBox', `"0 0 ${w} ${h}"`);
+  }
+
+  // The output declares no xlink namespace, and SVG 2 reads a plain `href`.
+  inner = inner.replace(/\sxlink:href=/g, ' href=');
+
+  const prefix = `rd-${name.replace(/[^A-Za-z0-9_-]/g, '_')}-`;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // An id is renamed where it is defined and where it is referred to, which is
+  // `url(#…)` or `href="#…"` — never a bare `#…`, which may be a color.
+  for (const [, , double, single] of inner.matchAll(/\sid\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+    const id = double ?? single!;
+    const pattern = escape(id);
+    inner = inner
+      .replace(new RegExp(`(\\sid\\s*=\\s*["'])${pattern}(["'])`, 'g'), `$1${prefix}${id}$2`)
+      .replace(new RegExp(`(url\\(\\s*['"]?#)${pattern}(?=['"]?\\s*\\))`, 'g'), `$1${prefix}${id}`)
+      .replace(new RegExp(`(\\shref\\s*=\\s*["']#)${pattern}(?=["'])`, 'g'), `$1${prefix}${id}`);
+  }
+  // A class is renamed on the elements that wear it and in the drawing's own
+  // <style> blocks, since a stylesheet in an SVG applies to the whole document.
+  const classes = new Set<string>();
+  for (const [, , double, single] of inner.matchAll(/\sclass\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+    for (const each of (double ?? single!).split(/\s+/)) if (each !== '') classes.add(each);
+  }
+  inner = inner.replace(/(\sclass\s*=\s*["'])([^"']*)/g, (_, key: string, value: string) =>
+    key + value.replace(/[^\s]+/g, (each) => prefix + each),
+  );
+  inner = inner.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/g, (_, open: string, css: string, close: string) => {
+    for (const each of classes) {
+      css = css.replace(new RegExp(`\\.${escape(each)}(?![\\w-])`, 'g'), `.${prefix}${each}`);
+    }
+    return open + css + close;
+  });
+
+  const written = [...attrs].map(([key, value]) => `${key}=${value}`).join(' ');
+  return { attrs: written, inner: inner.trim() };
 }

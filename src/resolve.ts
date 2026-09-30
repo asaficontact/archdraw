@@ -50,7 +50,7 @@ import {
 } from './constants.js';
 import { fix, reachability, tightest, type Constraint, type Contradiction } from './constrain.js';
 import { SourceError } from './errors.js';
-import { type Body, bodyFor } from './icons.js';
+import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
 import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, LineLook, Reach } from './model.js';
@@ -60,6 +60,12 @@ export interface ResolveOptions {
   fontSize?: number;
   /** Blank space kept around the whole diagram. */
   margin?: number;
+  /**
+   * Read the file an `icon` declaration names, as text. The command-line tool
+   * supplies it, reading relative to the diagram's own file; without it, as in
+   * a browser, an icon has to be pasted in rather than named by file.
+   */
+  readIconFile?: (path: string) => string;
 }
 
 /**
@@ -82,7 +88,8 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   const styles = collectStyles(doc.statements);
   checkStyleKeys(doc.statements);
   const defaults = collectDefaults(doc.statements, styles);
-  const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults);
+  const icons = collectIcons(doc.statements, options.readIconFile);
+  const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults, icons);
 
   // Edges are resolved to nodes before anything is sized, because a labeled
   // edge claims room in the gap it crosses and so has to be in hand while the
@@ -121,6 +128,35 @@ function collectStyles(statements: Stmt[]): Map<string, Attrs> {
     styles.set(stmt.name, stmt.attrs);
   }
   return styles;
+}
+
+/** The file's own icons, by name, each pasted in or read from its file. */
+function collectIcons(statements: Stmt[], readIconFile: ((path: string) => string) | undefined): Map<string, Icon> {
+  const icons = new Map<string, Icon>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'icon') continue;
+    if (icons.has(stmt.name)) {
+      throw new SourceError(`icon "${stmt.name}" is declared twice`, stmt.line);
+    }
+    let svg = stmt.source.trim();
+    if (!stmt.pasted) {
+      if (readIconFile === undefined) {
+        throw new SourceError(
+          `icon "${stmt.name}" names a file, "${svg}", and files can be read only by the ` +
+            'command-line tool — paste the SVG itself between """ marks instead',
+          stmt.line,
+        );
+      }
+      try {
+        svg = readIconFile(svg);
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error);
+        throw new SourceError(`icon "${stmt.name}" could not read "${svg}": ${why}`, stmt.line);
+      }
+    }
+    icons.set(stmt.name, pastedIcon(svg, stmt.name, stmt.line));
+  }
+  return icons;
 }
 
 /**
@@ -178,6 +214,7 @@ function buildTree(
   statements: Stmt[],
   styles: Map<string, Attrs>,
   defaults: Map<DefaultTarget, Attrs>,
+  icons: ReadonlyMap<string, Icon>,
 ) {
   const nodes: LayoutNode[] = [];
   const byName = new Map<string, LayoutNode>();
@@ -219,7 +256,7 @@ function buildTree(
       over(defaults.get('node') ?? {}, defaults.get(parents.has(stmt.name) ? 'container' : 'leaf') ?? {}),
       appearanceOf(stmt.attrs, styles, stmt.line),
     );
-    const body = bodyFor(stmt.attrs, appearance, stmt.line);
+    const body = bodyFor(stmt.attrs, appearance, stmt.line, icons);
     const kind = KIND_OF_BODY[body.kind];
     // A node with no text of its own is labelled with its name, because the
     // first lines anybody types are `node a` and `node b right of a` and they
@@ -294,7 +331,7 @@ function buildTree(
     // the other kinds refuse the word in `checkAttrs`, and a style's is unused.
     const named = appearance['badge'];
     if (named !== undefined && body.kind === 'shape') {
-      const badge = badgeChild(node, named);
+      const badge = badgeChild(node, named, icons);
       badges.set(badge.name, node.name);
       node.children.push(badge);
       nodes.push(badge);
@@ -306,13 +343,13 @@ function buildTree(
 }
 
 /** The child `badge:` writes out, as `buildTree` describes. */
-function badgeChild(parent: LayoutNode, named: string): LayoutNode {
+function badgeChild(parent: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode {
   const icon = { icon: named };
   const size = parent.textAttrs['size'];
   return {
     name: `${parent.name}.badge`,
     kind: 'icon',
-    body: bodyFor(icon, icon, parent.line),
+    body: bodyFor(icon, icon, parent.line, icons),
     text: '',
     lines: linesFor('', {}, `"${parent.name}.badge"`, parent.line),
     children: [],

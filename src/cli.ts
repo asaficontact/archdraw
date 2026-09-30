@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { SourceError } from './errors.js';
@@ -68,7 +69,12 @@ async function main(argv: string[]): Promise<number> {
 
   let svg: string;
   try {
-    svg = compile(source, theme === undefined ? {} : { theme: THEMES[theme]! });
+    svg = compile(source, {
+      ...(theme === undefined ? {} : { theme: THEMES[theme]! }),
+      // An icon's file is found from the diagram, not from wherever the tool
+      // happens to be run.
+      readIconFile: (path) => readFileSync(resolvePath(dirname(input), path), 'utf8'),
+    });
   } catch (error) {
     if (error instanceof SourceError) {
       process.stderr.write(`${error.format(input)}\n`);

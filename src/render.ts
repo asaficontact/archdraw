@@ -457,6 +457,17 @@ function outlineDetail(shape: Outline, x: number, y: number, w: number, h: numbe
 
 /** One icon, scaled from its own grid onto a square of `side` at `x, y`. */
 function drawIcon(icon: Icon, x: number, y: number, side: number, theme: Theme): string {
+  if ('inner' in icon) {
+    // Its own viewBox fits it to the square, centered and in proportion.
+    // `color` is set only when the drawing does not set it, so `currentColor`
+    // means the theme's icon line unless the author said otherwise.
+    const color = /(^|\s)color=/.test(icon.attrs) ? '' : ` color="${theme.iconInk}"`;
+    return [
+      `  <svg x="${round(x)}" y="${round(y)}" width="${round(side)}" height="${round(side)}"${color} ${icon.attrs}>`,
+      icon.inner,
+      '  </svg>',
+    ].join('\n');
+  }
   const scale = side / icon.grid;
   const color = (tone: IconTone | undefined): string =>
     tone === 'ink' ? theme.iconInk : tone === 'shade' ? theme.iconShade : theme.background;

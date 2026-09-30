@@ -103,6 +103,8 @@ Every node has one body and two keys can name it. `shape: rectangle | document |
 
 `badge: <name>` is different again: it puts one of those pictures *beside* a node's text, and the node keeps its own body and grows to hold both.
 
+A picture outside the set is declared with `icon <name>`, followed by SVG pasted between `"""` marks or a quoted `.svg` file path, and then used by name like a built-in. Only the command-line tool reads files. Prefer the built-ins; declare one only when the user supplies the SVG or asks for a picture the set lacks.
+
 ```
 node dump  "nightly dump"  shape: document
 node aside "a remark" (wrap: 30)  shape: none

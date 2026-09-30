@@ -4,7 +4,16 @@ export interface Token {
   text: string;
   /** True when the token came from a quoted string, so `foo:` inside it is literal. */
   quoted: boolean;
+  /** True when the string was written between `"""` marks. */
+  triple?: boolean;
 }
+
+/**
+ * A `"""` string still open at the end of the text given. `parse` catches this
+ * one, adds the next line and tries again, which is how a string runs over
+ * several lines without the lexer having to know about lines.
+ */
+export class OpenString extends SourceError {}
 
 /**
  * Split one line into tokens. Whitespace separates; double quotes group, with
@@ -23,6 +32,9 @@ export interface Token {
  *
  * `depth` is how many brackets are still open from the lines before, when a
  * statement continues onto this one.
+ *
+ * `line` may hold line breaks, but only inside a `"""` string: `parse` joins
+ * the lines such a string spans before handing them over.
  *
  * Returns an empty array for a blank or comment-only line.
  */
@@ -51,6 +63,17 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
       depth -= 1;
       tokens.push({ text: ')', quoted: false });
       i += 1;
+      continue;
+    }
+
+    // Between `"""` marks everything is taken as written, quotes and line breaks
+    // included, with no escapes. That is what makes an SVG pasteable: it is full
+    // of double quotes and never has three in a row.
+    if (line.startsWith('"""', i)) {
+      const end = line.indexOf('"""', i + 3);
+      if (end === -1) throw new OpenString('this """ string is never closed — end it with """', lineNumber);
+      tokens.push({ text: line.slice(i + 3, end), quoted: true, triple: true });
+      i = end + 3;
       continue;
     }
 

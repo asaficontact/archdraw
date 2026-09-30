@@ -607,7 +607,24 @@ export interface StyleStmt {
   line: number;
 }
 
-export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt;
+/**
+ * `icon <name> <picture>`: a picture of the author's own, used by name wherever
+ * a built-in one could be. `source` is as written — the SVG itself, or the path
+ * of a file holding it.
+ */
+export interface IconStmt {
+  kind: 'icon';
+  name: string;
+  source: string;
+  /**
+   * True when `source` is the SVG itself: written between `"""` marks, or
+   * starting with `<`. Otherwise it names a file.
+   */
+  pasted: boolean;
+  line: number;
+}
+
+export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt;
 
 export interface Document {
   statements: Stmt[];

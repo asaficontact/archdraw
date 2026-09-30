@@ -69,10 +69,10 @@ export interface Span {
  * it. A word missing here is a word that draws in the plain color, which is a
  * dull page rather than a wrong one.
  */
-export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram', 'default'] as const;
+export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram', 'default', 'icon'] as const;
 
 /** Statements whose second word declares a name. `diagram` has none. */
-const DECLARES_NAME = ['node', 'style'];
+const DECLARES_NAME = ['node', 'style', 'icon'];
 
 /**
  * Every word that says something about where a thing goes. Assembled from the
@@ -121,7 +121,9 @@ export const PATTERNS = {
   // it is being typed, and a highlighter that waits for the quote repaints the
   // rest of the file on every keystroke.
   string: '"(?:\\\\.|[^"\\\\])*"?',
-  keyword: `(?:${alternation(STATEMENT_KEYWORDS)})\\b`,
+  // Not before a colon: `icon` is a keyword and `icon:` an attribute, and an
+  // indented line may open with the attribute.
+  keyword: `(?:${alternation(STATEMENT_KEYWORDS)})\\b(?!:)`,
   // A mark, one or two dashes, a mark — `->`, `o--odiamond`, `[dot]-`. It must
   // end the token, so a hyphenated name stays a word. A mark written apart in
   // brackets, `[dot] -- [arrow]`, colors as plain words either side of `--`.

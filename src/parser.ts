@@ -9,6 +9,7 @@ import type {
   Document,
   EdgeMarks,
   EdgeStmt,
+  IconStmt,
   Mark,
   OffsetPlacement,
   Part,
@@ -46,7 +47,7 @@ import {
 } from './ast.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
-import { isAttrKey, tokenizeLine, type Token } from './lexer.js';
+import { isAttrKey, OpenString, tokenizeLine, type Token } from './lexer.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
 /**
@@ -59,6 +60,10 @@ import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
  * it. An indented line with nothing open above it is refused rather than read
  * as a statement of its own: it is a stray indent or a deleted first line, and
  * both are worth hearing about.
+ *
+ * A `"""` string is the one thing that crosses these rules: the lines it spans
+ * are its own, blank or not, and a line opening with one continues the
+ * statement above without being indented.
  */
 export function parse(source: string): Document {
   const statements: Stmt[] = [];
@@ -74,27 +79,52 @@ export function parse(source: string): Document {
     depth = 0;
   };
 
-  source.split(/\r?\n/).forEach((line, index) => {
+  const lines = source.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
     const lineNumber = index + 1;
+    let line = lines[index]!;
     if (line.trim() === '') {
       close();
-      return;
+      continue;
     }
 
+    // A line opening with `"""` continues the statement above without being
+    // indented, because nothing else could start with one: no statement begins
+    // with a string, so `icon rack` on one line and the SVG from the next is
+    // unambiguous. The exception is that narrow on purpose — a statement that
+    // could carry on through any line would turn a forgotten word into an error
+    // about some other line.
     const indented = line[0] === ' ' || line[0] === '\t';
-    if (!indented) close();
+    const continues = indented || line.startsWith('"""');
+    if (!continues) close();
 
-    const tokens = tokenizeLine(line, lineNumber, depth);
-    if (tokens.length === 0) return;
+    // A `"""` string may run on over the lines after it, blank ones included,
+    // and every line it covers belongs to it rather than to the statement
+    // structure above.
+    let tokens: Token[];
+    for (;;) {
+      try {
+        tokens = tokenizeLine(line, lineNumber, depth);
+        break;
+      } catch (error) {
+        if (!(error instanceof OpenString) || index + 1 >= lines.length) throw error;
+        index += 1;
+        line += '\n' + lines[index]!;
+      }
+    }
+    if (tokens.length === 0) continue;
 
-    if (!indented) {
+    if (!continues) {
       open = { tokens, line: lineNumber };
     } else {
       const first = tokens[0]!;
       if (!open) {
         throw new SourceError(
-          'this line is indented, which continues the statement above, but there is none to ' +
-            'continue — remove the indentation to start a new statement',
+          indented
+            ? 'this line is indented, which continues the statement above, but there is none to ' +
+                'continue — remove the indentation to start a new statement'
+            : 'a """ string at the start of a line belongs to the statement above, but there is ' +
+                'none — write it after the words it goes with, such as `icon rack`',
           lineNumber,
         );
       }
@@ -113,7 +143,7 @@ export function parse(source: string): Document {
       if (token.text === '(') depth += 1;
       else if (token.text === ')') depth -= 1;
     }
-  });
+  }
   close();
 
   return { statements };
@@ -161,7 +191,20 @@ function parseStatement(tokens: Token[], line: number): Stmt {
     throw new SourceError('a statement must begin with a keyword', line);
   }
 
+  // What a line break inside a node's or an edge's text should mean has not
+  // been decided, so until it is a `"""` string is refused anywhere but the one
+  // place it was made for, rather than drawn in some way that might change.
+  if (keyword.text !== 'icon' && tokens.some((token) => token.triple)) {
+    throw new SourceError(
+      'a """ string holds the SVG of an `icon` declaration and is not accepted anywhere else yet — ' +
+        'use ordinary quotes here',
+      line,
+    );
+  }
+
   switch (keyword.text) {
+    case 'icon':
+      return parseIcon(tokens, line);
     case 'node':
       return parseNode(tokens, line);
     case 'edge':
@@ -877,6 +920,29 @@ function parseStyle(head: Token[], line: number): StyleStmt {
     );
   }
   return { kind: 'style', name, attrs, line };
+}
+
+/**
+ * `icon <name> "<svg>…</svg>"`, or `icon <name> ./file.svg`. What the picture
+ * is — pasted markup or a file to read — is worked out when the diagram is
+ * resolved, since only the caller knows whether files can be read at all.
+ */
+function parseIcon(head: Token[], line: number): IconStmt {
+  const name = requireName(head[1], 'icon', line);
+  const picture = head[2];
+  if (picture === undefined || isAttrKey(picture)) {
+    throw new SourceError(
+      `icon "${name}" needs its picture: the SVG itself between """ marks, or the name of an .svg file`,
+      line,
+    );
+  }
+  if (head.length > 3) {
+    throw new SourceError(
+      `icon "${name}" takes one picture and nothing else — "${head[3]!.text}" is left over`,
+      line,
+    );
+  }
+  return { kind: 'icon', name, source: picture.text, pasted: picture.triple === true || picture.text.trim().startsWith('<'), line };
 }
 
 /**

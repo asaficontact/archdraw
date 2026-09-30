@@ -212,7 +212,7 @@ A circle is an ordinary node in every other way, and the file means the same thi
 
 A name says what the thing *is*, never what the picture looks like: naming the meaning is what lets the drawing be improved later without every diagram that uses it changing sense. `document`, not `folded-corner`. The one place that rule stops is a picture with no single meaning — the cube stands for a container in one diagram, a VM in another, a service in a third — which is why it is called `cube` and not `instance`. An unrecognized name is an error listing the whole set, rather than a node that quietly draws nothing.
 
-The icon set is small on purpose, and it is not the trade a drawing tool makes. There you pick a shape out of a visual palette and hundreds are browsable; here you type the word from memory, which caps the useful vocabulary at what fits in a head. Adding your own is not possible yet — see "Not built yet".
+The icon set is small on purpose, and it is not the trade a drawing tool makes. There you pick a shape out of a visual palette and hundreds are browsable; here you type the word from memory, which caps the useful vocabulary at what fits in a head. A picture outside it is one you declare yourself — see [Your own icons](#your-own-icons).
 
 `cubes` draws three whatever the number, because it is the symbol for "several" and not a count. Where the number matters — where one of them is the end of an arrow — they are separate nodes, each with `icon: cube`.
 
@@ -220,7 +220,7 @@ A node drawn as a picture is an ordinary node in every other way. It takes place
 
 **A picture with no text of its own shows none.** Everywhere else a node with no text is labelled with its name, because `node a` and `node b right of a` mean the two boxes to read "a" and "b". A picture usually *is* the statement, so the default flips: `node svc icon: cube` draws the cube and no caption, and a row of five of them does not come out reading a, b, c, d, e. Write the text if you want one.
 
-Icons are drawn from path data inside the tool, never from a font or a linked file. The output is a standalone SVG and has to stay one — an icon font renders as blank boxes on a machine that does not have it, and a linked image has to travel beside the file.
+The built-in icons are drawn from path data inside the tool, never from a font or a linked file. The output is a standalone SVG and has to stay one — an icon font renders as blank boxes on a machine that does not have it, and a linked image has to travel beside the file.
 
 ### Badges
 
@@ -257,6 +257,36 @@ A badge in the far corner of a container is not what the shorthand says. Write t
 style store  fill: #142814  border: #486544  badge: database
 node records "Records"  style: store
 ```
+
+### Your own icons
+
+`icon <name>` declares a picture of your own, and from then on `icon: <name>` and `badge: <name>` use it exactly as they would a built-in one. The picture is SVG, pasted between `"""` marks or read from a file:
+
+```
+icon crate """
+<svg viewBox="0 0 24 24">
+  <path d="M3 7 L12 3 L21 7 L21 17 L12 21 L3 17 Z" fill="none" stroke="currentColor"/>
+</svg>
+"""
+
+icon rack "./rack.svg"
+
+node store "Warehouse"  badge: crate
+node servers  icon: rack  right of store
+```
+
+Between `"""` marks everything is taken as written, double quotes and line breaks included, so an SVG can be pasted in unchanged. The opening `"""` may start the next line rather than end the `icon` line. A `"""` string is accepted only in an `icon` declaration for now.
+
+A file is found relative to the diagram's own file. Only the command-line tool can read one; in the playground or a web page, paste the SVG instead.
+
+- **It keeps its own colors.** A pasted drawing looks the same on every theme. What it leaves to `currentColor` takes the theme's icon color, which is how a one-color icon follows the theme.
+- **It is fitted to the icon's square,** in proportion and centered, by its `viewBox`. With no `viewBox`, its `width` and `height` stand in; with neither it is refused, since nothing says how big the drawing is.
+- **Its ids and class names are renamed** on the way in, so two icons that both call a gradient `a` don't pick up each other's.
+- **Script is refused:** a `<script>` element or an `on…` attribute.
+
+An icon of your own with a built-in's name replaces the built-in throughout the diagram, so `icon disk "./my-disk.svg"` redraws every disk. Declaring one name twice is an error.
+
+The drawing is written into the output, so the SVG stays standalone however the icon was supplied.
 
 ## Placement
 
@@ -1066,8 +1096,6 @@ Designed, decided, and absent from the code. Written down so the next version ha
 
 **Nothing keeps an edge clear of a node on its own.** Non-overlap applies to nodes only. A line may still cut across a node it has nothing to do with, and an edge text may still land on top of one. `between` and `below <node>` are how you say where a line goes when that matters, and nothing checks the ones where you have not said. A check belongs on the diagnostics list, but finding a route by itself does not — see "What the language refuses".
 
-**An icon outside the built-in seven.** The set is closed, and a diagram wanting a picture that is not in it has nowhere to go. The two shapes this could take are a declaration in the file, `icon <name> "<path data>"` beside `style`, and `icon: ./thing.svg` inlined by the tool at render time. Either keeps the output standalone, which is the constraint any answer has to meet.
-
 **A named channel cannot make room for itself.** Lines through a `between` gap too narrow for them crowd together silently, in exactly the way attachments on a too-short side do. An edge with text *does* now open the gap between its own two ends — see "A text makes room for itself" — and it does so by the measure-then-constrain route that region alignments already use, which is the route this wants too. What is missing is the harder case: several edges sharing a channel between two nodes neither of them is an end of, where the room needed is the whole stack of lanes rather than one text.
 
 ## Known to be wrong
@@ -1111,6 +1139,12 @@ That one was found by testing the lexer, not by rendering — and it could not h
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+No file that worked is refused. No example diagram draws differently.
+
+- Icons of your own. `icon crate """<svg …>…</svg>"""` declares one from pasted SVG, or `icon crate "./crate.svg"` from a file, and `icon: crate` and `badge: crate` then use it like a built-in. One with a built-in's name replaces it. See [Your own icons](#your-own-icons).
 
 **0.14.4**
 
