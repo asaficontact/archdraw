@@ -242,7 +242,7 @@ node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 
 
 # Part 2 — the syntax reference
 
-# Syntax reference — 0.13.0
+# Syntax reference — 0.14.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1356,7 +1356,7 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.14.0**
 
 One breaking change: on an edge written with `<-`, `from:` and `to:` now name the sides of the first and second names written. They used to follow the arrow, so `disk <- writer  from: bottom` meant Writer's bottom; it now means Disk's. Swap the two on any `<-` edge that names a side. No other file draws differently.
 
