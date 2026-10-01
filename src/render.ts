@@ -2306,7 +2306,10 @@ function planWays(
     const normal = heading.map((one) => ({ x: -one.y, y: one.x }));
     const along = (from: Point, to: Point, axis: Point): number => (to.x - from.x) * axis.x + (to.y - from.y) * axis.y;
     const shift = along(base[0]!, start, normal[0]!);
-    if (Math.abs(shift) < 0.5 || Math.abs(along(base[0]!, start, heading[0]!)) > 0.5) return undefined;
+    // Any shift will do, however small: where more lines leave a side than it
+    // has room for, their ends sit under half a pixel apart, and refusing those
+    // sent fifty-six copies to the search and took seconds.
+    if (Math.abs(shift) < 1e-6 || Math.abs(along(base[0]!, start, heading[0]!)) > 0.5) return undefined;
     if (Math.abs(along(base[count]!, end, normal[count - 1]!) - shift) > 0.5 || Math.abs(along(base[count]!, end, heading[count - 1]!)) > 0.5) {
       return undefined;
     }
