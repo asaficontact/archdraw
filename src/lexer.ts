@@ -6,7 +6,20 @@ export interface Token {
   quoted: boolean;
   /** True when the string was written between `"""` marks. */
   triple?: boolean;
+  /**
+   * The whole word as written, on a key split from its value: `gap:tight` lexes
+   * as `gap:` and `tight`, and this is `gap:tight` on the first. Kept so an error
+   * about the word can quote what the author typed.
+   */
+  joined?: string;
 }
+
+/**
+ * A key written against its value. The key part is spelled as the highlighter's
+ * attribute pattern spells one, and a value opening with a slash is left whole,
+ * so a file name such as `C:/icons/disk.svg` is not torn at the drive letter.
+ */
+const JOINED_KEY = /^([A-Za-z][A-Za-z0-9_-]*:)([^/\\].*)$/;
 
 /**
  * A `"""` string still open at the end of the text given. `parse` catches this
@@ -107,6 +120,7 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
       continue;
     }
 
+    const start = i;
     let text = '';
     while (i < line.length) {
       const c = line[i]!;
@@ -116,10 +130,35 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
       text += c;
       i += 1;
     }
+    // `gap:tight` is `gap: tight` with no space, since how much whitespace there
+    // is never matters. A word straight after a key is its value and is left
+    // whole, so `icon: a:b` still names an icon called `a:b`. The rest of the
+    // word is read again from just past the colon rather than kept as one
+    // token, so `line:(color:red)` opens its bracket as `line: (color: red)` does.
+    const previous = tokens[tokens.length - 1];
+    const joined = previous && isAttrKey(previous) ? null : JOINED_KEY.exec(text);
+    if (joined) {
+      tokens.push({ text: joined[1]!, quoted: false, joined: text });
+      i = start + joined[1]!.length;
+      continue;
+    }
     tokens.push({ text, quoted: false });
   }
 
   return tokens;
+}
+
+/**
+ * The character in a word that a name may not hold, if any. A colon makes the
+ * word a key, written with or without its space, and `;` is kept free so it
+ * could one day separate clauses without changing what any file means.
+ */
+export function nameMark(token: Token): ':' | ';' | undefined {
+  const written = token.joined ?? token.text;
+  if (token.quoted) return undefined;
+  if (written.includes(':')) return ':';
+  if (written.includes(';')) return ';';
+  return undefined;
 }
 
 /** A bare token ending in `:` opens the attribute section of a statement. */

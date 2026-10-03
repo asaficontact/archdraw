@@ -1412,6 +1412,12 @@ function highlight(source) {
 
 // ---- lexer.js ----
 /**
+ * A key written against its value. The key part is spelled as the highlighter's
+ * attribute pattern spells one, and a value opening with a slash is left whole,
+ * so a file name such as `C:/icons/disk.svg` is not torn at the drive letter.
+ */
+const JOINED_KEY = /^([A-Za-z][A-Za-z0-9_-]*:)([^/\\].*)$/;
+/**
  * A `"""` string still open at the end of the text given. `parse` catches this
  * one, adds the next line and tries again, which is how a string runs over
  * several lines without the lexer having to know about lines.
@@ -1505,6 +1511,7 @@ function tokenizeLine(line, lineNumber, depth = 0) {
             tokens.push({ text, quoted: true });
             continue;
         }
+        const start = i;
         let text = '';
         while (i < line.length) {
             const c = line[i];
@@ -1517,9 +1524,36 @@ function tokenizeLine(line, lineNumber, depth = 0) {
             text += c;
             i += 1;
         }
+        // `gap:tight` is `gap: tight` with no space, since how much whitespace there
+        // is never matters. A word straight after a key is its value and is left
+        // whole, so `icon: a:b` still names an icon called `a:b`. The rest of the
+        // word is read again from just past the colon rather than kept as one
+        // token, so `line:(color:red)` opens its bracket as `line: (color: red)` does.
+        const previous = tokens[tokens.length - 1];
+        const joined = previous && isAttrKey(previous) ? null : JOINED_KEY.exec(text);
+        if (joined) {
+            tokens.push({ text: joined[1], quoted: false, joined: text });
+            i = start + joined[1].length;
+            continue;
+        }
         tokens.push({ text, quoted: false });
     }
     return tokens;
+}
+/**
+ * The character in a word that a name may not hold, if any. A colon makes the
+ * word a key, written with or without its space, and `;` is kept free so it
+ * could one day separate clauses without changing what any file means.
+ */
+function nameMark(token) {
+    const written = token.joined ?? token.text;
+    if (token.quoted)
+        return undefined;
+    if (written.includes(':'))
+        return ':';
+    if (written.includes(';'))
+        return ';';
+    return undefined;
 }
 /** A bare token ending in `:` opens the attribute section of a statement. */
 function isAttrKey(token) {
@@ -2478,6 +2512,7 @@ function parseEdge(head, line) {
     if (!rightToken || rightToken.quoted) {
         throw new SourceError('an edge needs a node on the right of the arrow', line);
     }
+    refuseNameMark(rightToken, `edge ${left} ${arrow.text} ${rightToken.joined ?? rightToken.text}`, line);
     let at = arrow.next + 1;
     const stray = head[at];
     if (stray &&
@@ -2690,7 +2725,22 @@ function requireName(token, keyword, line) {
     if (!token || token.quoted) {
         throw new SourceError(`${keyword} needs a name`, line);
     }
+    refuseNameMark(token, `${keyword} "${token.joined ?? token.text}"`, line);
     return token.text;
+}
+/**
+ * A word with a colon or a semicolon in it, where a name belongs. Both used to
+ * be ordinary characters in a name, so this refuses files that once parsed, and
+ * says why rather than reporting whatever the split word turned into next.
+ */
+function refuseNameMark(token, where, line) {
+    const mark = nameMark(token);
+    if (mark === undefined)
+        return;
+    const reason = mark === ':'
+        ? 'a colon makes the word before it a key, with or without a space after it'
+        : 'a semicolon is reserved';
+    throw new SourceError(`${where}: a name may not contain "${mark}", because ${reason}`, line);
 }
 /**
  * Read one placement. A direction and a target (`right of docker`, `below
@@ -2752,6 +2802,11 @@ function readPlacement(tokens, at, line, subject) {
                 `write \`inside <node> ${word.text}\` to put this in that corner, \`on <node> ` +
                 `${word.text}\` to straddle it, or a direction like ${DIRECTIONS.join(', ')} to put ` +
                 'it outside', line);
+        }
+        // A semicolon is reserved rather than ordinary, and someone writing one
+        // between clauses wants to know that spaces already do that job.
+        if (word.text.startsWith(';')) {
+            throw new SourceError(`${subject}: ";" separates nothing — clauses are separated by spaces alone`, line);
         }
         throw new SourceError(`${subject}: "${word.text}" is not a direction`, line);
     }
@@ -2963,11 +3018,23 @@ function isSideWord(word) {
 function readTargets(tokens, start, subject, placement, line, partFirst = false) {
     const targets = [];
     let i = start;
+    /** The target just closed with a comma, which promises another. */
+    let comma;
     for (;;) {
         const token = tokens[i];
-        if (!token || token.quoted || token.text === '(' || token.text === ')') {
+        // `right of a, gap: tight`: the comma, not the key, is the mistake, and
+        // reading on would take `gap:` as a name and blame the word after it.
+        if (comma !== undefined && (!token || isAttrKey(token) || token.text === '(' || token.text === ')')) {
+            const next = token ? `, but "${token.joined ?? token.text}" ${isAttrKey(token) ? 'is a key' : 'is not a name'}` : '';
+            throw new SourceError(`${subject}: the comma after "${comma}" starts another target${next} — remove the comma`, line);
+        }
+        // A key written with its space, as in `right of gap: tight`, is a target
+        // left out. One written without, `right of a:b`, is more likely a name with
+        // a colon in it, and that gets its own message below.
+        if (!token || token.quoted || token.text === '(' || token.text === ')' || (isAttrKey(token) && !token.joined)) {
             throw new SourceError(`${subject}: "${placement}" names no node`, line);
         }
+        refuseNameMark(token, `${subject}: "${token.joined ?? token.text}"`, line);
         const listed = token.text.endsWith(',') && token.text.length > 1;
         const name = listed ? token.text.slice(0, -1) : token.text;
         i += 1;
@@ -2981,6 +3048,7 @@ function readTargets(tokens, start, subject, placement, line, partFirst = false)
             i += 1;
             continue;
         }
+        comma = listed ? name : undefined;
         if (listed)
             continue;
         return { targets, next: i };

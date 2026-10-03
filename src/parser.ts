@@ -47,7 +47,7 @@ import {
 } from './ast.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
-import { isAttrKey, OpenString, tokenizeLine, type Token } from './lexer.js';
+import { isAttrKey, nameMark, OpenString, tokenizeLine, type Token } from './lexer.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
 /**
@@ -788,6 +788,7 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
   if (!rightToken || rightToken.quoted) {
     throw new SourceError('an edge needs a node on the right of the arrow', line);
   }
+  refuseNameMark(rightToken, `edge ${left} ${arrow.text} ${rightToken.joined ?? rightToken.text}`, line);
 
   let at = arrow.next + 1;
   const stray = head[at];
@@ -1047,7 +1048,23 @@ function requireName(token: Token | undefined, keyword: string, line: number): s
   if (!token || token.quoted) {
     throw new SourceError(`${keyword} needs a name`, line);
   }
+  refuseNameMark(token, `${keyword} "${token.joined ?? token.text}"`, line);
   return token.text;
+}
+
+/**
+ * A word with a colon or a semicolon in it, where a name belongs. Both used to
+ * be ordinary characters in a name, so this refuses files that once parsed, and
+ * says why rather than reporting whatever the split word turned into next.
+ */
+function refuseNameMark(token: Token, where: string, line: number): void {
+  const mark = nameMark(token);
+  if (mark === undefined) return;
+  const reason =
+    mark === ':'
+      ? 'a colon makes the word before it a key, with or without a space after it'
+      : 'a semicolon is reserved';
+  throw new SourceError(`${where}: a name may not contain "${mark}", because ${reason}`, line);
 }
 
 /**
@@ -1124,6 +1141,11 @@ function readPlacement(
           'it outside',
         line,
       );
+    }
+    // A semicolon is reserved rather than ordinary, and someone writing one
+    // between clauses wants to know that spaces already do that job.
+    if (word.text.startsWith(';')) {
+      throw new SourceError(`${subject}: ";" separates nothing — clauses are separated by spaces alone`, line);
     }
     throw new SourceError(`${subject}: "${word.text}" is not a direction`, line);
   }
@@ -1411,12 +1433,27 @@ function readTargets(
 ): { targets: PlacementTarget[]; next: number } {
   const targets: PlacementTarget[] = [];
   let i = start;
+  /** The target just closed with a comma, which promises another. */
+  let comma: string | undefined;
 
   for (;;) {
     const token = tokens[i];
-    if (!token || token.quoted || token.text === '(' || token.text === ')') {
+    // `right of a, gap: tight`: the comma, not the key, is the mistake, and
+    // reading on would take `gap:` as a name and blame the word after it.
+    if (comma !== undefined && (!token || isAttrKey(token) || token.text === '(' || token.text === ')')) {
+      const next = token ? `, but "${token.joined ?? token.text}" ${isAttrKey(token) ? 'is a key' : 'is not a name'}` : '';
+      throw new SourceError(
+        `${subject}: the comma after "${comma}" starts another target${next} — remove the comma`,
+        line,
+      );
+    }
+    // A key written with its space, as in `right of gap: tight`, is a target
+    // left out. One written without, `right of a:b`, is more likely a name with
+    // a colon in it, and that gets its own message below.
+    if (!token || token.quoted || token.text === '(' || token.text === ')' || (isAttrKey(token) && !token.joined)) {
       throw new SourceError(`${subject}: "${placement}" names no node`, line);
     }
+    refuseNameMark(token, `${subject}: "${token.joined ?? token.text}"`, line);
     const listed = token.text.endsWith(',') && token.text.length > 1;
     const name = listed ? token.text.slice(0, -1) : token.text;
     i += 1;
@@ -1431,6 +1468,7 @@ function readTargets(
       i += 1;
       continue;
     }
+    comma = listed ? name : undefined;
     if (listed) continue;
     return { targets, next: i };
   }
