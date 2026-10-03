@@ -146,3 +146,23 @@ def test_an_engine_that_cannot_run_is_a_503_not_a_crash(tmp_path):
     with pytest.raises(LibraryError) as down:
         lib.save("demo", "one", GOOD + "// x\n", digest(GOOD), "tester")
     assert down.value.status == 503
+
+
+def test_an_icon_read_from_a_file_is_refused_before_the_engine_runs(tmp_path):
+    lib = Library(root=brain(tmp_path), commit=False)
+    assert "pasted" in (lib.check('icon x "/etc/hostname"\nnode a "A" icon: x\n') or "")
+    pasted = 'icon x """<svg viewBox="0 0 1 1"/>"""\nnode a "A"\n'
+    assert "pasted" not in (lib.check(pasted) or "")  # a pasted icon is not refused by this rule
+
+
+def test_a_held_lock_is_a_503_after_the_wait(tmp_path):
+    import fcntl
+
+    root = brain(tmp_path)
+    lib = Library(root=root, lock_wait=0.3)
+    with open(root.parent / ".git" / "brain-write.lock", "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        with pytest.raises(LibraryError) as busy:
+            lib.save("demo", "one", GOOD + "// y\n", digest(GOOD), "tester")
+    assert busy.value.status == 503
+    assert lib.read("demo", "one")["source"] == GOOD

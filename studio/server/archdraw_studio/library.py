@@ -19,6 +19,7 @@ import json
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -29,6 +30,9 @@ EXT = ".archdraw"
 SUBDIR = "archdraw"
 META = re.compile(r"^//\s*(title|summary)\s*:\s*(.+?)\s*$")
 MAX_BYTES = 200_000
+FILE_ICON = re.compile(
+    r'^\s*icon\s+\S+\s+"(?!"")', re.MULTILINE
+)  # `icon x "/path.svg"` reads a file; pasted SVG is """…"""
 
 
 class LibraryError(Exception):
@@ -81,6 +85,10 @@ class Library:
     engine: Path | None = None  # the built CLI (dist/cli.js) used to check a file before it is saved
     node: str = "node"
     commit: bool = True
+    lock_wait: float = 30.0  # seconds to wait for the brain's writer lock before answering 503 (review L-d)
+
+    def __post_init__(self) -> None:
+        self.root = self.root.resolve()  # a library reached through a symlink still commits by its real path (L-a)
 
     # -- reading ---------------------------------------------------------------------------------------------------
 
@@ -158,6 +166,8 @@ class Library:
 
     def check(self, source: str) -> str | None:
         """The engine's error for this source, or None when it renders. Without an engine, nothing is checked."""
+        if FILE_ICON.search(source):
+            return 'an icon must be pasted between """ marks here; the studio does not read icon files from disk'
         if self.engine is None:
             return None
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,9 +213,11 @@ class Library:
             first.write_text(starter(f"{project} overview"))
             try:
                 self._commit_locked([first], f"archdraw: new project {project}", by)
-            except LibraryError:
+            except BaseException:
                 first.unlink(missing_ok=True)
                 folder.rmdir()
+                if not any(folder.parent.iterdir()):
+                    folder.parent.rmdir()
                 raise
         return {"slug": project}
 
@@ -238,7 +250,7 @@ class Library:
                 commit = self._commit_locked(
                     [path], f"archdraw: {'edit' if exists else 'new diagram'} {project}/{name}", by
                 )
-            except LibraryError:
+            except BaseException:
                 if before is None:
                     path.unlink(missing_ok=True)
                 else:
@@ -267,7 +279,15 @@ class Library:
             check=False,
         ).stdout.strip()
         with open(Path(common) / "brain-write.lock", "a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            deadline = time.monotonic() + self.lock_wait
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise LibraryError(503, "another writer holds the brain lock; try the save again shortly")
+                    time.sleep(0.2)
             try:
                 yield
             finally:

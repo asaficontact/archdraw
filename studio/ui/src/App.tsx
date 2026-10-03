@@ -53,8 +53,19 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [creating, setCreating] = useState<null | "project" | "file">(null)
 
+  // switching project drops this project's drafts: ask first, and stay put on no (review L-c)
+  const unsavedRef = useRef(false)
+  const routeRef = useRef(route)
+  routeRef.current = route
   useEffect(() => {
-    const on = () => setRoute(parseHash(location.hash))
+    const on = (e: HashChangeEvent) => {
+      const next = parseHash(location.hash)
+      if (unsavedRef.current && next.project !== routeRef.current.project && !window.confirm("Discard unsaved edits in this project?")) {
+        history.replaceState(null, "", new URL(e.oldURL).hash)
+        return
+      }
+      setRoute(next)
+    }
     window.addEventListener("hashchange", on)
     return () => window.removeEventListener("hashchange", on)
   }, [])
@@ -147,6 +158,7 @@ export default function App() {
 
   // unsaved edits survive nothing: warn before the tab closes or reloads (review L5)
   const unsaved = Object.entries(drafts).some(([k, v]) => v !== sources[k]?.source)
+  unsavedRef.current = unsaved
   useEffect(() => {
     if (!unsaved) return
     const on = (e: BeforeUnloadEvent) => e.preventDefault()
