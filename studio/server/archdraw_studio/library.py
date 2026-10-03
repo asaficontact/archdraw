@@ -19,6 +19,8 @@ import json
 import re
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -161,49 +163,87 @@ class Library:
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / f"check{EXT}"
             src.write_text(source)
-            r = subprocess.run(
-                [self.node, str(self.engine), str(src), "-o", str(Path(tmp) / "out.svg")],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
+            try:
+                r = subprocess.run(
+                    [self.node, str(self.engine), str(src), "-o", str(Path(tmp) / "out.svg")],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise LibraryError(503, f"the engine could not check the file: {exc.__class__.__name__}") from exc
         if r.returncode == 0:
             return None
         return (r.stderr or r.stdout).strip().replace(str(src), "diagram")[:2000] or "the engine refused the file"
 
     # -- writing ---------------------------------------------------------------------------------------------------
 
+    def _inside(self, path: Path) -> Path:
+        """The path, after refusing any symlink between the library root and it (review L2): the slugs keep a name
+        inside its folder, and this keeps a linked folder or file from sending a write elsewhere."""
+        try:
+            rel = path.relative_to(self.root)
+        except ValueError as exc:
+            raise LibraryError(400, "refusing a path outside the library") from exc
+        cur = self.root
+        for part in rel.parts:
+            cur = cur / part
+            if cur.is_symlink():
+                raise LibraryError(400, "refusing a path that passes through a symlink")
+        return path
+
     def create_project(self, project: str, by: str) -> dict:
-        folder = self._project_dir(project)
-        if folder.is_dir():
-            raise LibraryError(409, f"project {project!r} already exists")
-        folder.mkdir(parents=True)
-        first = folder / f"overview{EXT}"
-        first.write_text(starter(f"{project} overview"))
-        self._commit([first], f"archdraw: new project {project}", by)
+        folder = self._inside(self._project_dir(project))
+        with self._lock():
+            if folder.exists():
+                raise LibraryError(409, f"project {project!r} already exists")
+            folder.mkdir(parents=True)
+            first = folder / f"overview{EXT}"
+            first.write_text(starter(f"{project} overview"))
+            try:
+                self._commit_locked([first], f"archdraw: new project {project}", by)
+            except LibraryError:
+                first.unlink(missing_ok=True)
+                folder.rmdir()
+                raise
         return {"slug": project}
 
     def save(self, project: str, name: str, source: str, base: str | None, by: str) -> dict:
+        """Check with the engine first (no lock needed); then, under the brain's writer lock, compare the base, write,
+        and commit that one path, putting the file back as it was if the commit fails (review M1). `base` None means
+        a new file and is refused when the file exists (M2)."""
         if len(source.encode()) > MAX_BYTES:
             raise LibraryError(413, f"a diagram is at most {MAX_BYTES} bytes")
         folder = self._project_dir(project)
         if not folder.is_dir():
             raise LibraryError(404, f"no project {project!r}")
-        path = self._file(project, name)
-        exists = path.is_file()
-        if exists and base is not None and digest(path.read_text(errors="replace")) != base:
-            raise LibraryError(409, "the file changed since you opened it; reload it before saving")
-        if not exists and base is not None:
-            raise LibraryError(409, "the file was removed since you opened it")
+        path = self._inside(self._file(project, name))
         error = self.check(source)
         if error:
             raise LibraryError(422, error)
         if not source.endswith("\n"):
             source += "\n"
-        path.write_text(source)
-        verb = "edit" if exists else "new diagram"
-        commit = self._commit([path], f"archdraw: {verb} {project}/{name}", by)
+        with self._lock():
+            exists = path.is_file()
+            before = path.read_text(errors="replace") if exists else None
+            if base is None and exists:
+                raise LibraryError(409, f"{project}/{name} already exists; open it to edit it")
+            if base is not None and not exists:
+                raise LibraryError(409, "the file was removed since you opened it")
+            if base is not None and before is not None and digest(before) != base:
+                raise LibraryError(409, "the file changed since you opened it; your edit is kept in the editor")
+            path.write_text(source)
+            try:
+                commit = self._commit_locked(
+                    [path], f"archdraw: {'edit' if exists else 'new diagram'} {project}/{name}", by
+                )
+            except LibraryError:
+                if before is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_text(before)
+                raise
         return {"project": project, "name": name, "version": digest(source), "commit": commit}
 
     def _git_root(self) -> Path | None:
@@ -212,35 +252,49 @@ class Library:
         )
         return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
 
-    def _commit(self, paths: list[Path], message: str, by: str) -> str | None:
-        """Commit exactly these paths under the brain's writer lock; the short sha, or None when not committing."""
+    @contextmanager
+    def _lock(self) -> Iterator[None]:
+        """The brain's writer lock (`<git common dir>/brain-write.lock`), the flock the desk and brain-sync take.
+        Without a git repo (tests, a scratch library) there is nothing to serialise against."""
         top = self._git_root() if self.commit else None
         if top is None:
-            return None
+            yield
+            return
         common = subprocess.run(
             ["git", "-C", str(top), "rev-parse", "--path-format=absolute", "--git-common-dir"],
             capture_output=True,
             text=True,
             check=False,
         ).stdout.strip()
-        rel = [str(p.relative_to(top)) for p in paths]
-        body = f"{message}\n\nSaved in the archdraw studio by {by}.\n\nAgent: Banna"
         with open(Path(common) / "brain-write.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
-                subprocess.run(["git", "-C", str(top), "add", "--", *rel], check=True, capture_output=True)
-                r = subprocess.run(
-                    ["git", "-C", str(top), "commit", "-q", "-m", body, "--", *rel],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if r.returncode != 0:
-                    if "nothing to commit" in (r.stdout + r.stderr):
-                        return None
-                    raise LibraryError(500, f"commit failed: {(r.stderr or r.stdout).strip()[:300]}")
-                return subprocess.run(
-                    ["git", "-C", str(top), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
-                ).stdout.strip()
+                yield
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _commit_locked(self, paths: list[Path], message: str, by: str) -> str | None:
+        """Commit exactly these paths; the caller holds the lock. On failure the paths are unstaged again, so the
+        shared index is left as it was. The short sha, or None when not committing."""
+        top = self._git_root() if self.commit else None
+        if top is None:
+            return None
+        rel = [str(p.relative_to(top)) for p in paths]
+        body = f"{message}\n\nSaved in the archdraw studio by {by}.\n\nAgent: Banna"
+        add = subprocess.run(["git", "-C", str(top), "add", "--", *rel], capture_output=True, text=True, check=False)
+        r = add
+        if add.returncode == 0:
+            r = subprocess.run(
+                ["git", "-C", str(top), "commit", "-q", "-m", body, "--", *rel],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        if r.returncode != 0:
+            if "nothing to commit" in (r.stdout + r.stderr):
+                return None
+            subprocess.run(["git", "-C", str(top), "reset", "-q", "--", *rel], capture_output=True, check=False)
+            raise LibraryError(500, f"commit failed: {(r.stderr or r.stdout).strip()[:300]}")
+        return subprocess.run(
+            ["git", "-C", str(top), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
+        ).stdout.strip()

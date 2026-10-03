@@ -108,11 +108,19 @@ export default function App() {
 
   const save = useCallback(async () => {
     if (!project || !sel || !dirty || saving) return
+    if (selCard?.r.error) {
+      setNotice("Not saved: the diagram has an error (see the line under the editor)")
+      return
+    }
     setSaving(true)
+    const sent = drafts[sel]
     try {
-      const r = await api.save(project, sel, drafts[sel], sources[sel]?.version ?? null)
-      setSources(s => ({ ...s, [sel]: { source: drafts[sel].endsWith("\n") ? drafts[sel] : drafts[sel] + "\n", version: r.version } }))
+      const r = await api.save(project, sel, sent, sources[sel]?.version ?? null)
+      const saved = sent.endsWith("\n") ? sent : sent + "\n"
+      setSources(s => ({ ...s, [sel]: { source: saved, version: r.version } }))
+      // only drop the draft if nothing was typed while the save was in flight (review M3)
       setDrafts(d => {
+        if (d[sel] !== sent) return d
         const { [sel]: _, ...rest } = d
         return rest
       })
@@ -123,7 +131,7 @@ export default function App() {
     } finally {
       setSaving(false)
     }
-  }, [project, sel, dirty, saving, drafts, sources])
+  }, [project, sel, dirty, saving, drafts, sources, selCard])
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
@@ -136,6 +144,15 @@ export default function App() {
     window.addEventListener("keydown", on)
     return () => window.removeEventListener("keydown", on)
   }, [save])
+
+  // unsaved edits survive nothing: warn before the tab closes or reloads (review L5)
+  const unsaved = Object.entries(drafts).some(([k, v]) => v !== sources[k]?.source)
+  useEffect(() => {
+    if (!unsaved) return
+    const on = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener("beforeunload", on)
+    return () => window.removeEventListener("beforeunload", on)
+  }, [unsaved])
 
   useEffect(() => {
     if (!notice) return

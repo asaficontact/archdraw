@@ -10,6 +10,9 @@ def test_hub_repos_reads_repo_and_repos_from_frontmatter(tmp_path: Path):
         "---\ntype: project\nrepos: asaficontact/ohara, asaficontact/ohara-inspector\n---\n# X\nrepo: not/this\n"
     )
     assert audit.hub_repos(hub) == ["asaficontact/ohara", "asaficontact/ohara-inspector"]
+    other = tmp_path / "y.md"
+    other.write_text("---\nrepos:\n  - asaficontact/kestrel\naliases:\n  - not/arepo\n---\n")
+    assert audit.hub_repos(other) == ["asaficontact/kestrel"]
 
 
 def test_audit_flags_broken_stale_and_missing(tmp_path: Path, monkeypatch):

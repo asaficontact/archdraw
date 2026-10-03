@@ -53,12 +53,16 @@ def hub_repos(hub: Path) -> list[str]:
         return []
     front = text.split("\n---", 1)[0]
     found: list[str] = []
+    in_list = False  # list items count only right under a `repos:` key with no inline value (review L4)
     for line in front.splitlines():
         m = re.match(r"^(repo|repos)\s*:\s*(.*)$", line.strip())
         if m:
             found += re.findall(r"[\w.-]+/[\w.-]+", m.group(2))
-        elif found is not None and re.match(r"^\s*-\s*[\w.-]+/[\w.-]+", line):
+            in_list = not m.group(2).strip()
+        elif in_list and re.match(r"^\s*-\s*[\w.-]+/[\w.-]+", line):
             found += re.findall(r"[\w.-]+/[\w.-]+", line)
+        else:
+            in_list = False
     return sorted(set(found))
 
 

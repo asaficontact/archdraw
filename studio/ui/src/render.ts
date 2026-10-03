@@ -1,3 +1,4 @@
+import DOMPurify from "dompurify"
 import { THEMES, compile } from "@engine"
 import { svgSize, type Size } from "./model"
 
@@ -13,27 +14,46 @@ export function renderSource(source: string, dark: boolean): Rendered {
   }
 }
 
+const INTERNAL = /^#\/[a-z0-9][a-z0-9-]{0,62}(\/[a-z0-9][a-z0-9-]{0,62})?$/
+const ANCHOR = /^#[A-Za-z][\w.-]*$/
+const WEB = /^https?:\/\/[^\s"'<>]+$/i
+
+let hooked = false
+function hook() {
+  if (hooked) return
+  hooked = true
+  DOMPurify.addHook("afterSanitizeAttributes", node => {
+    for (const name of ["href", "xlink:href"]) {
+      if (!node.hasAttribute(name)) continue
+      const v = (node.getAttribute(name) ?? "").trim()
+      if (INTERNAL.test(v)) {
+        node.removeAttribute("target")
+        node.removeAttribute("rel")
+        node.setAttribute("class", "ad-link")
+      } else if (WEB.test(v)) {
+        node.setAttribute("target", "_blank")
+        node.setAttribute("rel", "noopener noreferrer")
+      } else if (!ANCHOR.test(v)) {
+        node.removeAttribute(name)
+      }
+    }
+  })
+}
+
 /**
- * Links in a diagram: `#/<project>/<file>` stays in the studio (a box that drills into the diagram that explains
- * it); http(s) opens a new tab; any other scheme (javascript:, data:) loses its link. The engine escapes text but
- * passes a `url:` through as written, and this SVG goes into the page as markup.
+ * Every diagram is sanitized before it goes into the page as markup. A `.archdraw` file may paste raw SVG as an
+ * icon and the engine's own filter is a regex (review of archdraw#1, H1: `<img src=x/onerror=…>`, a `<style>`, an
+ * `<a` broken over lines all got through). DOMPurify with the SVG profile drops scripts, event handlers, style,
+ * foreignObject, image and use; links survive only as `#/<project>/<file>` (stays in the studio), `#id`, or http(s)
+ * (new tab). The page's CSP (script-src 'self') is the second line.
  */
 export function sanitize(svg: string): string {
-  if (!svg.includes("<a ")) return svg
-  const doc = new DOMParser().parseFromString(svg, "image/svg+xml")
-  for (const a of Array.from(doc.querySelectorAll("a"))) {
-    const href = a.getAttribute("href") ?? ""
-    if (href.startsWith("#/")) {
-      a.removeAttribute("target")
-      a.removeAttribute("rel")
-      a.setAttribute("class", "ad-link")
-    } else if (/^https?:\/\//i.test(href)) {
-      a.setAttribute("target", "_blank")
-      a.setAttribute("rel", "noopener noreferrer")
-    } else {
-      a.removeAttribute("href")
-    }
-  }
-  for (const s of Array.from(doc.querySelectorAll("script, foreignObject"))) s.remove()
-  return new XMLSerializer().serializeToString(doc.documentElement)
+  if (!DOMPurify.isSupported) throw new Error("this browser cannot sanitize diagrams, so none is shown")
+  hook()
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: false },
+    FORBID_TAGS: ["style", "foreignObject", "image", "use", "script", "animate", "set", "animateTransform", "animateMotion"],
+    FORBID_ATTR: ["style"],
+    ADD_ATTR: ["target", "rel"],
+  })
 }

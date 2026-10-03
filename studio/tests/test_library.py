@@ -99,3 +99,50 @@ def test_create_project_writes_a_starter_that_renders(tmp_path):
     with pytest.raises(LibraryError) as dup:
         lib.create_project("newthing", "tester")
     assert dup.value.status == 409
+
+
+def test_a_new_file_never_overwrites_an_existing_one(tmp_path):
+    lib = Library(root=brain(tmp_path), commit=False)
+    with pytest.raises(LibraryError) as clash:
+        lib.save("demo", "one", GOOD + "// overwrite\n", None, "tester")
+    assert clash.value.status == 409
+    assert lib.read("demo", "one")["source"] == GOOD
+
+
+def test_a_symlinked_folder_is_refused(tmp_path):
+    root = brain(tmp_path)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (root / "linked").mkdir()
+    (root / "linked" / "archdraw").symlink_to(outside)
+    lib = Library(root=root, commit=False)
+    with pytest.raises(LibraryError) as bad:
+        lib.save("linked", "x", GOOD, None, "tester")
+    assert bad.value.status == 400 and not list(outside.iterdir())
+
+
+@pytest.mark.skipif(not ENGINE.is_file(), reason="engine not built (npm run build)")
+def test_a_failed_commit_puts_the_file_back_and_unstages_it(tmp_path):
+    root = brain(tmp_path)
+    hook = root.parent / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    lib = Library(root=root, engine=ENGINE)
+    with pytest.raises(LibraryError) as failed:
+        lib.save("demo", "one", GOOD + "// changed\n", digest(GOOD), "tester")
+    assert failed.value.status == 500
+    assert (root / "demo" / "archdraw" / "one.archdraw").read_text() == GOOD
+    staged = subprocess.run(
+        ["git", "-C", str(root.parent), "diff", "--cached", "--name-only"], capture_output=True, text=True, check=False
+    ).stdout
+    assert staged == ""
+    with pytest.raises(LibraryError):
+        lib.save("demo", "two", GOOD, None, "tester")
+    assert not (root / "demo" / "archdraw" / "two.archdraw").exists()
+
+
+def test_an_engine_that_cannot_run_is_a_503_not_a_crash(tmp_path):
+    lib = Library(root=brain(tmp_path), engine=ENGINE, node="/no/such/node", commit=False)
+    with pytest.raises(LibraryError) as down:
+        lib.save("demo", "one", GOOD + "// x\n", digest(GOOD), "tester")
+    assert down.value.status == 503
