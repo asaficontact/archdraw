@@ -1,9 +1,13 @@
-// The seven icons, and the ways to use one.
+// The seven icons, and the two ways to use one: badge: puts the picture beside
+// a node's text, and icon: draws the node as the picture, with no box.
 
 // A style can carry a badge, so every store in a diagram looks alike without
 // anyone typing the word twice.
 style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 
+// badge: is shorthand. row1.disk below is the same as writing
+//   node row1.disk "Spinning disk"
+//   node row1.disk.badge  icon: disk  right of row1.disk text
 node row1 ""  fill: none  border: none
 node row1.disk     "Spinning disk"     badge: disk
 node row1.desktop  "Workstation"       right of row1.disk     gap: tight  badge: desktop
@@ -14,9 +18,15 @@ node row2.package  "Archive"           badge: package
 node row2.cubes    "Service instances" right of row2.package  gap: tight  badge: cubes
 node row2.db       "Records"           right of row2.cubes    gap: tight  style: store
 
+// icon: the node is the picture itself, and has no text unless you give it one.
+node row3 ""  below row2  gap: tight  fill: none  border: none
+node row3.cube     icon: cube
+node row3.db       icon: database    right of row3.cube     gap: tight
+node row3.laptop   "Portable"  icon: laptop  right of row3.db  gap: tight
+
 // No text, so the node is just the badge and its padding.
-node bare ""  below row2  gap: tight  badge: disk
+node bare ""  below row3  gap: tight  badge: disk
 
 // A badge is two lines tall, so it shrinks and grows with the text beside it.
-node small "Small text / and a small icon" (size: small)  right of bare   gap: tight  badge: laptop
-node large "Large text / and a large icon" (size: large)  right of small  gap: tight  badge: laptop
+node small "Small text / and a small badge" (size: small)  right of bare   gap: tight  badge: laptop
+node large "Large text / and a large badge" (size: large)  right of small  gap: tight  badge: laptop
