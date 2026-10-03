@@ -1,4 +1,4 @@
-# Syntax reference — 0.15.1
+# Syntax reference — 0.16.0
 
 What the language accepts. The parser, resolver and SVG renderer implement all of it; the sections at the end record what is defective, unchecked or undecided.
 
@@ -1140,9 +1140,9 @@ That one was found by testing the lexer, not by rendering — and it could not h
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal below is refused by name with the replacement quoted, rather than dropped in silence — an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.16.0**
 
-No example diagram draws differently.
+A name containing `:` or `;` is now refused; nothing else that worked is. No example diagram draws differently.
 
 - A key may be written against its value: `gap:tight` is `gap: tight`, and `(gap:wide)` and `line:(color:red)` work too. The amount of whitespace never mattered, and now none counts as an amount.
 - Breaking: a name may no longer contain `:` or `;`. A colon now makes the word before it a key, and a semicolon is reserved. `node a:b` used to declare a node called `a:b`, and is now refused with an error saying why.
