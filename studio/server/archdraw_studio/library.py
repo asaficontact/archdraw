@@ -112,7 +112,7 @@ class Library:
         if hub.is_file():
             for line in hub.read_text(errors="replace").splitlines():
                 if line.startswith("# "):
-                    return line[2:].strip()
+                    return line[2:].split(" — ")[0].strip()
         return d.name
 
     def files(self, project: str) -> list[dict]:

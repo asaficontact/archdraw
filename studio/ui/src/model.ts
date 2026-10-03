@@ -53,8 +53,23 @@ export const CARD_PAD = 28 // inside a card, around the diagram
 export const CARD_HEAD = 76 // the title and summary above it
 export const GAP = 140 // between cards
 
+/** The row width whose layout comes closest to 16:10 (the shape of a screen): each column count is tried, and
+ *  the widths of its first row are the candidate. Never narrower than the widest card. */
+export function rowWidthFor(sizes: Size[]): number {
+  if (!sizes.length) return 1
+  const widths = sizes.map(s => Math.max(s.w, 320) + CARD_PAD * 2)
+  let best = { score: Infinity, width: Math.max(...widths) }
+  for (let cols = 1; cols <= sizes.length; cols++) {
+    const width = Math.max(...widths, widths.slice(0, cols).reduce((a, w) => a + w + GAP, -GAP))
+    const b = bounds(layout(sizes, width + 1))
+    const score = Math.abs(Math.log(b.w / b.h / 1.6))
+    if (score < best.score) best = { score, width: width + 1 }
+  }
+  return best.width
+}
+
 /** Cards in rows, left to right, wrapping when a row passes `rowWidth`. Each card is the diagram plus its frame. */
-export function layout(sizes: Size[], rowWidth = 2600): Rect[] {
+export function layout(sizes: Size[], rowWidth = rowWidthFor(sizes)): Rect[] {
   const out: Rect[] = []
   let x = 0
   let y = 0

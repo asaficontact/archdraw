@@ -17,6 +17,13 @@ describe("layout", () => {
     expect(r[2].x).toBe(0)
     expect(r[2].y).toBe(600 + CARD_PAD * 2 + CARD_HEAD + GAP) // below the tallest of the first row
   })
+
+  it("by default packs many wide cards into a wide grid, not one column", () => {
+    const r = layout(Array.from({ length: 7 }, () => ({ w: 3000, h: 1600 })))
+    const b = bounds(r)
+    expect(b.w / b.h).toBeGreaterThan(1)
+    expect(new Set(r.map(x => x.y)).size).toBeLessThan(7)
+  })
 })
 
 describe("camera", () => {

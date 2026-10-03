@@ -2,6 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { CARD_HEAD, CARD_PAD, bounds, fit, layout, lerp, zoomAt, type Camera, type Rect } from "./model"
 import type { Rendered } from "./render"
 
+/** Dot spacing on screen: 24 world units, doubled until at least 14 px apart, so zooming out never greys the page. */
+const dotStep = (k: number) => {
+  let step = 24 * k
+  while (step < 14) step *= 2
+  return step
+}
+
 export type Card = { key: string; title: string; summary: string; r: Rendered }
 
 /**
@@ -124,7 +131,7 @@ export function Canvas({
       data-testid="canvas"
       className="ad-canvas absolute inset-0 touch-none select-none overflow-hidden"
       style={{
-        backgroundSize: `${24 * cam.k}px ${24 * cam.k}px`,
+        backgroundSize: `${dotStep(cam.k)}px ${dotStep(cam.k)}px`,
         backgroundPosition: `${cam.x}px ${cam.y}px`,
         cursor: pointers.current.size ? "grabbing" : "grab",
       }}
