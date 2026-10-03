@@ -18,7 +18,6 @@ import hashlib
 import json
 import re
 import subprocess
-import tempfile
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -30,9 +29,7 @@ EXT = ".archdraw"
 SUBDIR = "archdraw"
 META = re.compile(r"^//\s*(title|summary)\s*:\s*(.+?)\s*$")
 MAX_BYTES = 200_000
-FILE_ICON = re.compile(
-    r'^\s*icon\s+\S+\s+"(?!"")', re.MULTILINE
-)  # `icon x "/path.svg"` reads a file; pasted SVG is """…"""
+CHECK_SCRIPT = Path(__file__).resolve().parents[1] / "check.mjs"
 
 
 class LibraryError(Exception):
@@ -165,27 +162,26 @@ class Library:
     # -- checking --------------------------------------------------------------------------------------------------
 
     def check(self, source: str) -> str | None:
-        """The engine's error for this source, or None when it renders. Without an engine, nothing is checked."""
-        if FILE_ICON.search(source):
-            return 'an icon must be pasted between """ marks here; the studio does not read icon files from disk'
+        """The engine's error for this source, or None when it renders. Without an engine, nothing is checked.
+        `server/check.mjs` runs the engine's compile() with no icon-file reader, so a save cannot make the engine
+        read a file from disk in any spelling (review L-b)."""
         if self.engine is None:
             return None
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / f"check{EXT}"
-            src.write_text(source)
-            try:
-                r = subprocess.run(
-                    [self.node, str(self.engine), str(src), "-o", str(Path(tmp) / "out.svg")],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=False,
-                )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise LibraryError(503, f"the engine could not check the file: {exc.__class__.__name__}") from exc
+        index = self.engine.parent / "index.js"
+        try:
+            r = subprocess.run(
+                [self.node, str(CHECK_SCRIPT), str(index)],
+                input=source,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise LibraryError(503, f"the engine could not check the file: {exc.__class__.__name__}") from exc
         if r.returncode == 0:
             return None
-        return (r.stderr or r.stdout).strip().replace(str(src), "diagram")[:2000] or "the engine refused the file"
+        return (r.stderr or r.stdout).strip()[:2000] or "the engine refused the file"
 
     # -- writing ---------------------------------------------------------------------------------------------------
 
@@ -208,6 +204,7 @@ class Library:
         with self._lock():
             if folder.exists():
                 raise LibraryError(409, f"project {project!r} already exists")
+            parent_existed = folder.parent.exists()
             folder.mkdir(parents=True)
             first = folder / f"overview{EXT}"
             first.write_text(starter(f"{project} overview"))
@@ -216,7 +213,7 @@ class Library:
             except BaseException:
                 first.unlink(missing_ok=True)
                 folder.rmdir()
-                if not any(folder.parent.iterdir()):
+                if not parent_existed:  # never remove a folder this call did not make (review of 5267a1f)
                     folder.parent.rmdir()
                 raise
         return {"slug": project}

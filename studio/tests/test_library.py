@@ -64,7 +64,7 @@ def test_save_checks_with_the_engine_and_commits_only_that_path(tmp_path):
     subprocess.run(["git", "-C", str(root.parent), "add", str(other)], check=True)  # another writer's staged work
     with pytest.raises(LibraryError) as bad:
         lib.save("demo", "two", 'node a "A" right of b\n', None, "tester")
-    assert bad.value.status == 422 and bad.value.message.startswith("diagram:1:")
+    assert bad.value.status == 422 and bad.value.message.startswith("line 1:")
     out = lib.save("demo", "two", GOOD, None, "tester")
     assert out["commit"]
     shown = subprocess.run(
@@ -148,11 +148,30 @@ def test_an_engine_that_cannot_run_is_a_503_not_a_crash(tmp_path):
     assert down.value.status == 503
 
 
-def test_an_icon_read_from_a_file_is_refused_before_the_engine_runs(tmp_path):
-    lib = Library(root=brain(tmp_path), commit=False)
-    assert "pasted" in (lib.check('icon x "/etc/hostname"\nnode a "A" icon: x\n') or "")
-    pasted = 'icon x """<svg viewBox="0 0 1 1"/>"""\nnode a "A"\n'
-    assert "pasted" not in (lib.check(pasted) or "")  # a pasted icon is not refused by this rule
+@pytest.mark.skipif(not ENGINE.is_file(), reason="engine not built (npm run build)")
+def test_an_icon_read_from_a_file_is_refused_in_every_spelling(tmp_path):
+    secret = tmp_path / "real.svg"
+    secret.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>')
+    lib = Library(root=brain(tmp_path), engine=ENGINE, commit=False)
+    for spelling in (f'icon x "{secret}"', f"icon x {secret}", f'icon x"{secret}"', f"icon x\n  {secret}"):
+        error = lib.check(spelling + '\nnode a "A"  icon: x\n')
+        assert error, spelling  # never read, so a real SVG file does not pass
+        assert "ENOENT" not in error and "not an SVG" not in error.lower()
+    assert (
+        lib.check('icon x """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>"""\nnode a "A"  icon: x\n')
+        is None
+    )
+
+
+def test_a_failed_new_project_never_removes_a_folder_it_did_not_make(tmp_path):
+    root = brain(tmp_path)
+    hook = root.parent / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    lib = Library(root=root)
+    with pytest.raises(LibraryError):
+        lib.create_project("notes-only", "tester")
+    assert (root / "notes-only").is_dir()
 
 
 def test_a_held_lock_is_a_503_after_the_wait(tmp_path):
