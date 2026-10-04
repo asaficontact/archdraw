@@ -9,6 +9,7 @@ import { ApiError, api, hashFor, type SettingsView, inboxHash, meta, parseHash, 
 import { Palette } from "./Palette"
 import { renderSource } from "./render"
 import { StartScreen, Tour, tourEvent, type TourState } from "./Tour"
+import { Working } from "./Working"
 
 const DOCK_W = 440
 const EDIT_W = 560
@@ -201,9 +202,13 @@ export default function App() {
 
   const project = route.inbox ? undefined : route.project
   const current = projects?.find(p => p.slug === (route.project ?? ""))
+  // only the project on screen may fill the screen: a slower load of the one before is dropped, never shown (Tawab, 10-04:
+  // a project's diagrams did not appear until a sync)
+  const showing = useRef<string | undefined>(undefined)
   const loadFiles = useCallback(async (p: string) => {
     const list = await api.files(p)
     const docs = await Promise.all(list.map(f => api.read(p, f.name)))
+    if (showing.current !== p) return
     setFiles(list)
     setSources(Object.fromEntries(docs.map(d => [d.name, { source: d.source, version: d.version }])))
     setLoaded(p)
@@ -214,6 +219,7 @@ export default function App() {
   }, [project, loadFiles, loadProjects])
 
   useEffect(() => {
+    showing.current = project
     if (!project) return
     setFiles([])
     setSources({})
@@ -222,7 +228,7 @@ export default function App() {
     setError(null)
     setLoaded(null)
     setTalk(recall(`archdraw:talk:${project}`))
-    loadFiles(project).catch(e => setError(e instanceof ApiError ? e.message : String(e)))
+    loadFiles(project).catch(e => showing.current === project && setError(e instanceof ApiError ? e.message : String(e)))
   }, [project, loadFiles])
 
   // the selected file flies into view
@@ -245,10 +251,11 @@ export default function App() {
           return rest
         })
         setStaged(null)
-        tourEvent("proposal.accepted")
         setNotice(current?.source.kind === "github" ? "Accepted · waiting for review in the Inbox" : "Accepted and saved")
         await reload()
         location.hash = hashFor(project, p.name)
+        // told last: the tour's next step navigates, and must not be undone by this one's move (a race on a slow reload)
+        tourEvent("proposal.accepted")
       } catch (e) {
         setNotice(e instanceof ApiError ? `Not saved: ${e.message}` : `Not saved: ${String(e)}`)
         throw e
@@ -575,6 +582,7 @@ export default function App() {
           {project && (
             <>
               <div className="ad-label mt-4">Diagrams</div>
+              {loaded !== project && !error && <div className="ad-item text-xs text-[var(--muted)]">Loading…</div>}
               {files.map(f => {
                 const m = meta(drafts[f.name] ?? sources[f.name]?.source ?? "")
                 return (
@@ -609,18 +617,18 @@ export default function App() {
             </details>
           )}
         </nav>
-        <div className="flex items-center gap-1 border-t border-[var(--line)] px-2 py-2">
+        <div className="ad-foot flex items-center gap-1 border-t border-[var(--line)] px-2 py-2">
           {project && (
-            <button type="button" className="ad-btn ad-btn-quiet" onClick={() => setDialog({ kind: "trash" })} data-testid="open-trash">
-              Archive and trash
+            <button type="button" className="ad-icon-btn" onClick={() => setDialog({ kind: "trash" })} aria-label="Archive and trash" data-tip="Archive and trash" data-testid="open-trash">
+              <Icon name="archive" />
             </button>
           )}
           <span className="ml-auto" />
-          <button type="button" className="ad-btn ad-btn-quiet" onClick={() => void startTour()} title="Show me around" aria-label="Show me around" data-testid="open-tour">
-            ?
+          <button type="button" className="ad-icon-btn" onClick={() => void startTour()} aria-label="Show me around" data-tip="Show me around" data-testid="open-tour">
+            <Icon name="help" />
           </button>
-          <button type="button" className="ad-btn ad-btn-quiet" onClick={() => setDialog({ kind: "settings" })} data-testid="open-settings" aria-label="Settings">
-            ⚙ Settings
+          <button type="button" className="ad-icon-btn" onClick={() => setDialog({ kind: "settings" })} aria-label="Settings" data-tip="Settings" data-testid="open-settings">
+            <Icon name="settings" />
           </button>
         </div>
       </aside>
@@ -696,8 +704,8 @@ export default function App() {
                 }}
               />
             ) : project && loaded !== project ? (
-              <div className="grid h-full place-items-center text-sm text-[var(--muted)]" data-testid="loading">
-                Loading {current?.title ?? project}…
+              <div className="grid h-full place-items-center p-6 text-center text-sm" data-testid="loading">
+                <Working label={`Reading ${current?.title ?? project}'s diagrams`} slowNote="This is taking longer than it should." onRetry={() => void reload()} />
               </div>
             ) : project && files.length === 0 && !staged ? (
               <div className="grid h-full place-items-center p-6 text-center">
@@ -980,6 +988,33 @@ function Logo() {
       <rect x="3" y="7" width="11" height="8" rx="2" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
       <rect x="18" y="17" width="11" height="8" rx="2" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
       <path d="M14 11h4v10" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
+    </svg>
+  )
+}
+
+/** The footer's icons (24px line icons, currentColor). */
+function Icon({ name }: { name: "archive" | "help" | "settings" }) {
+  const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true }
+  if (name === "archive")
+    return (
+      <svg {...common}>
+        <rect x="3" y="4" width="18" height="5" rx="1.5" />
+        <path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9" />
+        <path d="M10 13h4" />
+      </svg>
+    )
+  if (name === "help")
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.5 9.5a2.5 2.5 0 0 1 4.9.7c0 1.7-2.4 2.2-2.4 3.8" />
+        <path d="M12 17.2h.01" />
+      </svg>
+    )
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   )
 }

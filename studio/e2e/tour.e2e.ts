@@ -15,12 +15,15 @@ const here = dirname(fileURLToPath(import.meta.url))
 const videoDir = process.argv.includes("--video") ? process.argv[process.argv.indexOf("--video") + 1] : null
 const shotDir = process.argv.includes("--shot") ? process.argv[process.argv.indexOf("--shot") + 1] : null
 const steps: string[] = []
+let failShot: ((file: string) => Promise<unknown>) | null = null
 async function step(name: string, fn: () => Promise<void>) {
   try {
     await fn()
     steps.push(`ok   ${name}`)
   } catch (e) {
-    steps.push(`FAIL ${name}: ${String((e as Error).message).split("\n")[0]}`)
+    const file = join(tmpdir(), `archdraw-tour-fail-${Date.now()}.png`)
+    await failShot?.(file).catch(() => undefined)
+    steps.push(`FAIL ${name}: ${String((e as Error).message).split("\n")[0]} (screenshot ${file})`)
     throw e
   }
 }
@@ -37,6 +40,7 @@ try {
   const s1 = await server()
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, ...(videoDir ? { recordVideo: { dir: videoDir, size: { width: 1440, height: 900 } } } : {}) })
   const page = await ctx.newPage()
+  failShot = file => page.screenshot({ path: file })
   page.on("dialog", d => void d.accept())
   const errors: string[] = []
   page.on("pageerror", e => errors.push(String(e)))

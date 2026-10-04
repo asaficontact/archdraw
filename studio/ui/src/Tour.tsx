@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { Working } from "./Working"
 
 // The tour (projects/archdraw/archdraw-onboarding.md): five doing-steps on the sample "Bean There", after the one setup
 // screen. A step is done when the user does the real thing (the app emits an event), never by a Next button. Each step
@@ -190,7 +191,13 @@ export function StartScreen({ onConnect, onSample, busy, error }: { onConnect: (
             Choose a folder…
           </button>
         )}
-        <p className="mt-2 min-h-5 text-xs text-[var(--danger)]">{error}</p>
+        {busy ? (
+          <div className="mt-4 text-sm">
+            <Working label={looksLikePath ? "Reading the folder" : `Cloning ${value.trim()} from GitHub`} slowNote="The first time, archdraw copies the repo's history from GitHub; big repos take longer. It fetches only what it needs." testid="start-working" />
+          </div>
+        ) : (
+          <p className="mt-2 min-h-5 text-xs text-[var(--danger)]">{error}</p>
+        )}
         <button type="button" className="mt-4 text-sm text-[var(--accent)] underline-offset-4 hover:underline" onClick={onSample} data-testid="start-sample">
           Just try the sample (a 2-minute tour)
         </button>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { ApiError, SLUG, api, type Project, type Settings, type SettingsView, type TrashItem } from "./model"
+import { Working } from "./Working"
 
 declare global {
   interface Window {
@@ -84,7 +85,13 @@ export function ConnectDialog({ onClose, onConnected }: { onClose: () => void; o
             ? "archdraw keeps its own copy and works on main. Diagrams live in the repo's .archdraw/ folder; changes reach the repo only when you approve them."
             : "Diagrams are read and written in this folder's .archdraw/."}
         </p>
-        <p className="mt-2 min-h-5 text-xs text-[var(--danger)]">{err}</p>
+        {busy ? (
+          <div className="mt-3 text-sm">
+            <Working label={tab === "github" ? `Cloning ${value.trim()} from GitHub` : "Reading the folder"} slowNote="The first time, archdraw copies the repo's history from GitHub; big repos take longer. It fetches only what it needs." testid="connect-working" />
+          </div>
+        ) : (
+          <p className="mt-2 min-h-5 text-xs text-[var(--danger)]">{err}</p>
+        )}
         <div className="mt-1 flex justify-end gap-2">
           <button type="button" className="ad-btn" onClick={onClose}>
             Cancel
