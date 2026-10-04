@@ -216,7 +216,8 @@ describe("publishing safely (review of #2)", () => {
 
 describe("commit identity", () => {
   it("commits as this machine's git user, so a host like Vercel builds it; a made-up address only without one (ohara#135)", async () => {
-    const was = { g: process.env.GIT_CONFIG_GLOBAL, n: process.env.GIT_CONFIG_NOSYSTEM }
+    const was = { g: process.env.GIT_CONFIG_GLOBAL, n: process.env.GIT_CONFIG_NOSYSTEM, e: process.env.ARCHDRAW_AUTHOR_EMAIL }
+    delete process.env.ARCHDRAW_AUTHOR_EMAIL
     const cfg = join(root, "gitconfig")
     writeFileSync(cfg, "[user]\n\tname = Tawab\n\temail = tawab@example.com\n")
     process.env.GIT_CONFIG_GLOBAL = cfg
@@ -231,9 +232,8 @@ describe("commit identity", () => {
       expect(await l.identity(root)).toEqual({ name: "test", email: "archdraw@users.noreply.github.com" })
       process.env.ARCHDRAW_AUTHOR_EMAIL = "banna@example.com"
       expect(await l.identity(root)).toEqual({ name: "test", email: "banna@example.com" })
-      delete process.env.ARCHDRAW_AUTHOR_EMAIL
     } finally {
-      for (const [k, v] of [["GIT_CONFIG_GLOBAL", was.g], ["GIT_CONFIG_NOSYSTEM", was.n]] as const) {
+      for (const [k, v] of [["GIT_CONFIG_GLOBAL", was.g], ["GIT_CONFIG_NOSYSTEM", was.n], ["ARCHDRAW_AUTHOR_EMAIL", was.e]] as const) {
         if (v === undefined) delete process.env[k]
         else process.env[k] = v
       }

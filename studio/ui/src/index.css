@@ -137,6 +137,7 @@ body {
   color: var(--text);
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
 }
 .ad-btn:hover:not(:disabled) {
   border-color: var(--accent);
@@ -793,6 +794,7 @@ kbd {
 }
 .ad-inbox-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 10px 0 12px;

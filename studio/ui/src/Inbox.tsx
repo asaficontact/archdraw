@@ -50,7 +50,7 @@ export function Inbox({ dark, focusProject, onAsk, onOpen, onChanged }: { dark: 
       </div>
       {err && <p className="text-sm text-[var(--danger)]">{err}</p>}
       {waiting.map(i => (
-        <Item key={i.project} item={i} dark={dark} open={open === i.project} onToggle={() => setOpen(o => (o === i.project ? undefined : i.project))} onAsk={onAsk} onOpen={onOpen} onDone={() => (load(), onChanged())} />
+        <Item key={`${i.project}:${i.pending?.head}`} item={i} dark={dark} open={open === i.project} onToggle={() => setOpen(o => (o === i.project ? undefined : i.project))} onAsk={onAsk} onOpen={onOpen} onDone={() => (load(), onChanged())} />
       ))}
       {calm.length > 0 && (
         <div className="mt-6">
@@ -94,11 +94,12 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
   const p = item.pending!
   const [diffs, setDiffs] = useState<DiagramDiff[] | null>(null)
   const [confirm, setConfirm] = useState<null | "approve" | "discard">(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   // one diagram opens by itself; with several, each opens on a click, so Approve stays in reach
   const [shown, setShown] = useState<Set<string>>(() => new Set(p.files.length === 1 ? [p.files[0].name] : []))
   useEffect(() => {
     if (!open || diffs) return
-    Promise.all(p.files.map(f => api.diff(item.project, f.name))).then(setDiffs, () => setDiffs([]))
+    Promise.all(p.files.map(f => api.diff(item.project, f.name))).then(setDiffs, () => (setDiffs([]), setLoadFailed(true)))
   }, [open, diffs, p.files, item.project])
   const count = p.files.length
   const toggle = (name: string) =>
@@ -140,6 +141,7 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
             </button>
           </div>
           {diffs === null && <p className="mt-3 text-sm text-[var(--muted)]">Loading the diff…</p>}
+          {loadFailed && <p className="mt-3 text-sm text-[var(--danger)]">The diff could not load. Close this update and open it again, or open the pull request.</p>}
           {diffs && (
             <ul className="ad-diff-list">
               {diffs.map(d => {
@@ -148,7 +150,15 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
                 const state = !d.before ? "new" : !d.after ? "deleted" : null
                 return (
                   <li key={d.name} className={`ad-diff-item ${on ? "ad-diff-item-on" : ""}`} data-testid={`diff-row-${d.name}`}>
-                    <button type="button" className="ad-diff-row" onClick={() => toggle(d.name)} aria-expanded={on} data-testid={`diff-toggle-${d.name}`}>
+                    <button
+                      type="button"
+                      className="ad-diff-row"
+                      onClick={() => toggle(d.name)}
+                      aria-expanded={on}
+                      aria-controls={`diff-${item.project}-${d.name}`}
+                      aria-label={`${title}${state ? ` (${state})` : ""}: ${d.diff.added} added, ${d.diff.changed} changed, ${d.diff.removed} removed. ${on ? "Hide" : "Show"} the diff`}
+                      data-testid={`diff-toggle-${d.name}`}
+                    >
                       <span className="ad-diff-caret" aria-hidden>
                         {on ? "▾" : "▸"}
                       </span>
@@ -159,7 +169,11 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
                       </span>
                       <span className="ad-diff-hint">{on ? "Hide" : "View diff"}</span>
                     </button>
-                    {on && <DiffView d={d} dark={dark} project={item.project} onAsk={onAsk} onOpen={onOpen} />}
+                    {on && (
+                      <div id={`diff-${item.project}-${d.name}`}>
+                        <DiffView d={d} dark={dark} project={item.project} onAsk={onAsk} onOpen={onOpen} />
+                      </div>
+                    )}
                   </li>
                 )
               })}

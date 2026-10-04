@@ -49,8 +49,12 @@ export class GhForge implements Forge {
     try {
       await gh(cwd, ["pr", "merge", String(number), "-R", repoOf(p), "--squash", "--delete-branch", "--subject", subject, ...(head ? ["--match-head-commit", head] : [])])
     } catch (e) {
-      if (!/not mergeable|branch policy|required status|review is required/i.test(String((e as Error).message))) throw e
-      throw new AppError(409, await this.whyBlocked(p, cwd, number))
+      const msg = String((e as Error).message)
+      if (/branch policy|required status|review is required|rule violations?/i.test(msg)) throw new AppError(409, await this.whyBlocked(p, cwd, number))
+      // not up to date, or a conflict: gh's own clause says which
+      const clause = /not mergeable:\s*([^.\n]+)/i.exec(msg)?.[1]
+      if (clause) throw new AppError(409, `GitHub cannot merge pull request #${number}: ${clause}. Open the pull request to see why.`)
+      throw e
     }
   }
 
@@ -70,6 +74,7 @@ type Check = { name?: string; context?: string; state?: string; conclusion?: str
 /** The plain-language reason a pull request cannot merge, from `gh pr view --json statusCheckRollup,reviewDecision`. */
 export function blockedReason(repo: string, number: number, view: string): string {
   const base = `GitHub will not merge pull request #${number} yet: ${repo}'s main branch has rules it does not meet`
+  const review = (d?: string) => (d === "REVIEW_REQUIRED" || d === "CHANGES_REQUESTED" ? " It also needs an approving review on GitHub." : "")
   let v: { statusCheckRollup?: Check[]; reviewDecision?: string } = {}
   try {
     v = JSON.parse(view)
@@ -77,11 +82,11 @@ export function blockedReason(repo: string, number: number, view: string): strin
     return `${base}. Open the pull request to see what it needs.`
   }
   const checks = v.statusCheckRollup ?? []
-  const failed = checks.filter(c => /FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED/.test(c.conclusion || c.state || ""))
+  const failed = checks.filter(c => /FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE/.test(c.conclusion || c.state || ""))
   const running = checks.filter(c => (c.status ? c.status !== "COMPLETED" : /PENDING|EXPECTED/.test(c.state ?? "")))
   const name = (c: Check) => `${c.name || c.context}${c.description ? ` (${c.description})` : ""}`
-  if (failed.length) return `${base}. Checks failed: ${failed.map(name).join("; ")}. Open the pull request to see why; approve again once they pass.`
-  if (running.length) return `${base}. Checks still running: ${running.map(name).join("; ")}. Approve again in a few minutes.`
+  if (failed.length) return `${base}. Checks failed: ${failed.map(name).join("; ")}. Open the pull request to see why; approve again once they pass.${review(v.reviewDecision)}`
+  if (running.length) return `${base}. Checks still running: ${running.map(name).join("; ")}. Approve again in a few minutes.${review(v.reviewDecision)}`
   if (v.reviewDecision === "REVIEW_REQUIRED" || v.reviewDecision === "CHANGES_REQUESTED") return `${base}: it needs an approving review on GitHub first.`
   return `${base}. Open the pull request to see what it needs.`
 }

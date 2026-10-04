@@ -21,5 +21,8 @@ describe("a merge GitHub refuses", () => {
     expect(blockedReason("o/r", 1, JSON.stringify({ statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }] }))).toContain("Checks still running: build")
     expect(blockedReason("o/r", 1, JSON.stringify({ statusCheckRollup: [], reviewDecision: "REVIEW_REQUIRED" }))).toContain("approving review")
     expect(blockedReason("o/r", 1, "")).toContain("Open the pull request")
+    const both = blockedReason("o/r", 1, JSON.stringify({ statusCheckRollup: [{ context: "lint", state: "FAILURE" }], reviewDecision: "REVIEW_REQUIRED" }))
+    expect(both).toContain("Checks failed: lint")
+    expect(both).toContain("approving review")
   })
 })
