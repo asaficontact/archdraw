@@ -518,6 +518,7 @@ export default function App() {
             onStage={stage}
             onAccept={accept}
             focusKey={chatFocus}
+            onCost={refreshStatus}
             onHeight={VARIANT === "sheet" ? setSheetH : undefined}
           />
         )}

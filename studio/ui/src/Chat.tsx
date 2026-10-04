@@ -53,12 +53,17 @@ export type ChatProps = {
   onAccept: (p: Proposal) => Promise<void>
   focusKey: number
   onHeight?: (h: number) => void // the sheet tells the canvas how much of it is covered
+  onCost?: () => void // a turn was charged: the day's total is fetched again
 }
 
 export function ChatPanel(props: ChatProps) {
   const { variant, id, budget } = props
   const { events, error } = useConversation(id)
   const t = useMemo(() => transcript(events), [events])
+  const { onCost } = props
+  useEffect(() => {
+    if (t.cost > 0) onCost?.()
+  }, [t.cost, onCost])
   const [text, setText] = useState("")
   const [sending, setSending] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
