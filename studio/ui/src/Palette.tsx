@@ -14,7 +14,7 @@ export function Palette({ targets, project, onGo, onAsk, onClose }: { targets: T
   useEffect(() => input.current?.focus(), [])
 
   const items: Item[] = useMemo(() => {
-    const matches = rank(q, targets).map(t => ({ kind: "go" as const, t }))
+    const matches = rank(q, targets, 8, project).map(t => ({ kind: "go" as const, t }))
     if (!q.trim()) return matches
     const ask = { kind: "ask" as const, text: q.trim() }
     return looksLikeAsk(q) || !matches.length ? [ask, ...matches] : [...matches, ask]

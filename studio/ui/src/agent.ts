@@ -180,11 +180,14 @@ export function score(query: string, text: string): number {
   return s
 }
 
-export function rank(query: string, targets: Target[], limit = 8): Target[] {
-  if (!query.trim()) return targets.slice(0, limit)
+/** The best matches first; on a tie, the project you are in wins (every project has a `system`). */
+export function rank(query: string, targets: Target[], limit = 8, here?: string): Target[] {
+  const near = (t: Target) => (t.project === here ? 3 : 0)
+  if (!query.trim()) return [...targets].sort((a, b) => near(b) - near(a)).slice(0, limit)
   return targets
     .map(t => ({ t, s: Math.max(score(query, t.title), score(query, t.file ?? t.project) - 5, score(query, t.hint) - 20) }))
     .filter(x => x.s >= 0)
+    .map(x => ({ ...x, s: x.s + near(x.t) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, limit)
     .map(x => x.t)

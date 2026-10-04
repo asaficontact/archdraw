@@ -71,6 +71,12 @@ describe("palette", () => {
     expect(score("zz", "Data model")).toBe(-1)
     expect(rank("data", targets)[0].file).toBe("data-model")
     expect(rank("dly ed", targets)[0].file).toBe("daily-edition")
+    const two: Target[] = [
+      { kind: "file", project: "archdraw", file: "system", title: "archdraw, the whole system", hint: "archdraw" },
+      { kind: "file", project: "ohara", file: "system", title: "Ohara, the whole system", hint: "Ohara" },
+    ]
+    expect(rank("system", two, 8, "ohara")[0].project).toBe("ohara")
+    expect(rank("system", two, 8, "archdraw")[0].project).toBe("archdraw")
   })
   it("tells a question from a name", () => {
     expect(looksLikeAsk("data model")).toBe(false)
