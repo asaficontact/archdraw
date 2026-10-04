@@ -382,10 +382,22 @@ export class Library {
    * each checked by the engine first), their explanations (`<name>.md`), `order.json` and `README.md`. Existing files
    * are replaced. Used to import diagrams kept elsewhere.
    */
-  async importFiles(slug: string, files: Record<string, string>, message: string): Promise<void> {
+  async importFiles(slug: string, files: Record<string, string>, message: string, opts: { replace?: boolean } = {}): Promise<void> {
     const ok = /^([a-z0-9][a-z0-9-]{0,62}\.(archdraw|md)|order\.json|README\.md)$/
+    const existing = new Set((await this.files(slug)).map(f => f.name))
     for (const [name, text] of Object.entries(files)) {
       if (!ok.test(name)) throw new AppError(400, `cannot import ${name}`)
+      if (Buffer.byteLength(text) > MAX_BYTES) throw new AppError(413, `${name} is over ${MAX_BYTES} bytes`)
+      if (name.endsWith(EXT) && existing.has(name.slice(0, -EXT.length)) && !opts.replace) throw new AppError(409, `${name} already exists; import with replace to overwrite it`)
+      if (name === "order.json") {
+        let v: unknown
+        try {
+          v = JSON.parse(text)
+        } catch {
+          throw new AppError(400, "order.json is not JSON")
+        }
+        if (!Array.isArray(v) || v.some(x => typeof x !== "string")) throw new AppError(400, "order.json is a list of diagram names")
+      }
       if (name.endsWith(EXT)) {
         const error = check(text)
         if (error) throw new AppError(422, `${name}: ${error}`)
@@ -650,7 +662,7 @@ export function parseRepo(input: string): { repo: string; url: string; ssh?: str
 function pushError(p: Project, stderr: string, other?: string): AppError {
   const repo = p.source.kind === "github" ? p.source.repo : p.slug
   if (/stale info|fetch first|non-fast-forward|\[rejected\]/.test(stderr)) return new AppError(409, "another device changed this project's waiting update first; reload and try again")
-  const refused = /remote rejected\]?\s*\S*\s*\(([^)]+)\)|push declined[^\n]*|repository rule[^\n]*/i.exec(stderr)
+  const refused = /\[remote rejected\][^(\n]*\(([^)]+)\)|push declined[^\n]*|repository rule[^\n]*/i.exec(stderr)
   if (refused && !/stale info/.test(stderr)) return new AppError(403, other ?? `${repo}'s remote refused the push: ${(refused[1] ?? refused[0]).trim().slice(0, 160)}`)
   if (/Authentication|could not read Username|Permission|denied|403|terminal prompts disabled|protected branch/i.test(stderr))
     return new AppError(403, other ?? `archdraw cannot push to ${repo} with this machine's git login. You need write access; sign git in to GitHub ("gh auth login") and try again.`)

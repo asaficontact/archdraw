@@ -210,7 +210,7 @@ describe("publishing safely (review of #2)", () => {
     await l.addRepo(origin, { slug: "demo" })
     await l.refresh("demo")
     writeFileSync(join(origin, "hooks", "pre-receive"), "#!/bin/sh\necho 'remote: Permission to demo denied' >&2\nexit 1\n", { mode: 0o755 })
-    await expect(l.save("demo", "one", '// title: One\n\nnode x "X"\n', null)).rejects.toMatchObject({ status: 403 })
+    await expect(l.save("demo", "one", '// title: One\n\nnode x "X"\n', null)).rejects.toMatchObject({ status: 403, message: expect.stringContaining("pre-receive hook declined") })
   })
 })
 
@@ -224,6 +224,13 @@ describe("importing", () => {
     await l.importFiles("demo", { "flow.archdraw": '// title: Flow\n\nnode a "A"\n', "flow.md": "# Flow\n", "order.json": '["flow","system"]' }, "archdraw: import the diagrams")
     expect((await l.files("demo")).map(f => f.name)).toEqual(["flow", "system", "detail"])
     expect(sh(origin, "log", "-1", "--format=%s", "archdraw/update").trim()).toBe("archdraw: import the diagrams")
+    // third review of #2: a size limit, a checked order.json, and no silent overwrite
+    await expect(l.importFiles("demo", { "big.md": "x".repeat(2_000_000) }, "import")).rejects.toMatchObject({ status: 413 })
+    await expect(l.importFiles("demo", { "order.json": "{" }, "import")).rejects.toMatchObject({ status: 400 })
+    await expect(l.importFiles("demo", { "order.json": "[1]" }, "import")).rejects.toMatchObject({ status: 400 })
+    await expect(l.importFiles("demo", { "flow.archdraw": '// title: Flow 2\n\nnode b "B"\n' }, "import")).rejects.toMatchObject({ status: 409 })
+    await l.importFiles("demo", { "flow.archdraw": '// title: Flow 2\n\nnode b "B"\n' }, "import again", { replace: true })
+    expect((await l.read("demo", "flow")).source).toContain("Flow 2")
   })
 })
 

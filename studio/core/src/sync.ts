@@ -216,6 +216,7 @@ export class Syncer {
     const proposals = new Map<string, Proposal>()
     const tools = makeTools({
       root: lib.clonePath(slug),
+      folder: p.source.kind === "folder",
       rev: p.source.kind === "github" ? `origin/${p.source.branch}` : null,
       ignore: s.ignore,
       diagrams: async () => (await lib.files(slug)).map(f => ({ name: f.name, title: f.title, summary: f.summary })),

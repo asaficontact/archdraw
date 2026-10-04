@@ -120,6 +120,7 @@ export class Conversation {
     const root = p.source.kind === "github" ? d.lib.clonePath(this.project) : p.source.path
     const tools = makeTools({
       root,
+      folder: p.source.kind === "folder",
       rev: p.source.kind === "github" ? `origin/${p.source.branch}` : null,
       ignore: s.ignore,
       diagrams: async () => (await d.lib.files(this.project)).map(f => ({ name: f.name, title: f.title, summary: f.summary })),

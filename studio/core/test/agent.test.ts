@@ -80,6 +80,7 @@ describe("the agent", () => {
     const first = sh("rev-parse", "HEAD").trim()
     mkdirSync(join(root, "config", "secrets"), { recursive: true })
     writeFileSync(join(root, "providers.env"), "OPENAI_API_KEY=sk-hunter2\n")
+    writeFileSync(join(root, "app.env.local"), "STRIPE_KEY=sk-hunter2\n")
     writeFileSync(join(root, "config", "secrets", "prod.yml"), "password: hunter2\n")
     writeFileSync(join(root, "app.ts"), "export const ok = 2 // hunter2 is not a secret here\n")
     sh("add", "-A")
@@ -96,14 +97,31 @@ describe("the agent", () => {
     }
     expect(await run("read", { path: "providers.env" })).toMatch(/^refused/)
     expect(await run("read", { path: "config/secrets/prod.yml" })).toMatch(/^refused/)
+    expect(await run("read", { path: "app.env.local" })).toMatch(/^refused/)
     const found = await run("grep", { pattern: "hunter2" })
     expect(found).toContain("app.ts")
     expect(found).not.toContain("providers.env")
+    expect(found).not.toContain("app.env.local")
     expect(found).not.toContain("prod.yml")
     const diff = await run("git_diff", { range: `${first}..HEAD` })
     expect(diff).toContain("app.ts")
     expect(diff).not.toContain("sk-hunter2")
     expect(diff).not.toContain("password")
+  })
+
+  it("confines a connected folder to the folder root, but not the app's own clones (third review of #2)", () => {
+    const top = mkdtempSync(join(tmpdir(), "archdraw-top-"))
+    const clone = mkdtempSync(join(tmpdir(), "archdraw-clone-"))
+    const ctx = { root: clone, rev: null, ignore: [], diagrams: async () => [], readDiagram: async () => ({ source: "", doc: null }), skills: {}, onProposal: () => undefined }
+    const was = process.env.ARCHDRAW_FOLDER_ROOT
+    process.env.ARCHDRAW_FOLDER_ROOT = top
+    try {
+      expect(() => makeTools(ctx)).not.toThrow()
+      expect(() => makeTools({ ...ctx, folder: true })).toThrow(/outside/)
+    } finally {
+      if (was === undefined) delete process.env.ARCHDRAW_FOLDER_ROOT
+      else process.env.ARCHDRAW_FOLDER_ROOT = was
+    }
   })
 
   it("never connects the folder that holds this machine's keys", () => {

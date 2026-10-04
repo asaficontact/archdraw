@@ -19,7 +19,7 @@ const CAP = 32_000
 const SECRET = [
   /(^|\/)\.git(\/|$)/,
   /(^|\/)\.env(\..*)?$/,
-  /\.env$/, // providers.env and the like (re-review of #2 R1)
+  /\.env(\.[^/]*)?$/, // providers.env, app.env.local and the like (re-review of #2 R1)
   /(^|\/)(secrets?|credentials?)\//, // anything inside a secrets/ or credentials/ folder (R1)
   /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/,
   /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
@@ -31,7 +31,7 @@ const SECRET = [
 ]
 /** The same refusals as git pathspecs, so git_diff/git_log/grep never print a secret's contents (review of #2 F1). */
 const SECRET_PATHSPECS = [
-  "**/.env", "**/.env.*", "**/*.env", "**/secret/**", "**/secrets/**", "**/credential/**", "**/credentials/**", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
+  "**/.env", "**/.env.*", "**/*.env", "**/*.env.*", "**/secret/**", "**/secrets/**", "**/credential/**", "**/credentials/**", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
   "**/id_rsa*", "**/id_ed25519*", "**/id_ecdsa*", "**/id_dsa*", "**/secret", "**/secrets", "**/secret.*", "**/secrets.*",
   "**/credential*", "**/.npmrc", "**/.netrc", "**/.pypirc", "**/.git-credentials", "**/.ssh/**", "**/.aws/**", "**/.gnupg/**",
   "**/.kube/**", "**/.docker/**", "**/.config/**", "**/node_modules/**",
@@ -41,6 +41,7 @@ export type Proposal = { name: string; source: string; doc: string | null; error
 
 export type ToolContext = {
   root: string // the project's folder the agent may read
+  folder?: boolean // a connected folder (confined to the server's folder root), not the app's own clone
   rev: string | null // the branch commit (a GitHub project), for git_log/git_diff defaults
   ignore: string[] // extra path patterns the project's settings exclude
   diagrams: () => Promise<{ name: string; title: string; summary: string }[]>
@@ -54,12 +55,13 @@ export class Jail {
   constructor(
     root: string,
     private ignore: string[] = [],
+    confine = false, // a folder project: re-check the server's folder root (the app's own clones live in its home)
   ) {
     this.root = realpathSync(root)
     // a server that confines projects (trex: ~/work) re-checks the resolved root each time, so a symlink retargeted
     // after connecting cannot escape it (re-review of #2 L5)
     const top = process.env.ARCHDRAW_FOLDER_ROOT
-    if (top) {
+    if (top && confine) {
       const t = realpathSync(top)
       if (this.root !== t && !this.root.startsWith(t + sep)) throw new Error(`this project's folder is outside ${t}`)
     }
@@ -97,7 +99,7 @@ function defineTool<S extends TSchema>(t: { name: string; label: string; descrip
 const text = (s: string, details: Record<string, unknown> = {}) => ({ content: [{ type: "text" as const, text: s.length > CAP ? s.slice(0, CAP) + `\n… (cut at ${CAP} characters)` : s }], details })
 
 export function makeTools(ctx: ToolContext): AgentTool[] {
-  const jail = new Jail(ctx.root, ctx.ignore)
+  const jail = new Jail(ctx.root, ctx.ignore, !!ctx.folder)
 
   const list = defineTool({
     name: "list",
