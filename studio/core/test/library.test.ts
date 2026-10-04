@@ -214,6 +214,30 @@ describe("publishing safely (review of #2)", () => {
   })
 })
 
+describe("commit identity", () => {
+  it("commits as this machine's git user, so a host like Vercel builds it; a made-up address only without one (ohara#135)", async () => {
+    const was = { g: process.env.GIT_CONFIG_GLOBAL, n: process.env.GIT_CONFIG_NOSYSTEM }
+    const cfg = join(root, "gitconfig")
+    writeFileSync(cfg, "[user]\n\tname = Tawab\n\temail = tawab@example.com\n")
+    process.env.GIT_CONFIG_GLOBAL = cfg
+    process.env.GIT_CONFIG_NOSYSTEM = "1"
+    try {
+      const l = lib()
+      await l.addRepo(origin, { slug: "demo" })
+      await l.refresh("demo")
+      await l.save("demo", "who", '// title: Who\n\nnode x "X"\n', null)
+      expect(sh(origin, "log", "-1", "--format=%an <%ae>", "archdraw/update").trim()).toBe("Tawab <tawab@example.com>")
+      writeFileSync(cfg, "")
+      expect(await l.identity(root)).toEqual({ name: "test", email: "archdraw@users.noreply.github.com" })
+    } finally {
+      for (const [k, v] of [["GIT_CONFIG_GLOBAL", was.g], ["GIT_CONFIG_NOSYSTEM", was.n]] as const) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  })
+})
+
 describe("importing", () => {
   it("brings diagrams, explanations and order in as one waiting change, and refuses a broken diagram", async () => {
     const l = lib()

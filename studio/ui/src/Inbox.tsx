@@ -94,11 +94,20 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
   const p = item.pending!
   const [diffs, setDiffs] = useState<DiagramDiff[] | null>(null)
   const [confirm, setConfirm] = useState<null | "approve" | "discard">(null)
+  // one diagram opens by itself; with several, each opens on a click, so Approve stays in reach
+  const [shown, setShown] = useState<Set<string>>(() => new Set(p.files.length === 1 ? [p.files[0].name] : []))
   useEffect(() => {
     if (!open || diffs) return
     Promise.all(p.files.map(f => api.diff(item.project, f.name))).then(setDiffs, () => setDiffs([]))
   }, [open, diffs, p.files, item.project])
   const count = p.files.length
+  const toggle = (name: string) =>
+    setShown(s => {
+      const n = new Set(s)
+      if (n.has(name)) n.delete(name)
+      else n.add(name)
+      return n
+    })
   return (
     <section className={`ad-inbox-card ${open ? "ad-inbox-on" : ""}`} data-testid={`inbox-${item.project}`}>
       <button type="button" className="ad-inbox-summary" onClick={onToggle}>
@@ -115,21 +124,8 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
       </button>
       {open && (
         <div className="ad-inbox-body">
-          {diffs === null && <p className="text-sm text-[var(--muted)]">Loading the diff…</p>}
-          {diffs?.map(d => <DiffView key={d.name} d={d} dark={dark} project={item.project} onAsk={onAsk} onOpen={onOpen} />)}
-          {item.commits && item.commits.length > 0 && (
-            <details className="mt-2 text-xs text-[var(--muted)]">
-              <summary>What happened</summary>
-              <ul className="mt-1 list-disc pl-5">
-                {item.commits.map((c, i) => (
-                  <li key={i}>
-                    {c.subject} · {ago(c.at)}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
           <div className="ad-inbox-actions">
+            {count > 1 && <span className="hidden text-xs text-[var(--muted)] sm:inline">Click a diagram to see what changed</span>}
             {p.pr && (
               <a className="ad-btn ad-btn-quiet" href={p.pr.url} target="_blank" rel="noopener noreferrer">
                 Pull request #{p.pr.number}
@@ -140,9 +136,47 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
               Discard
             </button>
             <button type="button" className="ad-btn ad-btn-primary" onClick={() => setConfirm("approve")} data-testid="inbox-approve">
-              Approve
+              Approve{count > 1 ? ` all ${count}` : ""}
             </button>
           </div>
+          {diffs === null && <p className="mt-3 text-sm text-[var(--muted)]">Loading the diff…</p>}
+          {diffs && (
+            <ul className="ad-diff-list">
+              {diffs.map(d => {
+                const on = shown.has(d.name)
+                const title = /^\s*\/\/\s*title\s*:\s*(.+)$/m.exec(d.after ?? d.before ?? "")?.[1] ?? d.name
+                const state = !d.before ? "new" : !d.after ? "deleted" : null
+                return (
+                  <li key={d.name} className={`ad-diff-item ${on ? "ad-diff-item-on" : ""}`} data-testid={`diff-row-${d.name}`}>
+                    <button type="button" className="ad-diff-row" onClick={() => toggle(d.name)} aria-expanded={on} data-testid={`diff-toggle-${d.name}`}>
+                      <span className="ad-diff-caret" aria-hidden>
+                        {on ? "▾" : "▸"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-left font-medium">{title}</span>
+                      {state && <span className={`ad-diff-badge ad-diff-badge-${state}`}>{state}</span>}
+                      <span className="ad-diff-counts">
+                        <span className="ad-add">+{d.diff.added}</span> <span className="ad-chg">~{d.diff.changed}</span> <span className="ad-del">−{d.diff.removed}</span>
+                      </span>
+                      <span className="ad-diff-hint">{on ? "Hide" : "View diff"}</span>
+                    </button>
+                    {on && <DiffView d={d} dark={dark} project={item.project} onAsk={onAsk} onOpen={onOpen} />}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {item.commits && item.commits.length > 0 && (
+            <details className="mt-3 text-xs text-[var(--muted)]">
+              <summary>What happened</summary>
+              <ul className="mt-1 list-disc pl-5">
+                {item.commits.map((c, i) => (
+                  <li key={i}>
+                    {c.subject} · {ago(c.at)}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
       {confirm === "approve" && (
@@ -189,14 +223,9 @@ function DiffView({ d, dark, project, onAsk, onOpen }: { d: DiagramDiff; dark: b
       return `<p>${String((e as Error).message)}</p>`
     }
   }, [side, d, dark, m, focus])
-  const title = /^\s*\/\/\s*title\s*:\s*(.+)$/m.exec(d.after ?? d.before ?? "")?.[1] ?? d.name
   return (
     <div className="ad-diff-block" data-testid={`diff-${d.name}`}>
       <div className="flex items-center gap-2">
-        <span className="font-medium">{title}</span>
-        <span className="text-xs">
-          <span className="ad-add">+{d.diff.added}</span> <span className="ad-chg">~{d.diff.changed}</span> <span className="ad-del">−{d.diff.removed}</span>
-        </span>
         <span className="ml-auto" />
         {d.before && d.after && (
           <div className="ad-tabs ad-tabs-sm">
@@ -209,7 +238,7 @@ function DiffView({ d, dark, project, onAsk, onOpen }: { d: DiagramDiff; dark: b
           </div>
         )}
         <button type="button" className="ad-btn ad-btn-quiet" onClick={() => onOpen(project, d.name)}>
-          Open
+          Open in canvas
         </button>
       </div>
       {svg ? <div className="ad-diff-svg" dangerouslySetInnerHTML={{ __html: svg }} /> : <p className="text-sm text-[var(--muted)]">{side === "after" ? "This diagram is deleted by the update." : "This diagram is new."}</p>}

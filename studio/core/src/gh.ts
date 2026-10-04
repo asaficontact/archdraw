@@ -46,10 +46,42 @@ export class GhForge implements Forge {
 
   async merge(p: Project, cwd: string, number: number, subject: string, head?: string) {
     // only the commit the user reviewed: a branch that moved since is refused by GitHub (review of #2 F3)
-    await gh(cwd, ["pr", "merge", String(number), "-R", repoOf(p), "--squash", "--delete-branch", "--subject", subject, ...(head ? ["--match-head-commit", head] : [])])
+    try {
+      await gh(cwd, ["pr", "merge", String(number), "-R", repoOf(p), "--squash", "--delete-branch", "--subject", subject, ...(head ? ["--match-head-commit", head] : [])])
+    } catch (e) {
+      if (!/not mergeable|branch policy|required status|review is required/i.test(String((e as Error).message))) throw e
+      throw new AppError(409, await this.whyBlocked(p, cwd, number))
+    }
+  }
+
+  /** What GitHub is waiting for before it merges: the required checks that failed or are still running. */
+  async whyBlocked(p: Project, cwd: string, number: number): Promise<string> {
+    const view = await gh(cwd, ["pr", "view", String(number), "-R", repoOf(p), "--json", "statusCheckRollup,reviewDecision"]).catch(() => "")
+    return blockedReason(repoOf(p), number, view)
   }
 
   async close(p: Project, cwd: string, number: number) {
     await gh(cwd, ["pr", "close", String(number), "-R", repoOf(p), "--delete-branch"])
   }
+}
+
+type Check = { name?: string; context?: string; state?: string; conclusion?: string; status?: string; description?: string }
+
+/** The plain-language reason a pull request cannot merge, from `gh pr view --json statusCheckRollup,reviewDecision`. */
+export function blockedReason(repo: string, number: number, view: string): string {
+  const base = `GitHub will not merge pull request #${number} yet: ${repo}'s main branch has rules it does not meet`
+  let v: { statusCheckRollup?: Check[]; reviewDecision?: string } = {}
+  try {
+    v = JSON.parse(view)
+  } catch {
+    return `${base}. Open the pull request to see what it needs.`
+  }
+  const checks = v.statusCheckRollup ?? []
+  const failed = checks.filter(c => /FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED/.test(c.conclusion || c.state || ""))
+  const running = checks.filter(c => (c.status ? c.status !== "COMPLETED" : /PENDING|EXPECTED/.test(c.state ?? "")))
+  const name = (c: Check) => `${c.name || c.context}${c.description ? ` (${c.description})` : ""}`
+  if (failed.length) return `${base}. Checks failed: ${failed.map(name).join("; ")}. Open the pull request to see why; approve again once they pass.`
+  if (running.length) return `${base}. Checks still running: ${running.map(name).join("; ")}. Approve again in a few minutes.`
+  if (v.reviewDecision === "REVIEW_REQUIRED" || v.reviewDecision === "CHANGES_REQUESTED") return `${base}: it needs an approving review on GitHub first.`
+  return `${base}. Open the pull request to see what it needs.`
 }

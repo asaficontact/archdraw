@@ -795,14 +795,75 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.ad-diff-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.ad-diff-item + .ad-diff-item {
+  border-top: 1px solid var(--line);
+}
+.ad-diff-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 6px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.ad-diff-row:hover {
+  background: var(--accent-soft);
+}
+.ad-diff-caret {
+  width: 12px;
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ad-diff-counts {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ad-diff-hint {
+  flex: none;
+  min-width: 64px;
+  color: var(--accent);
+  font-size: 12px;
+  text-align: right;
+}
+.ad-diff-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ad-diff-badge-new {
+  color: var(--add);
+  background: color-mix(in srgb, var(--add) 14%, transparent);
+}
+.ad-diff-badge-deleted {
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 14%, transparent);
 }
 .ad-diff-block {
-  margin-top: 12px;
+  margin: 0 0 12px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--page);
+}
+@media (max-width: 640px) {
+  .ad-diff-hint {
+    display: none;
+  }
 }
 .ad-diff-svg {
   margin-top: 10px;

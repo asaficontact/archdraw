@@ -313,9 +313,25 @@ export class Library {
       await git(work, ["reset", "--quiet", "--hard", start])
       await git(work, ["clean", "-fdq", "--", DIAGRAM_DIR])
     }
-    await git(work, ["config", "user.name", this.by])
-    await git(work, ["config", "user.email", "archdraw@users.noreply.github.com"])
+    // commits carry this machine's own git identity: a made-up address is not a member of the user's GitHub or Vercel
+    // team, and Vercel refuses to build such a commit, so a branch that requires its checks never merges (ohara#135)
+    const id = await this.identity(work)
+    await git(work, ["config", "user.name", id.name])
+    await git(work, ["config", "user.email", id.email])
     return work
+  }
+
+  /** The user's git name and email (global, then system config); the app's name and a no-reply address only without one. */
+  async identity(cwd: string): Promise<{ name: string; email: string }> {
+    const get = async (key: string) => {
+      for (const scope of ["--global", "--system"]) {
+        const v = (await git(cwd, ["config", scope, "--get", key], { ok: [1, 128] })).stdout.trim()
+        if (v) return v
+      }
+      return ""
+    }
+    const email = await get("user.email")
+    return { name: (email && (await get("user.name"))) || this.by, email: email || "archdraw@users.noreply.github.com" }
   }
 
   /** Commit the worktree's changes under .archdraw/ and push the update branch (compare-and-swap on the remote). */

@@ -19,6 +19,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE ?? "playwright-core") a
 const here = dirname(fileURLToPath(import.meta.url))
 const args = process.argv.slice(2)
 const videoDir = args.includes("--video") ? args[args.indexOf("--video") + 1] : null
+const shotDir = args.includes("--shot") ? args[args.indexOf("--shot") + 1] : null
 
 const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }
 const sh = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8", env })
@@ -125,10 +126,27 @@ async function main() {
       await page.waitForSelector("[data-testid=toast]:has-text('waiting for review')")
       await page.click("[data-testid=toggle-source]")
       await page.waitForSelector("[data-testid=waiting-banner]")
+      // a second diagram in the same update, so the inbox has more than one to show
+      await page.click("[data-testid=file-payments]")
+      await page.click("[data-testid=toggle-source]")
+      await page.locator("[data-testid=source]").click()
+      await page.keyboard.press("Control+End")
+      await page.keyboard.type('\nnode bank "Bank" below psp\n')
+      await page.keyboard.press("Control+s")
+      await page.waitForSelector("[data-testid=toast]:has-text('waiting for review')")
+      await page.click("[data-testid=toggle-source]")
     })
-    await step("the inbox shows the colored diff; Approve publishes it to main", async () => {
+    await step("the inbox lists the changed diagrams compactly, Approve on top; a click opens one's colored diff; Approve publishes", async () => {
       await page.click("[data-testid=waiting-banner]")
+      await page.waitForSelector("[data-testid=diff-row-payments]", { timeout: 15_000 })
+      if (await page.locator("[data-testid=diff-system]").count()) throw new Error("with two diagrams changed, no diff should be open at first")
+      const approve = await page.locator("[data-testid=inbox-approve]").boundingBox()
+      const firstRow = await page.locator("[data-testid=diff-row-system]").boundingBox()
+      if (!approve || !firstRow || approve.y > firstRow.y) throw new Error("Approve should sit above the list of diagrams")
+      if (shotDir) await page.screenshot({ path: join(shotDir, "inbox-collapsed.png") })
+      await page.click("[data-testid=diff-toggle-system]")
       await page.waitForSelector("[data-testid=diff-system] .ad-dm-added", { timeout: 15_000 })
+      if (shotDir) await page.screenshot({ path: join(shotDir, "inbox-open.png") })
       await page.click("[data-testid=side-before]")
       await page.click("[data-testid=side-after]")
       await page.click("[data-testid=inbox-approve]")
