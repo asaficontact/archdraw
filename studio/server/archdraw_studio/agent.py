@@ -347,6 +347,12 @@ class Conversations:
         for old in list(self.by_id.values()):
             if old.project == project and old.state != "closed":
                 old.close("a new conversation started on this project")
+            child = old._child
+            if old.project == project and child and child.poll() is None:  # still letting go of the lease
+                try:
+                    child.wait(timeout=25)
+                except subprocess.TimeoutExpired:
+                    child.kill()
         c = Conversation(project=project, repo=repo, check=check, on_settle=self.save)
         self.by_id[c.id] = c
         c.start()

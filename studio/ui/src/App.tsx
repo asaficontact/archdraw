@@ -300,23 +300,28 @@ export default function App() {
   }, [chat, refreshStatus])
 
   // a worker takes ~20 s to start (piray verifies the harness first), so one is started as the panel opens; it costs
-  // nothing until a message is sent, and the idle sweep closes it after 20 minutes
-  const warming = useRef<Promise<string | null> | null>(null)
+  // nothing until a message is sent, and the idle sweep closes it after 20 minutes. Every path that needs a
+  // conversation goes through `opening`, so the panel and a ⌘K ask never start two (piray leases the project's
+  // folder to one worker, and the second would end the first)
+  const opening = useRef<Promise<string> | null>(null)
+  const openTalk = useCallback(() => {
+    if (!project) return Promise.reject(new Error("no project"))
+    if (!opening.current) {
+      const p = project
+      opening.current = agentApi
+        .open(p)
+        .then(c => {
+          remember(`archdraw:talk:${p}`, c.id)
+          setTalk(c.id)
+          return c.id
+        })
+        .finally(() => (opening.current = null))
+    }
+    return opening.current
+  }, [project])
   useEffect(() => {
-    if (!chat || !project || talk || warming.current) return
-    warming.current = agentApi.open(project).then(
-      c => {
-        remember(`archdraw:talk:${project}`, c.id)
-        setTalk(c.id)
-        return c.id
-      },
-      e => {
-        setNotice(e instanceof ApiError ? e.message : String(e))
-        return null
-      },
-    )
-    void warming.current.finally(() => (warming.current = null))
-  }, [chat, project, talk])
+    if (chat && project && !talk) openTalk().catch(e => setNotice(e instanceof ApiError ? e.message : String(e)))
+  }, [chat, project, talk, openTalk])
 
   const openChat = () => {
     setChat(true)
@@ -327,29 +332,23 @@ export default function App() {
   const ask = useCallback(
     async (text: string) => {
       if (!project) return
-      const send = async (id: string) => agentApi.say(id, text, sel, sel ? selSource : undefined)
+      const send = (id: string) => agentApi.say(id, text, sel, sel ? selSource : undefined)
       try {
-        const id = talk ?? (await warming.current) // a message typed while the worker starts goes to that worker
-        if (!id) throw new ApiError(404, "none")
-        await send(id)
-      } catch (e) {
-        if (!(e instanceof ApiError) || (e.status !== 404 && e.status !== 409)) {
-          setNotice(e instanceof ApiError ? e.message : String(e))
-          throw e
-        }
         try {
-          const c = await agentApi.open(project)
-          remember(`archdraw:talk:${project}`, c.id)
-          setTalk(c.id)
-          await send(c.id)
-        } catch (e2) {
-          setNotice(e2 instanceof ApiError ? e2.message : String(e2))
-          throw e2
+          await send(talk ?? (await openTalk()))
+        } catch (e) {
+          // the remembered conversation ended (409) or the studio restarted (404): one fresh conversation, then send
+          if (!(e instanceof ApiError) || (e.status !== 404 && e.status !== 409)) throw e
+          setTalk(null)
+          await send(await openTalk())
         }
+      } catch (e) {
+        setNotice(e instanceof ApiError ? e.message : String(e))
+        throw e
       }
       refreshStatus()
     },
-    [project, talk, sel, selSource, refreshStatus],
+    [project, talk, sel, selSource, refreshStatus, openTalk],
   )
 
   // unsaved edits survive nothing: warn before the tab closes or reloads (review L5)
