@@ -386,11 +386,9 @@ export class Library {
    */
   async importFiles(slug: string, files: Record<string, string>, message: string, opts: { replace?: boolean } = {}): Promise<void> {
     const ok = /^([a-z0-9][a-z0-9-]{0,62}\.(archdraw|md)|order\.json|README\.md)$/
-    const existing = new Set((await this.files(slug)).map(f => f.name))
     for (const [name, text] of Object.entries(files)) {
       if (!ok.test(name)) throw new AppError(400, `cannot import ${name}`)
       if (Buffer.byteLength(text) > MAX_BYTES) throw new AppError(413, `${name} is over ${MAX_BYTES} bytes`)
-      if (name.endsWith(EXT) && existing.has(name.slice(0, -EXT.length)) && !opts.replace) throw new AppError(409, `${name} already exists; import with replace to overwrite it`)
       if (name === "order.json") {
         let v: unknown
         try {
@@ -406,7 +404,11 @@ export class Library {
       }
     }
     await this.mutate(slug, message, async dir => {
+      // checked under the project's lock, for every file (fourth review of #2): nothing is replaced without `replace`
+      const there = Object.keys(files).filter(name => existsSync(join(dir, name)))
+      if (there.length && !opts.replace) throw new AppError(409, `${there.join(", ")} already exist${there.length > 1 ? "" : "s"}; import with replace to overwrite`)
       for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text.endsWith("\n") ? text : text + "\n")
+      if (!("order.json" in files)) for (const name of Object.keys(files)) if (name.endsWith(EXT)) addToOrder(dir, name.slice(0, -EXT.length))
     })
   }
 
@@ -438,6 +440,7 @@ export class Library {
       if (existsSync(join(dir, to + EXT))) throw new AppError(409, `${to} already exists`)
       const text = readFileSync(src, "utf8").replace(/^(\/\/\s*title\s*:\s*)(.+)$/m, "$1$2 (copy)")
       writeFileSync(join(dir, to + EXT), text)
+      addToOrder(dir, to)
     })
   }
 
@@ -450,6 +453,8 @@ export class Library {
       if (existsSync(join(to, name + EXT))) throw new AppError(409, `${name} already exists there`)
       mkdirSync(to, { recursive: true })
       for (const ext of [EXT, ".md"]) if (existsSync(join(from, name + ext))) renameSync(join(from, name + ext), join(to, name + ext))
+      if (back) addToOrder(dir, name)
+      else dropFromOrder(dir, name)
     })
   }
 
@@ -468,6 +473,7 @@ export class Library {
     await this.mutate(slug, `archdraw: delete ${name}`, async dir => {
       if (!existsSync(join(dir, name + EXT))) throw new AppError(404, `no diagram ${name}`)
       for (const ext of [EXT, ".md"]) if (existsSync(join(dir, name + ext))) unlinkSync(join(dir, name + ext))
+      dropFromOrder(dir, name)
     })
   }
 
@@ -502,6 +508,7 @@ export class Library {
     await this.mutate(slug, `archdraw: restore ${name}`, async dir => {
       writeFileSync(join(dir, name + EXT), text)
       if (doc !== null) writeFileSync(join(dir, name + ".md"), doc)
+      addToOrder(dir, name)
     })
   }
 
@@ -683,21 +690,42 @@ function readOrder(text: string | null): string[] {
 // the reading order: order.json's, then `system` (the entry point by convention) before the rest
 const rank = (order: string[], name: string) => (order.includes(name) ? order.indexOf(name) : name === "system" && !order.length ? -1 : order.length)
 
-/** A new diagram joins the reading order at the end, so nobody edits order.json by hand (`system` stays first). */
-function addToOrder(dir: string, name: string) {
+/** order.json as a list; [] when there is none; null when it exists but is not a list of names (then it is the
+ *  user's to fix: it is never rewritten, fourth review of #2). */
+function orderIn(dir: string): string[] | null {
   const f = join(dir, "order.json")
-  const order = existsSync(f) ? readOrder(readFileSync(f, "utf8")) : []
-  if (order.includes(name)) return
-  if (!order.length && name !== "system" && existsSync(join(dir, "system" + EXT))) order.push("system")
+  if (!existsSync(f)) return []
+  try {
+    const v = JSON.parse(readFileSync(f, "utf8"))
+    return Array.isArray(v) && v.every(x => typeof x === "string") ? v : null
+  } catch {
+    return null
+  }
+}
+
+const writeOrder = (dir: string, order: string[]) => atomicWrite(join(dir, "order.json"), JSON.stringify(order, null, 1) + "\n")
+
+/** A new diagram joins the reading order at the end, so nobody edits order.json by hand. With no order yet, the order
+ *  starts from the diagrams already there, as they are shown (`system` first), so the new one still lands last. */
+function addToOrder(dir: string, name: string) {
+  const order = orderIn(dir)
+  if (order === null || order.includes(name)) return
+  if (!order.length) {
+    const present = readdirSync(dir).filter(f => f.endsWith(EXT)).map(f => f.slice(0, -EXT.length)).filter(n => n !== name)
+    order.push(...present.sort((a, b) => rank([], a) - rank([], b) || a.localeCompare(b)))
+  }
   order.push(name)
-  writeFileSync(f, JSON.stringify(order, null, 1) + "\n")
+  writeOrder(dir, order)
+}
+
+function dropFromOrder(dir: string, name: string) {
+  const order = orderIn(dir)
+  if (order?.includes(name)) writeOrder(dir, order.filter(n => n !== name))
 }
 
 function renameInOrder(dir: string, from: string, to: string) {
-  const f = join(dir, "order.json")
-  if (!existsSync(f)) return
-  const order = readOrder(readFileSync(f, "utf8"))
-  if (order.includes(from)) writeFileSync(f, JSON.stringify(order.map(n => (n === from ? to : n)), null, 1) + "\n")
+  const order = orderIn(dir)
+  if (order?.includes(from)) writeOrder(dir, order.map(n => (n === from ? to : n)))
 }
 
 function atomicWrite(file: string, text: string) {

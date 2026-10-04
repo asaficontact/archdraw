@@ -20,6 +20,7 @@ const SECRET = [
   /(^|\/)\.git(\/|$)/,
   /(^|\/)\.env(\..*)?$/,
   /\.env(\.[^/]*)?$/, // providers.env, app.env.local and the like (re-review of #2 R1)
+  /(^|\/)\.envrc$/, // direnv files export secrets too (fourth review of #2)
   /(^|\/)(secrets?|credentials?)\//, // anything inside a secrets/ or credentials/ folder (R1)
   /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/,
   /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
@@ -31,7 +32,7 @@ const SECRET = [
 ]
 /** The same refusals as git pathspecs, so git_diff/git_log/grep never print a secret's contents (review of #2 F1). */
 const SECRET_PATHSPECS = [
-  "**/.env", "**/.env.*", "**/*.env", "**/*.env.*", "**/secret/**", "**/secrets/**", "**/credential/**", "**/credentials/**", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
+  "**/.env", "**/.env.*", "**/*.env", "**/*.env.*", "**/.envrc", "**/secret/**", "**/secrets/**", "**/credential/**", "**/credentials/**", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
   "**/id_rsa*", "**/id_ed25519*", "**/id_ecdsa*", "**/id_dsa*", "**/secret", "**/secrets", "**/secret.*", "**/secrets.*",
   "**/credential*", "**/.npmrc", "**/.netrc", "**/.pypirc", "**/.git-credentials", "**/.ssh/**", "**/.aws/**", "**/.gnupg/**",
   "**/.kube/**", "**/.docker/**", "**/.config/**", "**/node_modules/**",
