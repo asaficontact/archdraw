@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { CARD_HEAD, CARD_PAD, bounds, fit, layout, lerp, zoomAt, type Camera, type Rect } from "./model"
 import type { Rendered } from "./render"
 
@@ -9,7 +9,9 @@ const dotStep = (k: number) => {
   return step
 }
 
-export type Card = { key: string; title: string; summary: string; r: Rendered }
+/** A diagram on the canvas. A `ghost` is a proposal shown beside the diagram it would replace; `badge` and
+ *  `actions` sit in its header. */
+export type Card = { key: string; title: string; summary: string; r: Rendered; ghost?: boolean; badge?: string; actions?: ReactNode }
 
 /**
  * The infinite canvas: every diagram of the project as a card, laid out in rows. Drag to pan, wheel or pinch to
@@ -24,14 +26,16 @@ export function Canvas({
   fitAll,
   dark,
   insetRight = 0,
+  insetBottom = 0,
 }: {
   cards: Card[]
   selected?: string
   onSelect: (key: string) => void
-  focus: { key?: string; n: number }
+  focus: { key?: string; with?: string; n: number } // `with`: a second card framed together (a proposal and its original)
   fitAll: number
   dark: boolean
   insetRight?: number // pixels on the right covered by a panel (the source editor): cards are fitted left of it
+  insetBottom?: number // pixels at the bottom covered by the agent's sheet: cards are fitted above it
 }) {
   const host = useRef<HTMLDivElement>(null)
   const [cam, setCam] = useState<Camera>({ x: 40, y: 40, k: 0.5 })
@@ -45,7 +49,7 @@ export function Canvas({
     const el = host.current
     if (!el) return
     const visible = Math.max(240, el.clientWidth - insetRight)
-    const target = fit(r, visible, el.clientHeight, visible < 640 ? 16 : 56, maxK)
+    const target = fit(r, visible, Math.max(200, el.clientHeight - insetBottom), visible < 640 ? 16 : 56, maxK)
     const from = camRef.current
     const t0 = performance.now()
     if (anim.current) cancelAnimationFrame(anim.current)
@@ -55,15 +59,17 @@ export function Canvas({
       anim.current = p < 1 ? requestAnimationFrame(step) : null
     }
     anim.current = requestAnimationFrame(step)
-  }, [insetRight])
+  }, [insetRight, insetBottom])
 
   // fly to the asked-for card, or fit everything when there is none
   useLayoutEffect(() => {
     const r = focus.key ? byKey.get(focus.key) : undefined
-    if (r) flyTo(r)
+    const other = focus.with ? byKey.get(focus.with) : undefined
+    if (r && other) flyTo(bounds([r, other]), 1.4)
+    else if (r) flyTo(r)
     else if (rects.length) flyTo(bounds(rects), 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus.key, focus.n, rects.length, insetRight])
+  }, [focus.key, focus.with, focus.n, rects.length, insetRight, insetBottom])
   useEffect(() => {
     if (fitAll && rects.length) flyTo(bounds(rects), 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,12 +154,14 @@ export function Canvas({
             <section
               key={c.key}
               data-card={c.key}
-              className={`ad-card absolute ${on ? "ad-card-on" : ""}`}
+              className={`ad-card absolute ${on ? "ad-card-on" : ""} ${c.ghost ? "ad-card-ghost" : ""}`}
               style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
-              onClick={() => moved.current < 6 && onSelect(c.key)}
+              onClick={() => moved.current < 6 && !c.ghost && onSelect(c.key)}
               onDoubleClick={() => flyTo(r)}
             >
-              <header style={{ height: CARD_HEAD, padding: `20px ${CARD_PAD}px 0` }}>
+              <header className="relative" style={{ height: CARD_HEAD, padding: `20px ${CARD_PAD}px 0` }}>
+                {c.badge && <span className="ad-card-badge">{c.badge}</span>}
+                {c.actions && <div className="ad-card-actions">{c.actions}</div>}
                 <h2 className="ad-card-title">{c.title}</h2>
                 {c.summary && <p className="ad-card-summary">{c.summary}</p>}
               </header>

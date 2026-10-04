@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.types import Scope
 
-from archdraw_studio import identity
+from archdraw_studio import agent, identity
 from archdraw_studio.library import Library, LibraryError, check_slug
 
 log = logging.getLogger("archdraw")
@@ -57,6 +61,32 @@ class ProjectBody(BaseModel):
     slug: str
 
 
+class OpenBody(BaseModel):
+    project: str
+
+
+class SayBody(BaseModel):
+    text: str
+    file: str | None = None  # the diagram open on the canvas, if any
+    source: str | None = None  # its source as the editor holds it (may be unsaved)
+
+
+def agent_context(lib: Library, project: str, file: str | None, source: str | None) -> str:
+    """What rides with Tawab's message: where the agent is, which diagrams exist, and the one he is looking at."""
+    where = f"[studio] Project `{project}`. Your working directory is its brain folder: the hub is `{project}.md`, "
+    lines = [where + "the diagrams are `archdraw/*.archdraw`."]
+    rows = lib.files(project)
+    if rows:
+        lines.append("Diagrams: " + "; ".join(f"{r['name']} ({r['title']})" for r in rows) + ".")
+    if file:
+        check_slug(file, "diagram name")
+        if source is None:
+            source = lib.read(project, file)["source"]
+        lines.append(f"Tawab is looking at `{file}`; its source as it stands in the editor:")
+        lines.append(f"```archdraw file={file}\n{source.rstrip()}\n```")
+    return "\n".join(lines)
+
+
 class UiFiles(StaticFiles):
     """The page is never cached; hashed assets are cached for good (a deploy renames them)."""
 
@@ -70,7 +100,11 @@ class UiFiles(StaticFiles):
 
 
 def create_app(
-    library: Library | None = None, *, allow_local: bool | None = None, ui_dist: Path | None = None
+    library: Library | None = None,
+    *,
+    allow_local: bool | None = None,
+    ui_dist: Path | None = None,
+    state: Path | None = None,
 ) -> FastAPI:
     lib = library or Library(
         root=Path(os.environ.get("ARCHDRAW_LIBRARY", str(Path.home() / "work" / "brain" / "projects"))),
@@ -79,7 +113,22 @@ def create_app(
     )
     local = os.environ.get("ARCHDRAW_ALLOW_LOCAL") == "1" if allow_local is None else allow_local
     dist = ui_dist or REPO / "studio" / "ui" / "dist"
-    app = FastAPI(title="archdraw studio", docs_url=None, redoc_url=None, openapi_url=None)
+    default_state = Path.home() / "work" / ".archdraw-studio" / "conversations"
+    talks = agent.Conversations(state_dir=state or Path(os.environ.get("ARCHDRAW_STATE", str(default_state))))
+
+    def sweeper() -> None:
+        while True:
+            time.sleep(60)
+            talks.sweep()
+
+    threading.Thread(target=sweeper, daemon=True).start()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        talks.close_all()  # no agent worker outlives the studio
+
+    app = FastAPI(title="archdraw studio", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @app.middleware("http")
     async def gate(request: Request, call_next: Any) -> Response:
@@ -126,6 +175,55 @@ def create_app(
     @app.put("/api/projects/{project}/files/{name}")
     def save(project: str, name: str, body: SaveBody, request: Request) -> dict:
         return lib.save(project, name, body.source, body.base, request.state.who)
+
+    def talk(cid: str) -> agent.Conversation:
+        c = talks.get(cid)
+        if c is None:
+            raise LibraryError(404, "no such conversation")
+        return c
+
+    @app.get("/api/agent")
+    def agent_status() -> dict:
+        return {"spent_today": round(talks.spent_today(), 4), "day_budget": agent.DAY_BUDGET_USD,
+                "conversation_budget": agent.BUDGET_USD, "conversations": talks.list()[:30]}  # fmt: skip
+
+    @app.post("/api/agent/conversations")
+    def agent_open(body: OpenBody) -> dict:
+        project = check_slug(body.project, "project")
+        lib.files(project)  # 404 for a project that does not exist
+        try:
+            c = talks.open(project, lib.root / project, lib.check)
+        except RuntimeError as exc:
+            raise LibraryError(429, str(exc)) from exc
+        return c.summary()
+
+    @app.get("/api/agent/conversations/{cid}")
+    def agent_events(cid: str, after: int = -1, wait: float = 0) -> dict:
+        """Events after `after`; with `wait` (seconds, at most 25), a long poll that answers as soon as one arrives."""
+        c = talk(cid)
+        events = c.wait(after, min(max(wait, 0), 25)) if wait else c.events[after + 1 :]
+        return {**c.summary(), "items": events}
+
+    @app.post("/api/agent/conversations/{cid}/messages")
+    def agent_say(cid: str, body: SayBody) -> dict:
+        c = talk(cid)
+        if c.state == "closed":
+            raise LibraryError(409, "this conversation has ended; start a new one")
+        if not body.text.strip() or len(body.text) > 20_000:
+            raise LibraryError(400, "a message is 1 to 20,000 characters")
+        c.say(body.text.strip(), agent_context(lib, c.project, body.file, body.source))
+        return c.summary()
+
+    @app.post("/api/agent/conversations/{cid}/interrupt")
+    def agent_interrupt(cid: str) -> dict:
+        talk(cid).interrupt()
+        return {"ok": True}
+
+    @app.post("/api/agent/conversations/{cid}/close")
+    def agent_close(cid: str) -> dict:
+        c = talk(cid)
+        threading.Thread(target=c.close, args=("closed by Tawab",), daemon=True).start()
+        return {"ok": True}
 
     @app.get("/api/{rest:path}", include_in_schema=False)
     def api_404(rest: str) -> Response:

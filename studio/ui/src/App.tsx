@@ -1,7 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { agentApi, diffCount, lineDiff, type Proposal, type Status, type Target } from "./agent"
 import { Canvas, type Card } from "./Canvas"
+import { ChatPanel } from "./Chat"
 import { ApiError, SLUG, api, hashFor, meta, parseHash, type FileMeta, type Project } from "./model"
+import { Palette } from "./Palette"
 import { renderSource } from "./render"
+
+// Two ways to hold the agent, for Tawab to choose between (?v=dock or ?v=sheet): a panel docked on the right whose
+// proposals appear on the canvas beside the diagram they would replace, or a floating sheet over the canvas whose
+// proposals are tried in place on the diagram itself.
+const VARIANT: "dock" | "sheet" = new URLSearchParams(location.search).get("v") === "sheet" ? "sheet" : "dock"
+const DOCK_W = 440
+const EDIT_W = 560
+const GHOST = "~proposed"
+
+const remember = (k: string, v: string | null) => {
+  try {
+    if (v === null) localStorage.removeItem(k)
+    else localStorage.setItem(k, v)
+  } catch {
+    /* storage blocked: the choice lasts this visit */
+  }
+}
+const recall = (k: string) => {
+  try {
+    return localStorage.getItem(k)
+  } catch {
+    return null
+  }
+}
 
 const useDark = () => {
   const media = window.matchMedia("(prefers-color-scheme: dark)")
@@ -47,11 +74,19 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [menu, setMenu] = useState(false)
-  const [focus, setFocus] = useState<{ key?: string; n: number }>({ n: 0 })
+  const [focus, setFocus] = useState<{ key?: string; with?: string; n: number }>({ n: 0 })
   const [fitAll, setFitAll] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [creating, setCreating] = useState<null | "project" | "file">(null)
+  const [palette, setPalette] = useState(false)
+  const [targets, setTargets] = useState<Target[]>([])
+  const [chat, setChat] = useState(false)
+  const [talk, setTalk] = useState<string | null>(null)
+  const [status, setStatus] = useState<Status | null>(null)
+  const [staged, setStaged] = useState<{ p: Proposal; before?: string } | null>(null)
+  const [chatFocus, setChatFocus] = useState(0)
+  const [sheetH, setSheetH] = useState(0)
 
   // switching project drops this project's drafts: ask first, and stay put on no (review L-c)
   const unsavedRef = useRef(false)
@@ -93,6 +128,8 @@ export default function App() {
     setFiles([])
     setSources({})
     setDrafts({})
+    setStaged(null)
+    setTalk(recall(`archdraw:talk:${project}`))
     loadFiles(project).catch(e => setError(e instanceof ApiError ? e.message : String(e)))
   }, [project, loadFiles])
 
@@ -102,15 +139,88 @@ export default function App() {
     setMenu(false)
   }, [route.file, project, files.length])
 
-  const cards: Card[] = useMemo(
-    () =>
-      files.map(f => {
-        const source = drafts[f.name] ?? sources[f.name]?.source ?? ""
-        const m = meta(source)
-        return { key: f.name, title: m.title ?? f.name, summary: m.summary ?? "", r: renderSource(source, dark) }
-      }),
-    [files, sources, drafts, dark],
+  const accept = useCallback(
+    async (p: Proposal) => {
+      if (!project) return
+      const exists = files.some(f => f.name === p.name)
+      try {
+        const r = await api.save(project, p.name, p.source, exists ? (sources[p.name]?.version ?? null) : null)
+        setSources(s => ({ ...s, [p.name]: { source: p.source, version: r.version } }))
+        setDrafts(d => {
+          const { [p.name]: _, ...rest } = d
+          return rest
+        })
+        setStaged(null)
+        setNotice(r.commit ? `Accepted and committed to the brain (${r.commit})` : "Accepted")
+        setFiles(await api.files(project))
+        location.hash = hashFor(project, p.name)
+      } catch (e) {
+        setNotice(e instanceof ApiError ? `Not saved: ${e.message}` : `Not saved: ${String(e)}`)
+        throw e
+      }
+    },
+    [project, files, sources],
   )
+
+  // a proposal on the canvas: the dock shows it as a card beside the diagram it would replace; the sheet tries it
+  // in place, as an unsaved edit, and Undo puts the draft back as it was
+  const stage = useCallback(
+    (p: Proposal | null) => {
+      const exists = (name: string) => files.some(f => f.name === name)
+      let restored = drafts
+      if (staged && VARIANT === "sheet" && exists(staged.p.name)) {
+        const { [staged.p.name]: _, ...rest } = drafts
+        restored = staged.before === undefined ? rest : { ...rest, [staged.p.name]: staged.before }
+      }
+      if (p && VARIANT === "sheet" && exists(p.name)) {
+        setStaged({ p, before: restored[p.name] })
+        setDrafts({ ...restored, [p.name]: p.source })
+        setFocus(f => ({ key: p.name, n: f.n + 1 }))
+        return
+      }
+      setDrafts(restored)
+      setStaged(p ? { p } : null)
+      if (p && window.innerWidth < 640) setChat(false) // on a phone the dock covers the canvas; the card carries Accept
+      if (p) setFocus(f => ({ key: p.name + GHOST, with: exists(p.name) ? p.name : undefined, n: f.n + 1 }))
+    },
+    [files, drafts, staged],
+  )
+
+  const cards: Card[] = useMemo(() => {
+    const out: Card[] = files.map(f => {
+      const source = drafts[f.name] ?? sources[f.name]?.source ?? ""
+      const m = meta(source)
+      const trying = staged && VARIANT === "sheet" && staged.p.name === f.name
+      return { key: f.name, title: m.title ?? f.name, summary: m.summary ?? "", r: renderSource(source, dark), badge: trying ? "Trying the agent's proposal" : undefined }
+    })
+    const p = staged?.p
+    if (p && !(VARIANT === "sheet" && files.some(f => f.name === p.name))) {
+      const m = meta(p.source)
+      const before = sources[p.name]?.source
+      const { added, removed } = diffCount(lineDiff(before ?? "", p.source))
+      const ghost: Card = {
+        key: p.name + GHOST,
+        title: m.title ?? p.name,
+        summary: m.summary ?? "",
+        r: renderSource(p.source, dark),
+        ghost: true,
+        badge: before === undefined ? "Proposed · new diagram" : `Proposed · +${added} −${removed}`,
+        actions: (
+          <>
+            <button type="button" className="ad-btn" onClick={() => setStaged(null)}>
+              Dismiss
+            </button>
+            <button type="button" className="ad-btn ad-btn-primary" onClick={() => void accept(p).catch(() => undefined)} data-testid="ghost-accept">
+              {before === undefined ? "Create" : "Accept"}
+            </button>
+          </>
+        ),
+      }
+      const at = out.findIndex(c => c.key === p.name)
+      out.splice(at < 0 ? out.length : at + 1, 0, ghost)
+    }
+    return out
+  }, [files, sources, drafts, dark, staged, accept])
 
   const sel = route.file && files.some(f => f.name === route.file) ? route.file : undefined
   const selSource = sel ? (drafts[sel] ?? sources[sel]?.source ?? "") : ""
@@ -150,11 +260,97 @@ export default function App() {
         e.preventDefault()
         void save()
       }
-      if (e.key === "Escape") setEditing(false)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        setPalette(p => !p)
+      }
+      if (e.key === "Escape") {
+        if (palette) setPalette(false)
+        else setEditing(false)
+      }
     }
     window.addEventListener("keydown", on)
     return () => window.removeEventListener("keydown", on)
-  }, [save])
+  }, [save, palette])
+
+  // the palette's targets: every project, and every diagram in each
+  useEffect(() => {
+    if (!palette || !projects) return
+    Promise.all(projects.map(p => api.files(p.slug).then(fs => [p, fs] as const)))
+      .then(all =>
+        setTargets(
+          all.flatMap(([p, fs]) => [
+            { kind: "project" as const, project: p.slug, title: p.title, hint: `${fs.length} diagrams` },
+            ...fs.map(f => ({ kind: "file" as const, project: p.slug, file: f.name, title: f.title, hint: p.title })),
+          ]),
+        ),
+      )
+      .catch(() => undefined)
+  }, [palette, projects])
+
+  // the agent's budget and this project's conversations, while the chat is open
+  const refreshStatus = useCallback(() => {
+    agentApi.status().then(setStatus, () => undefined)
+  }, [])
+  useEffect(() => {
+    if (!chat) return
+    refreshStatus()
+    const t = setInterval(refreshStatus, 20000)
+    return () => clearInterval(t)
+  }, [chat, refreshStatus])
+
+  // a worker takes ~20 s to start (piray verifies the harness first), so one is started as the panel opens; it costs
+  // nothing until a message is sent, and the idle sweep closes it after 20 minutes
+  const warming = useRef<Promise<string | null> | null>(null)
+  useEffect(() => {
+    if (!chat || !project || talk || warming.current) return
+    warming.current = agentApi.open(project).then(
+      c => {
+        remember(`archdraw:talk:${project}`, c.id)
+        setTalk(c.id)
+        return c.id
+      },
+      e => {
+        setNotice(e instanceof ApiError ? e.message : String(e))
+        return null
+      },
+    )
+    void warming.current.finally(() => (warming.current = null))
+  }, [chat, project, talk])
+
+  const openChat = () => {
+    setChat(true)
+    setEditing(false)
+    setChatFocus(n => n + 1)
+  }
+
+  const ask = useCallback(
+    async (text: string) => {
+      if (!project) return
+      const send = async (id: string) => agentApi.say(id, text, sel, sel ? selSource : undefined)
+      try {
+        const id = talk ?? (await warming.current) // a message typed while the worker starts goes to that worker
+        if (!id) throw new ApiError(404, "none")
+        await send(id)
+      } catch (e) {
+        if (!(e instanceof ApiError) || (e.status !== 404 && e.status !== 409)) {
+          setNotice(e instanceof ApiError ? e.message : String(e))
+          throw e
+        }
+        try {
+          const c = await agentApi.open(project)
+          remember(`archdraw:talk:${project}`, c.id)
+          setTalk(c.id)
+          await send(c.id)
+        } catch (e2) {
+          setNotice(e2 instanceof ApiError ? e2.message : String(e2))
+          throw e2
+        }
+      }
+      refreshStatus()
+    },
+    [project, talk, sel, selSource, refreshStatus],
+  )
 
   // unsaved edits survive nothing: warn before the tab closes or reloads (review L5)
   const unsaved = Object.entries(drafts).some(([k, v]) => v !== sources[k]?.source)
@@ -173,6 +369,7 @@ export default function App() {
   }, [notice])
 
   const current = projects?.find(p => p.slug === project)
+  const panelW = editing && sel ? Math.min(EDIT_W, window.innerWidth) : chat && VARIANT === "dock" ? Math.min(DOCK_W, window.innerWidth) : 0
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--page)] text-[var(--text)]">
@@ -225,7 +422,7 @@ export default function App() {
       <main className="relative min-w-0 flex-1">
         <header
           className="ad-top absolute left-0 top-0 z-10 flex items-center gap-2 px-3 py-2"
-          style={{ right: editing && sel ? Math.min(560, window.innerWidth) : 0 }}
+          style={{ right: panelW }}
         >
           <button type="button" className="ad-btn md:hidden" aria-label="Menu" onClick={() => setMenu(true)}>
             ☰
@@ -236,10 +433,21 @@ export default function App() {
           </div>
           <div className="ml-auto flex items-center gap-1">
             {sel && (
-              <button type="button" className="ad-btn" onClick={() => setEditing(e => !e)} data-testid="toggle-source">
+              <button
+                type="button"
+                className="ad-btn"
+                onClick={() => {
+                  setEditing(e => !e)
+                  if (VARIANT === "dock") setChat(false)
+                }}
+                data-testid="toggle-source"
+              >
                 {editing ? "Close source" : "Source"}
               </button>
             )}
+            <button type="button" className="ad-btn ad-btn-ask" onClick={() => (chat ? setChat(false) : openChat())} data-testid="open-chat" title="The archdraw agent (⌘K to jump or ask)">
+              ✦ Ask<kbd className="max-sm:hidden">⌘K</kbd>
+            </button>
             <button type="button" className="ad-btn" onClick={() => setFitAll(n => n + 1)} title="Fit every diagram">
               All
             </button>
@@ -259,7 +467,8 @@ export default function App() {
             focus={focus}
             fitAll={fitAll}
             dark={dark}
-            insetRight={editing && sel ? Math.min(560, window.innerWidth) : 0}
+            insetRight={panelW}
+            insetBottom={chat && VARIANT === "sheet" ? sheetH : 0}
           />
         )}
 
@@ -285,6 +494,50 @@ export default function App() {
           </section>
         )}
 
+        {chat && project && (
+          <ChatPanel
+            variant={VARIANT}
+            project={project}
+            id={talk}
+            history={(status?.conversations ?? []).filter(c => c.project === project)}
+            budget={{ conversation: status?.conversation_budget ?? 1, spentToday: status?.spent_today ?? 0, day: status?.day_budget ?? 10 }}
+            existing={Object.fromEntries(Object.entries(sources).map(([k, v]) => [k, v.source]))}
+            staged={staged ? { name: staged.p.name, n: staged.p.n } : null}
+            onSend={ask}
+            onNew={() => {
+              remember(`archdraw:talk:${project}`, null)
+              if (talk) void agentApi.close(talk).catch(() => undefined)
+              setTalk(null)
+              setStaged(null)
+              setChatFocus(n => n + 1)
+            }}
+            onPick={id => {
+              remember(`archdraw:talk:${project}`, id)
+              setTalk(id)
+            }}
+            onClose={() => setChat(false)}
+            onStage={stage}
+            onAccept={accept}
+            focusKey={chatFocus}
+            onHeight={VARIANT === "sheet" ? setSheetH : undefined}
+          />
+        )}
+        {palette && (
+          <Palette
+            targets={targets}
+            project={project}
+            onClose={() => setPalette(false)}
+            onGo={t => {
+              setPalette(false)
+              location.hash = hashFor(t.project, t.file)
+            }}
+            onAsk={text => {
+              setPalette(false)
+              openChat()
+              void ask(text).catch(() => undefined)
+            }}
+          />
+        )}
         {notice && (
           <div className="ad-toast absolute bottom-16 left-1/2 z-30 -translate-x-1/2" role="status">
             {notice}
