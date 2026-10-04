@@ -9,7 +9,7 @@
 // set to publish directly). A folder project has no git of its own: its files are written in place.
 
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, renameSync, unlinkSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, renameSync, unlinkSync } from "node:fs"
 import { join } from "node:path"
 import { AppError, checkSlug, DIAGRAM_DIR, type Project, type Store, slugFrom } from "./config.js"
 import { check } from "./engine.js"
@@ -147,6 +147,13 @@ export class Library {
   /** Connect a local folder; its diagrams are read and written in `<path>/.archdraw/`. */
   addFolder(path: string, opts: { title?: string; slug?: string } = {}): Project {
     if (!existsSync(path) || !statSync(path).isDirectory()) throw new AppError(404, `no folder ${path}`)
+    // a server can confine folder projects (trex: ~/work), so the agent never reads a home's credentials (review of #2 F16)
+    const root = process.env.ARCHDRAW_FOLDER_ROOT
+    if (root) {
+      const real = realpathSync(path)
+      const top = realpathSync(root)
+      if (real !== top && !real.startsWith(top + "/")) throw new AppError(403, `folders must be inside ${top} on this server`)
+    }
     const slug = opts.slug && !RESERVED.includes(opts.slug) ? checkSlug(opts.slug, "project") : this.freeSlug(opts.slug || path)
     const project: Project = { slug, title: opts.title || path.split("/").filter(Boolean).pop()!, source: { kind: "folder", path }, addedAt: Date.now() }
     mkdirSync(join(path, DIAGRAM_DIR), { recursive: true })
