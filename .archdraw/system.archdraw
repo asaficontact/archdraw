@@ -8,9 +8,7 @@ style job    fill: none  border: theme-primary
 style zone   fill: none  border: theme-border  text: (color: theme-muted)
 style dim    text: (color: theme-muted)
 
-node you "You / [dim]browser or desktop app[/dim]"  icon: laptop
-
-node app "archdraw server  [dim]Node · Hono · one process[/dim]"  below you (gap: wide)  style: zone
+node app "archdraw server  [dim]Node · Hono · one process[/dim]"  style: zone
 node app.ui "UI / [dim]React: canvas, inbox, chat[/dim]"  style: ours
 node app.api "API + gate / [dim]token, tailnet or local[/dim]"  right of app.ui  style: ours
 node app.engine "Engine / [dim]reladraw fork: parse, layout, SVG[/dim]"  below app.ui  style: ours
@@ -20,16 +18,17 @@ node app.sync "Hourly sync / [dim]triage, then draft[/dim]"  right of app.agent 
 
 node desktop "Desktop shell / [dim]Electron: window, tray, keychain[/dim]"  left of app (gap: wide)  top level with app  style: ours
 
+node you "You / [dim]browser or desktop app[/dim]"  right of app (gap: wide)  level with app.ui  icon: laptop
 node repo "Your repo / [dim].archdraw/ on main · archdraw/update[/dim]"  right of app (gap: wide)  level with app.lib  style: store
 node model "AI provider / [dim]your key: OpenAI, Anthropic, Google, OpenRouter[/dim]"  below app (gap: wide)  left level with app  style: ext
-node upstream "reladraw / [dim]upstream engine[/dim]"  above repo (gap: wide)  style: ext
+node upstream "reladraw / [dim]upstream engine[/dim]"  below desktop (gap: wide)  style: ext
 
-edge you -> app.ui  "open"  from: bottom  to: top
-edge desktop -> app.api  "starts in-process"  from: right  to: left
+edge you -> app.api  "open"  from: left  to: right
+edge desktop -> app  "starts in-process"  from: right  to: left
 edge app.ui -> app.api  "JSON"  from: right  to: left
 edge app.api -> app.lib  "read · save"  from: bottom  to: top
 edge app.lib -> app.engine  "check, render"  from: left  to: right
 edge app.lib <-> repo  "fetch · push · PR"  from: right  to: left
 edge app.sync -> app.agent  "draft an update"  from: left  to: right
 edge app.agent -> model  "a turn, daily cap"  from: bottom  to: top
-edge upstream -> app.engine  "merged by PR"  from: left  to: top
+edge upstream -> app.engine  "merged by PR"  from: right  to: left
