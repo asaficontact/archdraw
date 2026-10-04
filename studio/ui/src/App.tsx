@@ -94,6 +94,11 @@ export default function App() {
   const [chatFocus, setChatFocus] = useState(0)
   const [loaded, setLoaded] = useState<string | null>(null) // the project whose diagrams have arrived
   const [tour, setTour] = useState<TourState>({ status: "new", step: 0 })
+  const [keysView, setKeysView] = useState<{ keys: Record<string, boolean>; editable: boolean; provider: string } | null>(null)
+  const loadKeys = useCallback(() => {
+    api.settings().then(v => setKeysView({ keys: v.keys, editable: v.keysEditable, provider: v.settings.provider }), () => undefined)
+  }, [])
+  useEffect(loadKeys, [loadKeys])
   const [starting, setStarting] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null })
 
   // switching project drops this project's drafts: ask first, and stay put on no (review L-c)
@@ -718,6 +723,12 @@ export default function App() {
                 onAccept={accept}
                 focusKey={chatFocus}
                 onCost={refreshStatus}
+                needsKey={keysView && !current?.sample && !keysView.keys[keysView.provider] ? { editable: keysView.editable, provider: keysView.provider } : null}
+                onKey={async key => {
+                  await api.setKey(key)
+                  loadKeys()
+                  setNotice("Key saved. Ask away.")
+                }}
               />
             )}
           </>
@@ -847,6 +858,7 @@ export default function App() {
           project={current}
           onClose={() => setDialog(null)}
           onSaved={() => {
+            loadKeys()
             api.settings().then(v => setTheme(v.settings.theme), () => undefined)
             loadProjects()
           }}

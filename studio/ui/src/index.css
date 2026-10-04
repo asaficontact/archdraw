@@ -995,3 +995,11 @@ kbd {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+.ad-keyprompt {
+  margin: 0 10px 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 12px;
+  background: var(--accent-soft);
+}

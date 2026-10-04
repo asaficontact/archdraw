@@ -58,7 +58,7 @@ try {
     if (direct.status !== 403) throw new Error(`the server answered ${direct.status} without the session`)
   })
   await step("add a project through the UI; its diagram renders", async () => {
-    await win.click("[data-testid=empty-add]")
+    await win.click("[data-testid=add-project]")
     await win.fill("[data-testid=connect-input]", origin)
     await win.click("[data-testid=connect-submit]")
     await win.waitForSelector("[data-card=system] svg", { timeout: 30_000 })

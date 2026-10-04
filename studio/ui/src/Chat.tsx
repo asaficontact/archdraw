@@ -54,6 +54,9 @@ export type ChatProps = {
   focusKey: number
   onHeight?: (h: number) => void // the sheet tells the canvas how much of it is covered
   onCost?: () => void // a turn was charged: the day's total is fetched again
+  /** No AI key yet: the panel asks for one in place (`editable`), or says where this machine reads it from. */
+  needsKey?: { editable: boolean; provider: string } | null
+  onKey?: (key: string) => Promise<void>
 }
 
 export function ChatPanel(props: ChatProps) {
@@ -230,6 +233,7 @@ export function ChatPanel(props: ChatProps) {
         {error && <div className="ad-note text-[var(--danger)]">{error}</div>}
       </div>
 
+      {props.needsKey && <KeyPrompt need={props.needsKey} onKey={props.onKey} />}
       <form
         className="ad-chat-input"
         onSubmit={e => {
@@ -300,6 +304,47 @@ function TryBar({ p, before, onUndo, onAccept }: { p: Proposal; before?: string;
         {busy ? "Saving…" : "Accept"}
       </button>
     </div>
+  )
+}
+
+const KEY_PROVIDER = (k: string) => (k.startsWith("sk-ant-") ? "Anthropic" : k.startsWith("sk-or-") ? "OpenRouter" : k.startsWith("AIza") ? "Google" : k.startsWith("sk-") ? "OpenAI" : null)
+
+/** The one thing the agent needs: a key, pasted right here (the provider is read from its prefix). */
+function KeyPrompt({ need, onKey }: { need: { editable: boolean; provider: string }; onKey?: (key: string) => Promise<void> }) {
+  const [key, setKey] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  if (!need.editable)
+    return <div className="ad-keyprompt text-xs">The agent needs an AI key, and this machine reads keys from its secrets file. Add one there ({need.provider}).</div>
+  const who = KEY_PROVIDER(key.trim())
+  return (
+    <form
+      className="ad-keyprompt"
+      data-testid="key-prompt"
+      onSubmit={async e => {
+        e.preventDefault()
+        if (!key.trim() || busy) return
+        setBusy(true)
+        setErr(null)
+        try {
+          await onKey?.(key.trim())
+        } catch (x) {
+          setErr(x instanceof Error ? x.message : String(x))
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      <div className="text-sm font-medium">Add your AI key to talk to the agent</div>
+      <div className="text-xs text-[var(--muted)]">OpenAI, Anthropic, Google or OpenRouter. It stays on this machine and goes only to that provider.</div>
+      <div className="mt-2 flex gap-2">
+        <input className="ad-input" type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder="sk-… / sk-ant-… / AIza…" data-testid="key-input" />
+        <button type="submit" className="ad-btn ad-btn-primary" disabled={!key.trim() || busy} data-testid="key-save">
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <div className="mt-1 min-h-4 text-xs">{err ? <span className="text-[var(--danger)]">{err}</span> : who ? <span className="text-[var(--muted)]">{who} key</span> : null}</div>
+    </form>
   )
 }
 
