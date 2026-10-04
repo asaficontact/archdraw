@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai"
 import { describe, expect, it } from "vitest"
-import { Conversations } from "../src/agent.js"
+import { Conversations, systemPrompt } from "../src/agent.js"
 import { Store } from "../src/config.js"
 import { Library } from "../src/library.js"
 import { MemoryKeys } from "../src/models.js"
@@ -68,6 +68,12 @@ describe("the agent", () => {
     expect(prop.doc).toContain("Where data lives")
     const grep = c.events.find(e => e.type === "tool") as any
     expect(grep.name).toBe("grep")
+  })
+
+  it("knows its project, so it links diagrams without asking for the slug", () => {
+    const prompt = systemPrompt({ slug: "banna-dashboard", title: "banna_dashboard" })
+    expect(prompt).toContain('url: "#/banna-dashboard/<file>"')
+    expect(prompt).toContain("Asked to draw, and the code answers the open points: draw.")
   })
 
   it("keeps *.env files and secrets/ folders out of read, grep and git_diff (re-review of #2 R1)", async () => {

@@ -228,7 +228,7 @@ export class Syncer {
       onProposal: pr => proposals.set(pr.name, pr),
     })
     const agent = new Agent({
-      initialState: { systemPrompt: systemPrompt(), model, tools, thinkingLevel: "medium" },
+      initialState: { systemPrompt: systemPrompt({ slug: p.slug, title: p.title }), model, tools, thinkingLevel: "medium" },
       streamFn: models.streamSimple.bind(models),
       getApiKey: async () => keys.get(s.provider),
       toolExecution: "sequential",

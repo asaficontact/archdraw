@@ -43,12 +43,14 @@ export function skills(): Record<string, string> {
   return out
 }
 
-export function systemPrompt(): string {
+/** The prompt, with the project it works on: the agent links diagrams by slug and should never have to ask for it. */
+export function systemPrompt(project?: { slug: string; title: string }): string {
   const base = readFileSync(join(assetsDir(), "prompts", "agent.md"), "utf8")
   const index = Object.entries(skills())
     .filter(([p]) => p.endsWith("SKILL.md"))
     .map(([p, body]) => `- ${p}: ${/^description:\s*(.+)$/m.exec(body)?.[1] ?? "a skill"}`)
-  return `${base}\n\n## Your skills (read with read_skill)\n${index.join("\n")}\n`
+  const here = project ? `\n\n## This project\nYou are working on ${project.title}; its slug is \`${project.slug}\`, so a link to its diagram \`<file>\` is \`url: "#/${project.slug}/<file>"\`.` : ""
+  return `${base}${here}\n\n## Your skills (read with read_skill)\n${index.join("\n")}\n`
 }
 
 export type ConversationDeps = {
@@ -132,7 +134,7 @@ export class Conversation {
       onProposal: (pr: Proposal) => this.emit({ type: "proposal", kind: "archdraw", name: pr.name, source: pr.source, doc: pr.doc, error: null }),
     })
     const agent = new Agent({
-      initialState: { systemPrompt: systemPrompt(), model, tools, thinkingLevel: "medium" },
+      initialState: { systemPrompt: systemPrompt({ slug: p.slug, title: p.title }), model, tools, thinkingLevel: "medium" },
       streamFn: models.streamSimple.bind(models),
       getApiKey: async () => (this.demo ? "demo" : d.keys.get(s.provider)),
       sessionId: `archdraw-${this.id}`,
