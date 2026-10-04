@@ -2,7 +2,7 @@
 Description=archdraw — architecture diagrams of every connected project, kept current from git; tailnet only, its own origin via Serve https:8445
 
 [Service]
-WorkingDirectory=/home/agent3/work/projects/archdraw/studio
+WorkingDirectory=/home/agent3/work/projects/archdraw-live/studio
 Environment=HOME=/home/agent3
 Environment=PATH=/home/agent3/.nvm/versions/node/v24.21.0/bin:/home/agent3/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=ARCHDRAW_GATE=tailnet
@@ -10,7 +10,7 @@ Environment=ARCHDRAW_HOME=/home/agent3/work/data/archdraw
 Environment=ARCHDRAW_FOLDER_ROOT=/home/agent3/work
 Environment=ARCHDRAW_PORT=8088
 Environment=ARCHDRAW_AUTHOR=Banna
-ExecStart=/home/agent3/.nvm/versions/node/v24.21.0/bin/node /home/agent3/work/projects/archdraw/studio/dist/server.mjs
+ExecStart=/home/agent3/.nvm/versions/node/v24.21.0/bin/node /home/agent3/work/projects/archdraw-live/studio/dist/server.mjs
 Restart=always
 RestartSec=2
 
