@@ -44,8 +44,9 @@ export class GhForge implements Forge {
     return { number, url, state: "OPEN" }
   }
 
-  async merge(p: Project, cwd: string, number: number, subject: string) {
-    await gh(cwd, ["pr", "merge", String(number), "-R", repoOf(p), "--squash", "--delete-branch", "--subject", subject])
+  async merge(p: Project, cwd: string, number: number, subject: string, head?: string) {
+    // only the commit the user reviewed: a branch that moved since is refused by GitHub (review of #2 F3)
+    await gh(cwd, ["pr", "merge", String(number), "-R", repoOf(p), "--squash", "--delete-branch", "--subject", subject, ...(head ? ["--match-head-commit", head] : [])])
   }
 
   async close(p: Project, cwd: string, number: number) {

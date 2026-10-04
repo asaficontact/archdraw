@@ -18,7 +18,7 @@ import { git, lastChange, lsTree, revParse, show } from "./git.js"
 export const EXT = ".archdraw"
 export const UPDATE_BRANCH = "archdraw/update"
 /** Names the page uses as routes (`#/inbox`), never a project's. */
-const RESERVED = ["inbox", "settings"]
+const RESERVED = ["inbox", "settings", "bean-there"] // bean-there: the tour's sample (review of #2 F8)
 const MAX_BYTES = 200_000
 const META = /^\/\/\s*(title|summary)\s*:\s*(.+?)\s*$/
 
@@ -50,7 +50,7 @@ export function starter(title: string): string {
 export interface Forge {
   ensurePullRequest(p: Project, cwd: string, title: string, body: string): Promise<{ number: number; url: string; state: string }>
   pullRequest(p: Project, cwd: string): Promise<{ number: number; url: string; state: string } | null>
-  merge(p: Project, cwd: string, number: number, subject: string): Promise<void>
+  merge(p: Project, cwd: string, number: number, subject: string, head?: string): Promise<void>
   close(p: Project, cwd: string, number: number): Promise<void>
 }
 
@@ -98,20 +98,40 @@ export class Library {
   }
 
   /** Connect a GitHub repo ("owner/name", a github.com URL, or any git URL for tests): clone it for the app. */
-  async addRepo(input: string, opts: { title?: string; branch?: string; slug?: string } = {}): Promise<Project> {
-    const { repo, url } = parseRepo(input)
+  async addRepo(input: string, opts: { title?: string; branch?: string; slug?: string; reserved?: boolean } = {}): Promise<Project> {
+    const parsed = parseRepo(input)
+    const { repo } = parsed
+    let url = parsed.url
     if (this.store.read().projects.some(p => p.source.kind === "github" && p.source.repo === repo)) throw new AppError(409, `${repo} is already connected`)
-    const slug = opts.slug && !RESERVED.includes(opts.slug) ? checkSlug(opts.slug, "project") : this.freeSlug(opts.slug || repo)
+    let slug: string
+    if (opts.slug && (opts.reserved || !RESERVED.includes(opts.slug))) {
+      slug = checkSlug(opts.slug, "project")
+      if (this.store.project(slug)) throw new AppError(409, `a project called ${slug} already exists`) // review of #2 F15
+    } else slug = this.freeSlug(opts.slug || repo)
     const dir = this.clonePath(slug)
     mkdirSync(join(this.store.home, "repos"), { recursive: true })
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    const clone = (from: string) => git(this.store.home, ["clone", "--filter=blob:none", "--no-tags", "--", from, dir], { timeoutMs: 600_000, env: { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" } })
     try {
-      await git(this.store.home, ["clone", "--filter=blob:none", "--no-tags", url, dir], { timeoutMs: 600_000 })
+      await clone(url)
     } catch (e) {
       rmSync(dir, { recursive: true, force: true })
       const msg = String((e as Error).message)
-      if (/not found|could not read|Authentication|403|404/i.test(msg)) throw new AppError(404, `could not clone ${repo}: is the name right, and can this machine's git reach it?`)
-      throw new AppError(502, `could not clone ${repo}: ${msg.slice(0, 200)}`)
+      // a user whose only GitHub login is an SSH key: try the SSH address before giving up (review of #2 F10)
+      const ssh = parsed.ssh
+      let ok = false
+      if (ssh && /could not read|Authentication|403|terminal prompts disabled|not found|404/i.test(msg)) {
+        ok = await clone(ssh).then(
+          () => true,
+          () => (rmSync(dir, { recursive: true, force: true }), false),
+        )
+        if (ok) url = ssh
+      }
+      if (!ok) {
+        if (/not found|could not read|Authentication|403|404|terminal prompts disabled|Permission denied/i.test(msg))
+          throw new AppError(404, `archdraw could not open ${repo} with this machine's git login. Check the name; for a private repo, sign git in to GitHub (run "gh auth login", or add an SSH key to GitHub) and try again.`)
+        throw new AppError(502, `could not clone ${repo}: ${msg.slice(0, 200)}`)
+      }
     }
     const head = (await git(dir, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { ok: [1, 128] })).stdout.trim()
     const branch = opts.branch || head.replace(/^origin\//, "") || "main"
@@ -295,7 +315,7 @@ export class Library {
     try {
       await git(work, ["push", `--force-with-lease=refs/heads/${UPDATE_BRANCH}:${expected}`, "origin", `HEAD:refs/heads/${UPDATE_BRANCH}`], { timeoutMs: 300_000 })
     } catch (e) {
-      throw new AppError(409, `another device changed this project's waiting update first; reload and try again (${String((e as Error).message).slice(0, 120)})`)
+      throw pushError(p, String((e as Error).message))
     }
     await git(clone, ["update-ref", `refs/remotes/origin/${UPDATE_BRANCH}`, sha])
     return sha
@@ -482,28 +502,37 @@ export class Library {
     return pr
   }
 
-  /** Publish the waiting update: merge its pull request, or push it onto the branch when the project publishes directly. */
-  async approve(slug: string): Promise<{ published: string }> {
+  /**
+   * Publish the waiting update — exactly the head the user reviewed (`expectedHead`; an update that changed since is
+   * refused, review of #2 F3): merge its pull request at that commit, or push it onto the branch when the project
+   * publishes directly. When the branch moved meanwhile, it is merged into the update first (F11).
+   */
+  async approve(slug: string, expectedHead?: string): Promise<{ published: string }> {
     const p = this.get(slug)
     if (p.source.kind !== "github") throw new AppError(400, "a folder project has nothing waiting")
     const s = p.source
     // a repo that is not on GitHub (a plain git remote) has no pull requests: publishing pushes to its branch
     const mode = !this.forge || s.repo.startsWith("local/") ? "direct" : this.store.settingsFor(slug).publish
+    await this.refresh(slug)
     return this.locks.run(slug, async () => {
-      const { head } = await this.revisions(slug)
+      let { head, base } = await this.revisions(slug)
       if (!head) throw new AppError(409, "nothing is waiting")
+      if (expectedHead && head !== expectedHead) throw new AppError(409, "the update changed since you opened it; look at it again before approving")
       const dir = this.clonePath(slug)
       if (mode === "direct") {
+        const behind = (await git(dir, ["merge-base", "--is-ancestor", base, head], { ok: [1] })).code === 1
+        if (behind) head = await this.mergeBranchIntoUpdate(p, head)
         await git(dir, ["push", "origin", `${head}:refs/heads/${s.branch}`], { timeoutMs: 300_000 }).catch(e => {
-          throw new AppError(409, `could not push onto ${s.branch} (it moved, or it is protected): ${String(e.message).slice(0, 160)}`)
+          throw pushError(p, String(e.message), `could not publish onto ${s.branch} (it is protected, or moved again): set the project to publish through a pull request in Settings`)
         })
-        await git(dir, ["push", "origin", "--delete", UPDATE_BRANCH], { ok: [1] })
+        await git(dir, ["push", `--force-with-lease=refs/heads/${UPDATE_BRANCH}:${head}`, "origin", `:refs/heads/${UPDATE_BRANCH}`], { ok: [1] })
       } else {
         if (!this.forge) throw new AppError(501, "this build cannot open pull requests; set the project to publish directly")
         const pr = await this.forge.ensurePullRequest(p, dir, "archdraw: architecture update", "The architecture diagrams in `.archdraw/`, updated by archdraw.")
-        await this.forge.merge(p, dir, pr.number, "archdraw: architecture update")
+        await this.forge.merge(p, dir, pr.number, "archdraw: architecture update", head)
       }
       await git(dir, ["update-ref", "-d", `refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [1] })
+      this.prCache.delete(slug)
       return { published: head }
     }).then(async r => {
       await this.refresh(slug)
@@ -511,19 +540,45 @@ export class Library {
     })
   }
 
-  /** Throw the waiting update away: close its pull request and delete the branch. */
-  async discard(slug: string): Promise<void> {
+  /** The branch moved under the waiting update: merge it in (diagram files rarely collide). A real conflict is refused. */
+  private async mergeBranchIntoUpdate(p: Project, head: string): Promise<string> {
+    const s = p.source as { branch: string }
+    const work = await this.worktree(p)
+    const r = await git(work, ["merge", "--no-edit", "-m", `archdraw: bring in ${s.branch}\n\nAgent: ${this.by}`, `origin/${s.branch}`], { ok: [1] })
+    if (r.code !== 0) {
+      await git(work, ["merge", "--abort"], { ok: [1, 128] })
+      throw new AppError(409, `${s.branch} changed the same diagrams as this update. Discard it, and archdraw drafts again from ${s.branch} at the next check (or press Sync now).`)
+    }
+    const merged = (await git(work, ["rev-parse", "HEAD"])).stdout.trim()
+    try {
+      await git(work, ["push", `--force-with-lease=refs/heads/${UPDATE_BRANCH}:${head}`, "origin", `HEAD:refs/heads/${UPDATE_BRANCH}`], { timeoutMs: 300_000 })
+    } catch (e) {
+      throw pushError(p, String((e as Error).message))
+    }
+    await git(this.clonePath(p.slug), ["update-ref", `refs/remotes/origin/${UPDATE_BRANCH}`, merged])
+    return merged
+  }
+
+  /** Throw the waiting update away — only the head the user saw (review of #2 F3): close its pull request and delete the branch. */
+  async discard(slug: string, expectedHead?: string): Promise<void> {
     const p = this.get(slug)
     if (p.source.kind !== "github") return
+    await this.refresh(slug)
     await this.locks.run(slug, async () => {
       const dir = this.clonePath(slug)
-      const pr = this.forge ? await this.forge.pullRequest(p, dir).catch(() => null) : null
+      const { head } = await this.revisions(slug)
+      if (!head) return
+      if (expectedHead && head !== expectedHead) throw new AppError(409, "the update changed since you opened it; look at it again before discarding")
+      const onGitHub = p.source.kind === "github" && !p.source.repo.startsWith("local/")
+      const pr = this.forge && onGitHub ? await this.forge.pullRequest(p, dir).catch(() => null) : null
       if (pr && pr.state === "OPEN" && this.forge) await this.forge.close(p, dir, pr.number)
-      await git(dir, ["push", "origin", "--delete", UPDATE_BRANCH], { ok: [1] })
+      const del = await git(dir, ["push", `--force-with-lease=refs/heads/${UPDATE_BRANCH}:${head}`, "origin", `:refs/heads/${UPDATE_BRANCH}`], { ok: [1] })
+      if (del.code !== 0 && /stale info|rejected/.test(del.stderr)) throw new AppError(409, "another device changed the update just now; look at it again")
       await git(dir, ["update-ref", "-d", `refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [1] })
       rmSync(this.workPath(slug), { recursive: true, force: true })
       await git(dir, ["worktree", "prune"])
       await git(dir, ["branch", "-D", UPDATE_BRANCH], { ok: [1] })
+      this.prCache.delete(slug)
     })
   }
 
@@ -536,15 +591,31 @@ export class Library {
   }
 }
 
-export function parseRepo(input: string): { repo: string; url: string } {
-  const s = input.trim().replace(/\.git$/, "").replace(/\/+$/, "")
-  const gh = /^(?:https?:\/\/github\.com\/|git@github\.com:)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(s)
-  if (gh && !s.startsWith("/") && !s.startsWith("file:")) return { repo: `${gh[1]}/${gh[2]}`, url: `https://github.com/${gh[1]}/${gh[2]}.git` }
-  if (/^(file:\/\/|\/)/.test(input.trim())) {
-    const path = input.trim().replace(/^file:\/\//, "")
+export function parseRepo(input: string): { repo: string; url: string; ssh?: string } {
+  const raw = input.trim()
+  const s = raw.replace(/\.git$/, "").replace(/\/+$/, "")
+  const gh = /^(?:https?:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(s)
+  if (gh && !s.startsWith("/") && !s.startsWith("file:") && !gh[1].startsWith("-") && !gh[2].startsWith("-")) {
+    const https = `https://github.com/${gh[1]}/${gh[2]}.git`
+    const ssh = `git@github.com:${gh[1]}/${gh[2]}.git`
+    // what the user typed decides the first try; the other is the fallback
+    return raw.startsWith("git@") || raw.startsWith("ssh:") ? { repo: `${gh[1]}/${gh[2]}`, url: ssh, ssh: https } : { repo: `${gh[1]}/${gh[2]}`, url: https, ssh }
+  }
+  if (/^(file:\/\/|\/)/.test(raw)) {
+    const path = raw.replace(/^file:\/\//, "")
+    if (!path.startsWith("/") || path.includes("\n")) throw new AppError(400, `"${input}" is not a usable path`) // never an option to git (review of #2 F6)
     return { repo: `local/${path.split("/").filter(Boolean).pop()!.replace(/\.git$/, "")}`, url: path }
   }
   throw new AppError(400, `"${input}" is not a GitHub repo: write owner/name or paste its URL`)
+}
+
+/** What a failed push means, and what to do about it (review of #2 F2). */
+function pushError(p: Project, stderr: string, other?: string): AppError {
+  const repo = p.source.kind === "github" ? p.source.repo : p.slug
+  if (/stale info|fetch first|non-fast-forward|\[rejected\]/.test(stderr)) return new AppError(409, "another device changed this project's waiting update first; reload and try again")
+  if (/Authentication|could not read Username|Permission|denied|403|terminal prompts disabled|protected branch/i.test(stderr))
+    return new AppError(403, other ?? `archdraw cannot push to ${repo} with this machine's git login. You need write access; sign git in to GitHub ("gh auth login") and try again.`)
+  return new AppError(502, other ?? `could not reach ${repo}'s remote: ${stderr.trim().slice(0, 160)}`)
 }
 
 function readOrder(text: string | null): string[] {

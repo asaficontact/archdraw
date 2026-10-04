@@ -21,6 +21,7 @@ const SAFE = [
   "-c", "core.pager=cat",
   "-c", "color.ui=false",
   "-c", "protocol.file.allow=user",
+  "-c", "protocol.ext.allow=never", // no ext:: transports, whatever the user's global config says (review of #2 F6)
 ]
 
 export type GitResult = { stdout: string; stderr: string; code: number }

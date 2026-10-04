@@ -43,7 +43,10 @@ afterEach(() => {
 
 describe("parseRepo", () => {
   it("reads owner/name, URLs and local paths", () => {
-    expect(parseRepo("asaficontact/ohara")).toEqual({ repo: "asaficontact/ohara", url: "https://github.com/asaficontact/ohara.git" })
+    expect(parseRepo("asaficontact/ohara")).toEqual({ repo: "asaficontact/ohara", url: "https://github.com/asaficontact/ohara.git", ssh: "git@github.com:asaficontact/ohara.git" })
+    expect(parseRepo("git@github.com:a/b.git").url).toBe("git@github.com:a/b.git") // an SSH address is tried as SSH first
+    expect(() => parseRepo("file://--upload-pack=touch /tmp/x")).toThrow(AppError) // never an option to git
+    expect(() => parseRepo("-c/x")).toThrow(AppError)
     expect(parseRepo("https://github.com/a/b.git").repo).toBe("a/b")
     expect(parseRepo("git@github.com:a/b").repo).toBe("a/b")
     expect(parseRepo("/tmp/x/origin.git").url).toBe("/tmp/x/origin.git")
@@ -152,6 +155,62 @@ describe("a GitHub project", () => {
     await l.disconnect("demo")
     expect(existsSync(l.clonePath("demo"))).toBe(false)
     expect(sh(origin, "show", "main:.archdraw/system.archdraw")).toBe(SYSTEM)
+  })
+})
+
+describe("publishing safely (review of #2)", () => {
+  it("refuses an explicit slug that is taken, and the sample's slug", async () => {
+    const l = lib()
+    await l.addRepo(origin, { slug: "demo" })
+    const other = join(root, "other.git")
+    sh(root, "clone", "-q", "--bare", origin, other)
+    await expect(l.addRepo(other, { slug: "demo" })).rejects.toMatchObject({ status: 409 })
+    expect((await l.addRepo(other, { slug: "bean-there" })).slug).not.toBe("bean-there")
+  })
+
+  it("approves and discards only the head the user saw", async () => {
+    const l = lib()
+    await l.addRepo(origin, { slug: "demo" })
+    await l.refresh("demo")
+    l.store.update(c => {
+      c.settings.publish = "direct"
+    })
+    await l.save("demo", "one", '// title: One\n\nnode x "X"\n', null)
+    const seen = (await l.pending("demo"))!.head
+    await l.save("demo", "two", '// title: Two\n\nnode y "Y"\n', null) // lands after the user looked
+    await expect(l.approve("demo", seen)).rejects.toMatchObject({ status: 409 })
+    await expect(l.discard("demo", seen)).rejects.toMatchObject({ status: 409 })
+    const now = (await l.pending("demo"))!.head
+    await l.approve("demo", now)
+    expect(sh(origin, "ls-tree", "--name-only", "main:.archdraw").split("\n")).toEqual(expect.arrayContaining(["one.archdraw", "two.archdraw"]))
+  })
+
+  it("approving after main moved merges main into the update first", async () => {
+    const l = lib()
+    await l.addRepo(origin, { slug: "demo" })
+    await l.refresh("demo")
+    l.store.update(c => {
+      c.settings.publish = "direct"
+    })
+    await l.save("demo", "one", '// title: One\n\nnode x "X"\n', null)
+    // someone pushes code to main meanwhile
+    const other = join(root, "dev")
+    sh(root, "clone", "-q", origin, other)
+    writeFileSync(join(other, "code.ts"), "export const x = 1\n")
+    sh(other, "add", "-A")
+    sh(other, "commit", "-q", "-m", "code")
+    sh(other, "push", "-q", "origin", "main")
+    await l.approve("demo")
+    expect(sh(origin, "show", "main:code.ts")).toContain("x = 1")
+    expect(sh(origin, "ls-tree", "--name-only", "main:.archdraw")).toContain("one.archdraw")
+  })
+
+  it("a push without permission says so, not that another device was first", async () => {
+    const l = lib()
+    await l.addRepo(origin, { slug: "demo" })
+    await l.refresh("demo")
+    writeFileSync(join(origin, "hooks", "pre-receive"), "#!/bin/sh\necho 'remote: Permission to demo denied' >&2\nexit 1\n", { mode: 0o755 })
+    await expect(l.save("demo", "one", '// title: One\n\nnode x "X"\n', null)).rejects.toMatchObject({ status: 403 })
   })
 })
 

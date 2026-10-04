@@ -33,7 +33,9 @@ function copyDiagrams(from: string, to: string) {
 export async function installSample(lib: Library): Promise<Project> {
   const src = join(assetsDir(), "sample", SAMPLE)
   if (!existsSync(src)) throw new Error("this build has no sample project")
-  if (lib.store.project(SAMPLE)) await lib.disconnect(SAMPLE)
+  const existing = lib.store.project(SAMPLE)
+  if (existing && !existing.sample) throw new Error(`a project called ${SAMPLE} is not the sample; rename it to replay the tour`) // review of #2 F8
+  if (existing) await lib.disconnect(SAMPLE)
   const dir = join(lib.store.home, "sample")
   rmSync(dir, { recursive: true, force: true })
   const seed = join(dir, "seed")
@@ -52,7 +54,7 @@ export async function installSample(lib: Library): Promise<Project> {
   sh(seed, "commit", "-q", "-m", `archdraw: delivery orders now come from a delivery partner\n\nSample: drafted for the tour, not by a real check.\n\nArchdraw-Base: ${base}\nAgent: archdraw`)
   sh(seed, "checkout", "-q", "main")
   sh(dir, "clone", "-q", "--bare", seed, join(dir, "origin.git"))
-  const p = await lib.addRepo(join(dir, "origin.git"), { slug: SAMPLE, title: "Bean There" })
+  const p = await lib.addRepo(join(dir, "origin.git"), { slug: SAMPLE, title: "Bean There", reserved: true })
   lib.store.update(c => {
     const x = c.projects.find(q => q.slug === p.slug)!
     x.sample = true

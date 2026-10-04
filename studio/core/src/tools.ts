@@ -15,7 +15,25 @@ import { check } from "./engine.js"
 import { graph, outline } from "./graph.js"
 
 const CAP = 32_000
-const SECRET = [/(^|\/)\.git(\/|$)/, /(^|\/)\.env(\..*)?$/, /\.(pem|key|p12|pfx|keystore|jks)$/i, /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/, /(^|\/)(secrets?|credentials?)(\.[a-z]+)?$/i, /(^|\/)\.npmrc$/, /(^|\/)\.netrc$/, /(^|\/)node_modules(\/|$)/]
+// Never read, matched case-insensitively (macOS volumes are case-insensitive: `.ENV` is `.env`, review of #2 F5)
+const SECRET = [
+  /(^|\/)\.git(\/|$)/,
+  /(^|\/)\.env(\..*)?$/,
+  /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/,
+  /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
+  /(^|\/)(secrets?|credentials?)(\.[a-z]+)?$/,
+  /(^|\/)\.(npmrc|netrc|pypirc|git-credentials)$/,
+  /(^|\/)\.(ssh|aws|gnupg|kube|docker)(\/|$)/,
+  /(^|\/)\.config(\/|$)/,
+  /(^|\/)node_modules(\/|$)/,
+]
+/** The same refusals as git pathspecs, so git_diff/git_log/grep never print a secret's contents (review of #2 F1). */
+const SECRET_PATHSPECS = [
+  "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
+  "**/id_rsa*", "**/id_ed25519*", "**/id_ecdsa*", "**/id_dsa*", "**/secret", "**/secrets", "**/secret.*", "**/secrets.*",
+  "**/credential*", "**/.npmrc", "**/.netrc", "**/.pypirc", "**/.git-credentials", "**/.ssh/**", "**/.aws/**", "**/.gnupg/**",
+  "**/.kube/**", "**/.docker/**", "**/.config/**", "**/node_modules/**",
+].map(g => `:(exclude,glob,icase)${g}`)
 
 export type Proposal = { name: string; source: string; doc: string | null; error: string | null }
 
@@ -48,7 +66,12 @@ export class Jail {
     return real
   }
   refused(rel: string): boolean {
-    return SECRET.some(r => r.test(rel)) || this.ignore.some(g => globMatch(g, rel))
+    const low = rel.toLowerCase()
+    return SECRET.some(r => r.test(low)) || this.ignore.some(g => globMatch(g.toLowerCase(), low))
+  }
+  /** Pathspecs that exclude every refused path (secrets and the project's ignore list). */
+  excludes(): string[] {
+    return [...SECRET_PATHSPECS, ...this.ignore.filter(g => typeof g === "string" && g.trim()).map(g => `:(exclude,glob,icase)${g.includes("/") ? g : "**/" + g}`)]
   }
 }
 
@@ -103,37 +126,18 @@ export function makeTools(ctx: ToolContext): AgentTool[] {
   const grep = defineTool({
     name: "grep",
     label: "Search",
-    description: "Search the project's text files for a regular expression; returns path:line: text. Optionally limit to a folder.",
+    description: "Search the project's text files for an extended regular expression (case-insensitive); returns path:line: text. Optionally limit to a folder.",
     parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }),
     execute: async (_id, p) => {
-      let re: RegExp
-      try {
-        re = new RegExp(p.pattern, "i")
-      } catch {
-        throw new Error(`not a regular expression: ${p.pattern}`)
-      }
-      const out: string[] = []
-      const start = jail.path(p.path || ".")
-      const walk = (dir: string) => {
-        for (const n of readdirSync(dir)) {
-          if (out.length >= 200) return
-          const f = join(dir, n)
-          const rel = relative(jail.root, f)
-          if (jail.refused(rel)) continue
-          const st = lstatSync(f)
-          if (st.isSymbolicLink()) continue
-          if (st.isDirectory()) walk(f)
-          else if (st.size < 1_000_000) {
-            const body = readFileSync(f, "utf8")
-            if (body.includes("\u0000")) continue
-            body.split("\n").forEach((l, i) => {
-              if (out.length < 200 && re.test(l)) out.push(`${rel}:${i + 1}: ${l.trim().slice(0, 200)}`)
-            })
-          }
-        }
-      }
-      if (statSync(start).isDirectory()) walk(start)
-      return text(out.join("\n") || "no matches")
+      if (!p.pattern.trim() || p.pattern.length > 300) throw new Error("give a pattern of 1 to 300 characters")
+      const start = relative(jail.root, jail.path(p.path || ".")) || "."
+      // git grep in a child process with a deadline: a huge tree or a pathological pattern cannot stall the app
+      // (review of #2 F13); --no-index searches a plain folder too, and --exclude-standard honours .gitignore
+      const r = await git(jail.root, ["grep", "--no-index", "--exclude-standard", "-I", "-n", "-i", "-E", "--max-count=20", "-e", p.pattern, "--", start, ...jail.excludes()], { ok: [1, 128], timeoutMs: 10_000 })
+      if (r.code === 128) throw new Error(`the search failed: ${r.stderr.trim().slice(0, 200) || "not a valid pattern"}`)
+      const lines = r.stdout.split("\n").filter(Boolean)
+      const out = lines.slice(0, 200).map(l => (l.length > 260 ? l.slice(0, 260) + "…" : l))
+      return text(out.join("\n") + (lines.length > 200 ? `\n… ${lines.length - 200} more matches` : "") || "no matches")
     },
   })
 
@@ -147,7 +151,7 @@ export function makeTools(ctx: ToolContext): AgentTool[] {
       const range = p.range && /^[0-9a-f]{4,40}\.\.[0-9a-f]{4,40}$|^[0-9a-f]{4,40}\.\.HEAD$/.test(p.range) ? p.range.replace("HEAD", ctx.rev) : null
       const count = p.range && /^\d+$/.test(p.range) ? Math.min(Number(p.range), 100) : 20
       const args = ["log", "--no-color", "--first-parent", "--stat=120", "--format=%n%h %ad %an%n  %s", "--date=short", ...(range ? [range] : [`-${count}`, ctx.rev])]
-      if (p.path) args.push("--", relative(jail.root, jail.path(p.path)))
+      args.push("--", p.path ? relative(jail.root, jail.path(p.path)) || "." : ".", ...jail.excludes())
       return text((await git(jail.root, args)).stdout)
     },
   })
@@ -161,7 +165,7 @@ export function makeTools(ctx: ToolContext): AgentTool[] {
       if (!ctx.rev) throw new Error("this project is a folder, not a git repo")
       if (!/^[0-9a-f]{4,40}\.\.([0-9a-f]{4,40}|HEAD)$/.test(p.range)) throw new Error("range must be <commit>..<commit>")
       const args = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--stat", "--patch", p.range.replace("HEAD", ctx.rev)]
-      if (p.path) args.push("--", relative(jail.root, jail.path(p.path)))
+      args.push("--", p.path ? relative(jail.root, jail.path(p.path)) || "." : ".", ...jail.excludes())
       return text((await git(jail.root, args)).stdout)
     },
   })
