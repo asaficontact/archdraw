@@ -281,6 +281,21 @@ describe("a folder project", () => {
     await l.archive("had", "zeta", true)
     expect((await l.files("had")).map(f => f.name).at(-1)).toBe("zeta")
 
+    const partial = join(root, "partial")
+    mkdirSync(join(partial, ".archdraw"), { recursive: true })
+    for (const n of ["api", "system", "web"]) writeFileSync(join(partial, ".archdraw", `${n}.archdraw`), `// title: ${n}\n\nnode x "X"\n`)
+    writeFileSync(join(partial, ".archdraw", "order.json"), '["system"]')
+    l.addFolder(partial, { slug: "partial" })
+    await l.save("partial", "zeta", '// title: Z\n\nnode z "Z"\n', null)
+    expect((await l.files("partial")).map(f => f.name)).toEqual(["system", "api", "web", "zeta"])
+
+    const imp = join(root, "imp")
+    mkdirSync(join(imp, ".archdraw"), { recursive: true })
+    for (const n of ["api", "web"]) writeFileSync(join(imp, ".archdraw", `${n}.archdraw`), `// title: ${n}\n\nnode x "X"\n`)
+    l.addFolder(imp, { slug: "imp" })
+    await l.importFiles("imp", { "b.archdraw": '// title: B\n\nnode b "B"\n', "c.archdraw": '// title: C\n\nnode c "C"\n' }, "import")
+    expect((await l.files("imp")).map(f => f.name)).toEqual(["api", "web", "b", "c"])
+
     const broken = join(root, "broken")
     mkdirSync(join(broken, ".archdraw"), { recursive: true })
     writeFileSync(join(broken, ".archdraw", "order.json"), "{mine")

@@ -408,7 +408,7 @@ export class Library {
       const there = Object.keys(files).filter(name => existsSync(join(dir, name)))
       if (there.length && !opts.replace) throw new AppError(409, `${there.join(", ")} already exist${there.length > 1 ? "" : "s"}; import with replace to overwrite`)
       for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text.endsWith("\n") ? text : text + "\n")
-      if (!("order.json" in files)) for (const name of Object.keys(files)) if (name.endsWith(EXT)) addToOrder(dir, name.slice(0, -EXT.length))
+      if (!("order.json" in files)) addToOrder(dir, Object.keys(files).filter(n => n.endsWith(EXT)).map(n => n.slice(0, -EXT.length)))
     })
   }
 
@@ -705,17 +705,21 @@ function orderIn(dir: string): string[] | null {
 
 const writeOrder = (dir: string, order: string[]) => atomicWrite(join(dir, "order.json"), JSON.stringify(order, null, 1) + "\n")
 
-/** A new diagram joins the reading order at the end, so nobody edits order.json by hand. With no order yet, the order
- *  starts from the diagrams already there, as they are shown (`system` first), so the new one still lands last. */
-function addToOrder(dir: string, name: string) {
+/** New diagrams join the reading order at the end, so nobody edits order.json by hand. Diagrams already there but not
+ *  in the order (or no order yet) are written in first, as they are shown (`system` first), so the new ones still land
+ *  last. */
+function addToOrder(dir: string, names: string | string[]) {
   const order = orderIn(dir)
-  if (order === null || order.includes(name)) return
-  if (!order.length) {
-    const present = readdirSync(dir).filter(f => f.endsWith(EXT)).map(f => f.slice(0, -EXT.length)).filter(n => n !== name)
-    order.push(...present.sort((a, b) => rank([], a) - rank([], b) || a.localeCompare(b)))
-  }
-  order.push(name)
-  writeOrder(dir, order)
+  if (order === null) return
+  const adding = (Array.isArray(names) ? names : [names]).filter(n => !order.includes(n))
+  if (!adding.length) return
+  const shown = [...order]
+  const unlisted = readdirSync(dir)
+    .filter(f => f.endsWith(EXT))
+    .map(f => f.slice(0, -EXT.length))
+    .filter(n => !order.includes(n) && !adding.includes(n))
+    .sort((a, b) => rank(shown, a) - rank(shown, b) || a.localeCompare(b))
+  writeOrder(dir, [...order, ...unlisted, ...adding])
 }
 
 function dropFromOrder(dir: string, name: string) {
