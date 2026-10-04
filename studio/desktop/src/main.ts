@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, shell, Tray } from "electron"
 import { start } from "../../server/src/main.js"
 import { SafeKeys } from "./keys.js"
 
@@ -51,17 +51,28 @@ function createWindow() {
     webPreferences: { preload: join(import.meta.dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   })
   win.once("ready-to-show", () => win?.show())
-  // the window shows only the app: links elsewhere open in the browser, navigation away is refused
+  // the window shows only the app: links elsewhere open in the browser, navigation away is refused. Origins are
+  // compared, never string prefixes (`http://127.0.0.1:5000@evil.com` starts with the app's URL; review of #2 F12)
+  const own = new URL(server!.url).origin
+  const ours = (url: string) => {
+    try {
+      return new URL(url).origin === own
+    } catch {
+      return false
+    }
+  }
+  const outside = (url: string) => /^https?:\/\//i.test(url) && !ours(url)
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url) && !url.startsWith(server!.url)) void shell.openExternal(url)
+    if (outside(url)) void shell.openExternal(url)
     return { action: "deny" }
   })
-  win.webContents.on("will-navigate", (e, url) => {
-    if (!url.startsWith(server!.url)) {
-      e.preventDefault()
-      if (/^https?:\/\//.test(url)) void shell.openExternal(url)
-    }
-  })
+  const guard = (e: Electron.Event, url: string) => {
+    if (ours(url)) return
+    e.preventDefault()
+    if (outside(url)) void shell.openExternal(url)
+  }
+  win.webContents.on("will-navigate", guard)
+  win.webContents.on("will-redirect", guard)
   // closing the window keeps archdraw in the tray (Linux) or the dock (macOS), so the hourly check goes on
   win.on("close", e => {
     if (!quitting && (tray || process.platform === "darwin")) {
@@ -116,6 +127,9 @@ ipcMain.handle("archdraw:pick-folder", async () => {
 })
 
 app.whenReady().then(async () => {
+  // the app needs no camera, microphone, location or notifications from the page
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, done) => done(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
   const keys = new SafeKeys(join(app.getPath("userData"), "keys.json"))
   server = await start({
     home: app.getPath("userData"),

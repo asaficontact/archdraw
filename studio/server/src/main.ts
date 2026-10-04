@@ -21,7 +21,7 @@ export type StartOptions = {
   home?: string
   host?: string
   port?: number // 0 = any free port
-  gate?: Gate
+  gate: Gate // no default: a caller always says who may connect (review of #2 F7)
   keys?: KeyStore
   models?: ModelSet // tests and the onboarding demo inject a scripted model set
   ui?: string | null
@@ -36,7 +36,7 @@ function defaultUi(): string | null {
   return null
 }
 
-export async function start(o: StartOptions = {}): Promise<{ port: number; url: string; close: () => Promise<void> }> {
+export async function start(o: StartOptions): Promise<{ port: number; url: string; close: () => Promise<void> }> {
   const log = o.log ?? ((s: string) => console.log(`${new Date().toISOString()} ${s}`))
   const store = new Store(o.home ?? appHome())
   const keys = o.keys ?? new EnvKeys(process.env.ARCHDRAW_SECRETS ?? join(homedir(), "work", "secrets", "providers.env"))
@@ -46,7 +46,7 @@ export async function start(o: StartOptions = {}): Promise<{ port: number; url: 
   const talks = new Conversations({ store, lib, keys, models: m, spend })
   const syncer = new Syncer({ store, lib, keys, models: m, spend, log })
   let port = o.port ?? 8088
-  const app = createApp({ store, lib, talks, syncer, keys, spend, gate: o.gate ?? { mode: "local" }, ui: o.ui === null ? undefined : (o.ui ?? defaultUi() ?? undefined), serverPort: () => port, log })
+  const app = createApp({ store, lib, talks, syncer, keys, spend, gate: o.gate, ui: o.ui === null ? undefined : (o.ui ?? defaultUi() ?? undefined), serverPort: () => port, log })
   const server = await new Promise<ReturnType<typeof serve>>(res => {
     const s = serve({ fetch: app.fetch, hostname: o.host ?? "127.0.0.1", port }, info => {
       port = info.port
@@ -56,7 +56,7 @@ export async function start(o: StartOptions = {}): Promise<{ port: number; url: 
   const sweep = setInterval(() => talks.sweep(), 60_000)
   if (o.sync !== false) syncer.start()
   const url = `http://${o.host ?? "127.0.0.1"}:${port}`
-  log(`archdraw on ${url} (${o.gate?.mode ?? "local"} gate, home ${store.home})`)
+  log(`archdraw on ${url} (${o.gate.mode} gate, home ${store.home})`)
   return {
     port,
     url,

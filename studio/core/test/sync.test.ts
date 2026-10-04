@@ -103,4 +103,21 @@ describe("the sync", () => {
     const b = new Syncer({ store: storeB, lib: libB, keys: (w.syncer as any).d.keys, models: (w.syncer as any).d.models, spend: new Spend(storeB) })
     expect(await b.sync("shop")).toMatchObject({ outcome: "unchanged" })
   })
+
+  it("a draft that cannot be pushed is recorded once; the hourly check waits instead of spending again", async () => {
+    const w = world()
+    await w.lib.addRepo(w.origin, { slug: "shop" })
+    w.push("src/queue.ts", "export const queue = 1\n", "feat: queue")
+    writeFileSync(join(w.origin, "hooks", "pre-receive"), "#!/bin/sh\necho 'Permission denied' >&2\nexit 1\n", { mode: 0o755 })
+    w.faux.setResponses([
+      fauxAssistantMessage([fauxText('{"changed": true, "why": "queue", "touches": ["system"]}')]),
+      fauxAssistantMessage([fauxToolCall("propose_diagram", { name: "system", source: WITH_QUEUE })], { stopReason: "toolUse" }),
+      fauxAssistantMessage([fauxText("done")]),
+    ])
+    const r = await w.syncer.sync("shop")
+    expect(r).toMatchObject({ outcome: "failed" })
+    expect((r as { reason: string }).reason).toMatch(/cannot push/)
+    w.faux.setResponses([]) // a second automatic tick must not call the model at all
+    expect(await w.syncer.sync("shop")).toMatchObject({ outcome: "skipped", reason: expect.stringMatching(/^waiting:/) })
+  })
 })

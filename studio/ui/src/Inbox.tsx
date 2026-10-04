@@ -152,7 +152,7 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
           action="Approve"
           onClose={() => setConfirm(null)}
           onConfirm={async () => {
-            await api.approve(item.project)
+            await api.approve(item.project, p.head)
             setConfirm(null)
             onDone()
           }}
@@ -166,7 +166,7 @@ function Item({ item, dark, open, onToggle, onAsk, onOpen, onDone }: { item: Inb
           danger
           onClose={() => setConfirm(null)}
           onConfirm={async () => {
-            await api.discard(item.project)
+            await api.discard(item.project, p.head)
             setConfirm(null)
             onDone()
           }}

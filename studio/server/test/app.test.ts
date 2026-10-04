@@ -107,6 +107,13 @@ describe("the API", () => {
     const s = await (await w.call("/api/settings", { method: "PUT", json: { syncEveryMinutes: 30, projectDayBudgetUsd: 2 } })).json()
     expect(s.settings).toMatchObject({ syncEveryMinutes: 30, projectDayBudgetUsd: 2 })
     expect((await w.call("/api/settings", { method: "PUT", json: { dayBudgetUsd: -1 } })).status).toBe(400)
+    // review of #2 F14: every setting is checked, globally and per project
+    expect((await w.call("/api/settings", { method: "PUT", json: { ignore: "x" } })).status).toBe(400)
+    expect((await w.call("/api/settings", { method: "PUT", json: { syncEveryMinutes: -1 } })).status).toBe(400)
+    expect((await w.call("/api/settings", { method: "PUT", json: { theme: "neon" } })).status).toBe(400)
+    expect((await w.call("/api/projects/shop", { method: "PATCH", json: { settings: { dayBudgetUsd: 5 } } })).status).toBe(400)
+    expect((await w.call("/api/projects/shop", { method: "PATCH", json: { settings: { ignore: "x" } } })).status).toBe(400)
+    expect((await w.call("/api/projects/shop", { method: "PATCH", json: { settings: { syncEveryMinutes: 15 } } })).status).toBe(200)
     const got = await (await w.call("/api/settings")).json()
     expect(got.keys.openai).toBe(false)
     expect(JSON.stringify(got)).not.toContain('"k"')

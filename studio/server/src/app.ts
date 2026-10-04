@@ -24,6 +24,26 @@ export type Deps = { store: Store; lib: Library; talks: Conversations; syncer: S
 export const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
+const PROJECT_SETTABLE = ["chatModel", "triageModel", "syncEveryMinutes", "projectDayBudgetUsd", "publish", "ignore"] as const
+
+/** Every setting's type and range (review of #2 F14): a bad value is refused with the reason, never stored. */
+function validSettings(s: Partial<Settings>, currentProvider?: string): void {
+  const num = (k: keyof Settings, max: number, int = false) => {
+    if (s[k] === undefined) return
+    const v = Number(s[k])
+    if (!Number.isFinite(v) || v < 0 || v > max || (int && !Number.isInteger(v))) throw new AppError(400, `${k} must be ${int ? "a whole number" : "a number"} from 0 to ${max}`)
+  }
+  num("syncEveryMinutes", 7 * 24 * 60, true)
+  num("dayBudgetUsd", 1000)
+  num("projectDayBudgetUsd", 1000)
+  num("conversationBudgetUsd", 1000)
+  if (s.publish !== undefined && !["pull-request", "direct"].includes(s.publish)) throw new AppError(400, "publish is pull-request or direct")
+  if (s.theme !== undefined && !["system", "light", "dark"].includes(s.theme)) throw new AppError(400, "theme is system, light or dark")
+  if (s.provider !== undefined && !(s.provider in PROVIDERS) && s.provider !== currentProvider) throw new AppError(400, `provider is one of ${Object.keys(PROVIDERS).join(", ")}`)
+  for (const k of ["chatModel", "triageModel"] as const) if (s[k] !== undefined && (typeof s[k] !== "string" || s[k]!.length > 120)) throw new AppError(400, `${k} is a model name`)
+  if (s.ignore !== undefined && (!Array.isArray(s.ignore) || s.ignore.length > 200 || s.ignore.some(g => typeof g !== "string" || !g.trim() || g.length > 200))) throw new AppError(400, "ignore is a list of path patterns")
+}
+
 const SETTABLE: (keyof Settings)[] = ["provider", "chatModel", "triageModel", "syncEveryMinutes", "dayBudgetUsd", "projectDayBudgetUsd", "conversationBudgetUsd", "publish", "ignore", "theme"]
 
 export type AppEnv = { Variables: { who: string } }
@@ -85,8 +105,7 @@ export function createApp(d: Deps): Hono<AppEnv> {
       for (const k of SETTABLE) if (k in patch) (cfg.settings as Record<string, unknown>)[k] = (patch as Record<string, unknown>)[k]
       if (typeof patch.onboarded === "boolean") cfg.onboarded = patch.onboarded
       const s = cfg.settings
-      for (const k of ["syncEveryMinutes", "dayBudgetUsd", "projectDayBudgetUsd", "conversationBudgetUsd"] as const) if (!(Number(s[k]) >= 0)) throw new AppError(400, `${k} must be a number ≥ 0`)
-      if (!["pull-request", "direct"].includes(s.publish)) throw new AppError(400, "publish is pull-request or direct")
+      validSettings(s, d.store.read().settings.provider)
     })
     return c.json({ settings: next.settings, onboarded: next.onboarded ?? false })
   })
@@ -150,6 +169,17 @@ export function createApp(d: Deps): Hono<AppEnv> {
 
   app.patch("/api/projects/:p", async c => {
     const b = await body<{ title?: string; archived?: boolean; settings?: Record<string, unknown> }>(c)
+    if (b.title !== undefined && (typeof b.title !== "string" || !b.title.trim() || b.title.length > 80)) throw new AppError(400, "a title is 1 to 80 characters")
+    if (b.archived !== undefined && typeof b.archived !== "boolean") throw new AppError(400, "archived is true or false")
+    if (b.settings !== undefined) {
+      const own: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(b.settings ?? {})) {
+        if (!PROJECT_SETTABLE.includes(k as never)) throw new AppError(400, `${k} cannot be set per project`)
+        if (v !== undefined && v !== null) own[k] = v
+      }
+      validSettings(own as Partial<Settings>)
+      b.settings = own
+    }
     return c.json(d.lib.setProject(slugOf(c), b as never))
   })
 
@@ -218,13 +248,18 @@ export function createApp(d: Deps): Hono<AppEnv> {
   // -- the waiting update, the inbox, sync -------------------------------------------------------------------------
 
   app.get("/api/projects/:p/pending", async c => c.json(await d.lib.pending(slugOf(c))))
-  app.post("/api/projects/:p/approve", async c => c.json(await d.lib.approve(slugOf(c))))
+  // both act only on the head the user looked at (review of #2 F3)
+  const headOf = async (c: Context) => {
+    const b = await c.req.json().catch(() => ({}))
+    return typeof b?.head === "string" && /^[0-9a-f]{40}$/.test(b.head) ? b.head : undefined
+  }
+  app.post("/api/projects/:p/approve", async c => c.json(await d.lib.approve(slugOf(c), await headOf(c))))
   app.post("/api/projects/:p/discard", async c => {
-    await d.lib.discard(slugOf(c))
+    await d.lib.discard(slugOf(c), await headOf(c))
     return c.json({ ok: true })
   })
   app.post("/api/projects/:p/pull-request", async c => c.json(await d.lib.openPullRequest(slugOf(c))))
-  app.post("/api/projects/:p/sync", async c => c.json(await d.syncer.sync(slugOf(c))))
+  app.post("/api/projects/:p/sync", async c => c.json(await d.syncer.sync(slugOf(c), true)))
 
   /** Every project's waiting update with its headline, newest first, and when each was last checked. */
   app.get("/api/inbox", async c => {

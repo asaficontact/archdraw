@@ -103,7 +103,8 @@ export async function decide(gate: Gate, path: string, h: Headers, peer: Peer, c
     if (cookie === gate.token || query === gate.token) return { ok: true, who: "you", reason: "" }
     return { ok: false, who: "", reason: "no session" }
   }
-  if (gate.mode === "local") return localSameUid(h, peer) || peer.address === "127.0.0.1" ? { ok: true, who: "local", reason: "" } : { ok: false, who: "", reason: "not local" }
+  // local: this machine's own user on loopback, never a request that came through Tailscale Serve (review of #2 F7)
+  if (gate.mode === "local") return localSameUid(h, peer) ? { ok: true, who: "local", reason: "" } : { ok: false, who: "", reason: "not this machine's user" }
   const v = await verifiedSender(h, peer)
   if (v.ok) return { ok: true, who: v.login, reason: "" }
   if (localSameUid(h, peer) && (path === "/api/health" || gate.allowLocal)) return { ok: true, who: "archdraw (local)", reason: "" }
