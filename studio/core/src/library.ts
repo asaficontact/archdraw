@@ -367,6 +367,25 @@ export class Library {
     })
   }
 
+  /**
+   * Bring several files into the project's `.archdraw/` as one change waiting for review: diagrams (`<name>.archdraw`,
+   * each checked by the engine first), their explanations (`<name>.md`), `order.json` and `README.md`. Existing files
+   * are replaced. Used to import diagrams kept elsewhere.
+   */
+  async importFiles(slug: string, files: Record<string, string>, message: string): Promise<void> {
+    const ok = /^([a-z0-9][a-z0-9-]{0,62}\.(archdraw|md)|order\.json|README\.md)$/
+    for (const [name, text] of Object.entries(files)) {
+      if (!ok.test(name)) throw new AppError(400, `cannot import ${name}`)
+      if (name.endsWith(EXT)) {
+        const error = check(text)
+        if (error) throw new AppError(422, `${name}: ${error}`)
+      }
+    }
+    await this.mutate(slug, message, async dir => {
+      for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text.endsWith("\n") ? text : text + "\n")
+    })
+  }
+
   /** Rename a diagram, fixing the `#/<project>/<old>` links other diagrams have to it. */
   async rename(slug: string, from: string, to: string): Promise<void> {
     checkSlug(from, "diagram name")
@@ -590,11 +609,11 @@ export class Library {
   }
 
   /** Open (or update) the pull request for the waiting update, so it can be read on GitHub too. */
-  async openPullRequest(slug: string): Promise<{ number: number; url: string; state: string }> {
+  async openPullRequest(slug: string, title = "archdraw: architecture update", body = "The architecture diagrams in `.archdraw/`, updated by archdraw. Review it in archdraw's inbox, or here."): Promise<{ number: number; url: string; state: string }> {
     const p = this.get(slug)
     if (!this.forge || p.source.kind !== "github") throw new AppError(501, "no pull requests for this project")
     const dir = this.clonePath(slug)
-    return this.forge.ensurePullRequest(p, dir, "archdraw: architecture update", "The architecture diagrams in `.archdraw/`, updated by archdraw. Review it in archdraw's inbox, or here.")
+    return this.forge.ensurePullRequest(p, dir, title, body)
   }
 }
 

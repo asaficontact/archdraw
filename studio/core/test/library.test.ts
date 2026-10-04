@@ -214,6 +214,19 @@ describe("publishing safely (review of #2)", () => {
   })
 })
 
+describe("importing", () => {
+  it("brings diagrams, explanations and order in as one waiting change, and refuses a broken diagram", async () => {
+    const l = lib()
+    await l.addRepo(origin, { slug: "demo" })
+    await l.refresh("demo")
+    await expect(l.importFiles("demo", { "bad.archdraw": 'node a "A" right of nowhere\n' }, "import")).rejects.toMatchObject({ status: 422 })
+    await expect(l.importFiles("demo", { "../x.md": "x" }, "import")).rejects.toMatchObject({ status: 400 })
+    await l.importFiles("demo", { "flow.archdraw": '// title: Flow\n\nnode a "A"\n', "flow.md": "# Flow\n", "order.json": '["flow","system"]' }, "archdraw: import the diagrams")
+    expect((await l.files("demo")).map(f => f.name)).toEqual(["flow", "system", "detail"])
+    expect(sh(origin, "log", "-1", "--format=%s", "archdraw/update").trim()).toBe("archdraw: import the diagrams")
+  })
+})
+
 describe("a folder project", () => {
   it("reads and writes .archdraw/ in place", async () => {
     const dir = join(root, "local")
