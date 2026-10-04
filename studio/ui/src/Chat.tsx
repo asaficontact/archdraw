@@ -52,6 +52,8 @@ export type ChatProps = {
   onStage: (p: Proposal | null) => void
   onAccept: (p: Proposal) => Promise<void>
   focusKey: number
+  /** Text put in the box for the user to send (the tour types its request); a new `n` puts it there again. */
+  prefill?: { text: string; n: number } | null
   onHeight?: (h: number) => void // the sheet tells the canvas how much of it is covered
   onCost?: () => void // a turn was charged: the day's total is fetched again
   /** No AI key yet: the panel asks for one in place (`editable`), or says where this machine reads it from. */
@@ -84,6 +86,11 @@ export function ChatPanel(props: ChatProps) {
   useEffect(() => {
     input.current?.focus()
   }, [props.focusKey])
+  const prefillN = props.prefill?.n
+  const prefillText = props.prefill?.text
+  useEffect(() => {
+    if (prefillN && prefillText) setText(prefillText)
+  }, [prefillN, prefillText])
   const panel = useRef<HTMLElement>(null)
   const { onHeight } = props
   useEffect(() => {

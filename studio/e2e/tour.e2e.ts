@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_CORE ?? "playwright-core") as typeof import("playwright-core")
 const here = dirname(fileURLToPath(import.meta.url))
 const videoDir = process.argv.includes("--video") ? process.argv[process.argv.indexOf("--video") + 1] : null
+const shotDir = process.argv.includes("--shot") ? process.argv[process.argv.indexOf("--shot") + 1] : null
 const steps: string[] = []
 async function step(name: string, fn: () => Promise<void>) {
   try {
@@ -39,7 +40,10 @@ try {
   page.on("dialog", d => void d.accept())
   const errors: string[] = []
   page.on("pageerror", e => errors.push(String(e)))
-  const at = async (n: number) => page.waitForSelector(`[data-testid=tour-card][data-step="${n}"]`, { timeout: 15_000 })
+  const at = async (n: number) => {
+    await page.waitForSelector(`[data-testid=tour-card][data-step="${n}"]`, { timeout: 15_000 })
+    if (shotDir) await page.waitForTimeout(700).then(() => page.screenshot({ path: join(shotDir, `step-${n}.png`) }))
+  }
   await step("1 · the start screen: open your code, or just try the sample", async () => {
     await page.goto(s1.url)
     await page.waitForSelector("[data-testid=start-input]")
@@ -48,55 +52,67 @@ try {
     await at(2)
     await page.waitForSelector("[data-card=overview] svg")
   })
-  await step("2 · fly into a card, then drill down through a link", async () => {
+  await step("2 · fly into the ringed card, then drill down through its Payments link", async () => {
     await page.waitForTimeout(900)
+    if (!(await page.textContent("[data-testid=tour-card]"))?.includes("ringed card")) throw new Error("step 2 should point at the ringed card, not a name the card does not show")
     await page.dblclick("[data-card=overview] header")
     await page.waitForTimeout(900)
     await page.click('[data-card=overview] a[href="#/bean-there/payments"]')
     await at(3)
   })
-  await step("3 · the diagram is just text: an edit redraws it", async () => {
-    await page.waitForTimeout(600)
-    await page.click("[data-testid=toggle-source]")
-    await page.click("[data-testid=source]")
-    await page.keyboard.press("Control+End")
-    await page.keyboard.type("\n// my first edit\n", { delay: 30 })
+  // the ring sits on the control the step asks for, and that control is on screen: nobody hunts for it (Tawab, 10-04)
+  const ringOn = async (selector: string) => {
+    await page.waitForFunction(
+      sel => {
+        const ring = document.querySelector("[data-testid=tour-ring]") as HTMLElement | null
+        const el = document.querySelector(sel)
+        if (!ring || !el || ring.style.display === "none") return false
+        const a = ring.getBoundingClientRect()
+        const b = el.getBoundingClientRect()
+        return b.width > 0 && Math.abs(a.left + 6 - b.left) < 3 && Math.abs(a.top + 6 - b.top) < 3
+      },
+      selector,
+      { timeout: 10_000 },
+    )
+  }
+  await step("3 · the step opens Payments' text itself; an edit redraws the card; Save completes it", async () => {
+    await page.waitForSelector("[data-testid=editor] [data-testid=source]")
+    await ringOn("[data-testid=source]")
+    if (!(await page.textContent("[data-testid=tour-card]"))?.includes("Receipts")) throw new Error("step 3 should name a word that is in the text")
+    const ta = page.locator("[data-testid=source]")
+    const before = await ta.inputValue()
+    await ta.fill(before.replace('"Receipts"', '"Email receipts"'))
+    await page.waitForFunction(() => document.querySelector("[data-card=payments]")?.textContent?.includes("Email receipts"))
+    await ringOn("[data-testid=save]")
+    await page.click("[data-testid=save]")
     await at(4)
-    await page.click("[data-testid=toggle-source]")
   })
-  await step("4 · ask for a change; the scripted, labelled proposal is accepted", async () => {
-    await page.waitForTimeout(500)
-    await page.click("[data-testid=file-overview]")
-    await page.click("[data-testid=open-chat]")
-    await page.fill("[data-testid=chat-input]", "Add a loyalty program")
-    await page.waitForTimeout(400)
+  await step("4 · the step opens the chat with the request typed; Send, then Accept the scripted, labelled proposal", async () => {
+    await page.waitForFunction(() => (document.querySelector("[data-testid=chat-input]") as HTMLTextAreaElement | null)?.value === "Add a loyalty program")
+    if (await page.locator("[data-testid=editor]").count()) throw new Error("the source panel should close for the chat")
+    await ringOn("[data-testid=chat-send]")
     await page.click("[data-testid=chat-send]")
     await page.waitForSelector("[data-testid=proposal] [data-testid=accept]:not([disabled])", { timeout: 20_000 })
     if (!(await page.textContent("[data-testid=chat-log]"))?.includes("no AI used")) throw new Error("the demo reply is not labelled")
-    await page.waitForTimeout(1200)
-    await page.click("[data-testid=stage]")
-    await page.waitForSelector("[data-card$='~proposed']")
-    await page.waitForTimeout(1500)
-    await page.click("[data-testid=ghost-accept]")
+    await ringOn("[data-testid=proposal] [data-testid=accept]")
+    await page.click("[data-testid=proposal] [data-testid=accept]")
     await at(5)
   })
-  await step("5 · the inbox: the colored diff, approved", async () => {
-    await page.click("[data-testid=nav-inbox]")
+  await step("5 · the step opens the Inbox on the update; a click shows the colored diff; Approve", async () => {
+    await page.waitForSelector("[data-testid=inbox-approve]", { timeout: 15_000 })
+    await ringOn("[data-testid=inbox-approve]")
+    await page.click("[data-testid=diff-toggle-overview]")
     await page.waitForSelector("[data-testid=diff-overview] .ad-dm-added", { timeout: 15_000 })
-    await page.waitForTimeout(1800)
     await page.click("[data-testid=inbox-approve]")
     await page.click("[data-testid=confirm-submit]")
     await at(6)
   })
-  await step("6 · export for a coding agent, then the finish card", async () => {
-    await page.click("[data-testid=project-bean-there]")
-    await page.waitForSelector("[data-testid=open-export]")
+  await step("6 · the step returns to the canvas with Export ringed; export, then the finish card", async () => {
+    await ringOn("[data-testid=open-export]")
     await page.click("[data-testid=open-export]")
     await page.waitForSelector("[data-testid=export-files]:has-text('ARCHITECTURE.md')")
-    await page.waitForTimeout(1200)
     await page.keyboard.press("Escape")
     await page.waitForSelector("[data-testid=tour-finish]", { timeout: 10_000 })
-    await page.waitForTimeout(800)
     await page.click("[data-testid=tour-keep]")
     await page.waitForSelector("[data-testid=tour-finish]", { state: "detached" })
     const o = await page.evaluate(async () => (await (await fetch("api/settings")).json()).onboarding)

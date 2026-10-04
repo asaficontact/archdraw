@@ -88,6 +88,7 @@ export default function App() {
   const [palette, setPalette] = useState(false)
   const [targets, setTargets] = useState<Target[]>([])
   const [chat, setChat] = useState(false)
+  const [prefill, setPrefill] = useState<{ text: string; n: number } | null>(null) // the tour types the request for you
   const [talk, setTalk] = useState<string | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
   const [staged, setStaged] = useState<{ p: Proposal } | null>(null)
@@ -148,6 +149,44 @@ export default function App() {
       setNotice(e instanceof ApiError ? e.message : String(e))
     }
   }, [saveTour, loadProjects])
+  // each step opens the place where its action happens, so nobody hunts for a button (Tawab, 10-04: "the next steps
+  // open up in the places where the action needs to be taken")
+  const entered = useRef(0)
+  useEffect(() => {
+    if (tour.status !== "active") {
+      entered.current = 0
+      return
+    }
+    if (entered.current === tour.step) return
+    entered.current = tour.step
+    const sample = projects?.find(p => p.sample)?.slug ?? "bean-there"
+    const desktop = window.innerWidth >= 640
+    if (tour.step === 2) {
+      setEditing(false)
+      setChat(false)
+      location.hash = hashFor(sample)
+      setTimeout(() => setFitAll(n => n + 1), 50) // every card in view, none under the toolbar
+    } else if (tour.step === 3) {
+      setChat(false)
+      location.hash = hashFor(sample, "payments")
+      if (desktop) setEditing(true)
+    } else if (tour.step === 4) {
+      setEditing(false)
+      location.hash = hashFor(sample, "overview")
+      setChat(true)
+      setPrefill(n => ({ text: "Add a loyalty program", n: (n?.n ?? 0) + 1 }))
+      setChatFocus(n => n + 1)
+    } else if (tour.step === 5) {
+      setEditing(false)
+      setChat(false)
+      location.hash = inboxHash(sample)
+    } else if (tour.step === 6) {
+      setChat(false)
+      location.hash = hashFor(sample)
+      setTimeout(() => setFitAll(n => n + 1), 50)
+    }
+  }, [tour.status, tour.step, projects])
+
   useEffect(() => {
     const on = () => void startTour()
     window.addEventListener("archdraw:tour", on)
@@ -288,6 +327,7 @@ export default function App() {
         return rest
       })
       setNotice(current?.source.kind === "github" ? "Saved · waiting for review in the Inbox" : "Saved")
+      if (current?.sample) tourEvent("source.saved")
       api.files(project).then(setFiles)
       loadProjects()
     } catch (e) {
@@ -628,7 +668,7 @@ export default function App() {
               </div>
             </header>
 
-            {current?.pending && (
+            {current?.pending && tour.status !== "active" && (
               <a href={inboxHash(current.slug)} className="ad-banner" style={{ right: panelW + 16 }} data-testid="waiting-banner">
                 <span className="ad-dot" data-busy />
                 Changes waiting for review
@@ -722,6 +762,7 @@ export default function App() {
                 onStage={stage}
                 onAccept={accept}
                 focusKey={chatFocus}
+                prefill={prefill}
                 onCost={refreshStatus}
                 needsKey={keysView && !current?.sample && !keysView.keys[keysView.provider] ? { editable: keysView.editable, provider: keysView.provider } : null}
                 onKey={async key => {
@@ -754,6 +795,7 @@ export default function App() {
         )}
         <Tour
           state={tour}
+          where={{ file: route.file }}
           onAdvance={step => saveTour({ ...tour, status: "active", step })}
           onSkip={() => saveTour({ ...tour, status: "skipped", step: 0 })}
           onFinish={openRepo => {

@@ -1,41 +1,63 @@
 import { useEffect, useRef, useState } from "react"
 
 // The tour (projects/archdraw/archdraw-onboarding.md): five doing-steps on the sample "Bean There", after the one setup
-// screen. A step is done when the user does the real thing (the app emits an event), never by a Next button. The card
-// sits bottom-left (a bottom sheet on a phone) and a ring follows the step's target through pan and zoom.
+// screen. A step is done when the user does the real thing (the app emits an event), never by a Next button. Each step
+// opens the place where its action happens (App's tour effect): the diagram, its text, the chat with the request
+// typed, the Inbox. The card sits bottom-left (a bottom sheet on a phone) and a ring follows the control to use next.
 
-export type TourEvent = "drilled" | "source.changed" | "proposal.accepted" | "proposal.dismissed" | "update.done" | "export.opened"
+export type TourEvent = "drilled" | "source.changed" | "source.saved" | "proposal.accepted" | "proposal.dismissed" | "update.done" | "export.opened"
 
 /** Tell the tour something happened. */
 export const tourEvent = (name: TourEvent) => window.dispatchEvent(new CustomEvent("archdraw:ev", { detail: name }))
 
-type Step = { n: number; title: string; body: string; target: string; done: TourEvent[]; phoneBody?: string }
+/** Where the user is, so a step can point at the right control (the canvas, or one diagram flown into). */
+export type TourWhere = { file?: string }
+
+type Step = { n: number; title: string; body: string; target: (w: TourWhere) => string[]; done: TourEvent[]; phoneBody?: string }
 
 export const STEPS: Step[] = [
-  { n: 2, title: "Every diagram is a card.", body: "Double-click Overview to fly in. Then click Payments, a box with a link, to go a level deeper.", target: "[data-card=overview]", done: ["drilled"] },
+  {
+    n: 2,
+    title: "Every diagram is a card.",
+    body: "The ringed card is the whole system. Double-click it to fly in, then click its Payments box: a box with a link opens the diagram one level deeper.",
+    target: w => (w.file === "overview" ? ['[data-card=overview] a[href$="/payments"]'] : ["[data-card=overview]"]),
+    done: ["drilled"],
+  },
   {
     n: 3,
     title: "The diagram is just text.",
-    body: "Press Source and change a word, like “right of” to “below”. It redraws as you type; ⌘S saves it to .archdraw/ in the repo.",
-    phoneBody: "On a computer, Source shows the text behind every diagram: change a word and it redraws.",
-    target: "[data-testid=toggle-source]",
-    done: ["source.changed"],
+    body: "On the right is the text behind Payments, kept as .archdraw/payments.archdraw in the repo. Change a word, say “Receipts” to “Email receipts”: the card redraws as you type. Then press Save.",
+    phoneBody: "On a computer, each diagram opens as text beside it: change a word and the card redraws.",
+    target: () => ["[data-testid=save]:not([disabled])", "[data-testid=source]"],
+    done: ["source.saved"],
   },
-  { n: 4, title: "Ask for a change.", body: "Press ✦ Ask (or ⌘K) and type “Add a loyalty program”. The proposal appears beside the original; nothing changes until you Accept.", target: "[data-tour=ask]", done: ["proposal.accepted", "proposal.dismissed"] },
-  { n: 5, title: "Your code moved. Here's the update.", body: "Every hour archdraw checks main and drafts one update. Open the Inbox: green added, red removed, amber changed. Approve it or discard it.", target: "[data-tour=inbox]", done: ["update.done"] },
+  {
+    n: 4,
+    title: "Ask for a change.",
+    body: "This is archdraw's agent. We typed a request for you: press Send. Its proposal appears beside the original, and nothing changes until you press Accept.",
+    target: () => ["[data-testid=ghost-accept]", "[data-testid=proposal] [data-testid=accept]:not([disabled])", "[data-testid=chat-send]:not([disabled])", "[data-testid=chat-input]"],
+    done: ["proposal.accepted", "proposal.dismissed"],
+  },
+  {
+    n: 5,
+    title: "Review the update.",
+    body: "Every change waits here, and every hour archdraw drafts one more when your code moves. Click a diagram to see it in color (green added, amber changed, red removed), then press Approve.",
+    target: () => ["[data-testid=inbox-approve]"],
+    done: ["update.done"],
+  },
   {
     n: 6,
     title: "Hand it to your coding agent.",
-    body: "Press Export: ARCHITECTURE.md plus every diagram as text, for Claude Code, Cursor or Codex. The “…” on a diagram renames, archives or deletes it.",
+    body: "Press Export: ARCHITECTURE.md plus every diagram as text, ready for Claude Code, Cursor or Codex.",
     phoneBody: "On a computer, Export hands ARCHITECTURE.md and every diagram to your coding agent.",
-    target: "[data-testid=open-export]",
+    target: () => ["[data-testid=open-export]"],
     done: ["export.opened"],
   },
 ]
 
 export type TourState = { status: "new" | "active" | "done" | "skipped"; step: number; chipDismissed?: boolean }
 
-export function Tour({ state, onAdvance, onSkip, onFinish }: { state: TourState; onAdvance: (step: number) => void; onSkip: () => void; onFinish: (openRepo: boolean) => void }) {
+export function Tour({ state, where, onAdvance, onSkip, onFinish }: { state: TourState; where: TourWhere; onAdvance: (step: number) => void; onSkip: () => void; onFinish: (openRepo: boolean) => void }) {
   const step = STEPS.find(s => s.n === state.step)
   const phone = window.innerWidth < 640
   const [justDid, setJustDid] = useState(false)
@@ -67,7 +89,7 @@ export function Tour({ state, onAdvance, onSkip, onFinish }: { state: TourState;
       <div className={phone ? "ad-tour ad-tour-sheet" : "ad-tour"} role="dialog" aria-label="Your turn" data-testid="tour-finish">
         <div className="ad-tour-step">Done</div>
         <h3 className="ad-tour-title">Your turn.</h3>
-        <p className="ad-tour-body">Open your own repo and archdraw keeps its diagrams current from main. Keys, models and spending caps live in Settings.</p>
+        <p className="ad-tour-body">Open your own repo and archdraw keeps its diagrams current from main. The “…” beside a diagram renames, archives or deletes it; keys, models and spending caps live in Settings.</p>
         <div className="mt-3 flex gap-2">
           <button type="button" className="ad-btn ad-btn-primary" onClick={() => onFinish(true)} data-testid="tour-open-repo">
             Open a repo
@@ -80,7 +102,7 @@ export function Tour({ state, onAdvance, onSkip, onFinish }: { state: TourState;
     )
   return (
     <>
-      <Ring selector={step.target} />
+      <Ring selectors={step.target(where)} />
       <div className={phone ? "ad-tour ad-tour-sheet" : "ad-tour"} role="dialog" aria-label={step.title} data-testid="tour-card" data-step={step.n}>
         <div className="ad-tour-step">
           Step {step.n} of 6
@@ -106,16 +128,25 @@ export function Tour({ state, onAdvance, onSkip, onFinish }: { state: TourState;
 }
 
 /** A pulsing ring around the step's target, following it every frame (the canvas moves). */
-function Ring({ selector }: { selector: string }) {
+function Ring({ selectors }: { selectors: string[] }) {
   const el = useRef<HTMLDivElement>(null)
+  const key = selectors.join("|")
   useEffect(() => {
     let raf = 0
+    const visible = (r?: DOMRect) => !!r && r.width > 0 && r.bottom > 0 && r.top < innerHeight
     const tick = () => {
-      const t = document.querySelector(selector)
-      const r = t?.getBoundingClientRect()
+      // the first control on screen: the ring moves on as the step does (the editor, then Save; Send, then Accept)
+      let r: DOMRect | undefined
+      for (const s of key.split("|")) {
+        const b = document.querySelector(s)?.getBoundingClientRect()
+        if (visible(b)) {
+          r = b
+          break
+        }
+      }
       const ring = el.current
       if (ring) {
-        if (r && r.width > 0 && r.bottom > 0 && r.top < innerHeight) {
+        if (r) {
           ring.style.display = "block"
           ring.style.transform = `translate(${r.left - 6}px, ${r.top - 6}px)`
           ring.style.width = `${r.width + 12}px`
@@ -126,7 +157,7 @@ function Ring({ selector }: { selector: string }) {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [selector])
+  }, [key])
   return <div ref={el} className="ad-ring" aria-hidden data-testid="tour-ring" />
 }
 
