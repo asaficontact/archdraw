@@ -25,6 +25,7 @@ export type SyncResult =
   | { project: string; outcome: "no-architecture-change"; checkedThrough: string; commits: number; why: string }
   | { project: string; outcome: "drafted"; checkedThrough: string; commits: number; why: string; files: string[]; headline: string }
   | { project: string; outcome: "skipped"; reason: string }
+  | { project: string; outcome: "failed"; reason: string; checkedThrough: string }
 
 export type SyncDeps = { store: Store; lib: Library; keys: KeyStore; models: ModelSet; spend: Spend; log?: (line: string) => void }
 
@@ -88,12 +89,12 @@ export class Syncer {
     return out
   }
 
-  /** Sync one project now ("Sync now"). */
-  async sync(slug: string): Promise<SyncResult> {
+  /** Sync one project; `manual` is "Sync now", which also retries a draft that failed for this commit. */
+  async sync(slug: string, manual = false): Promise<SyncResult> {
     if (this.running.has(slug)) return { project: slug, outcome: "skipped", reason: "already syncing" }
     this.running.add(slug)
     try {
-      const r = await this.run(slug)
+      const r = await this.run(slug, manual)
       this.last[slug] = { ...r, at: Date.now() }
       this.d.log?.(`sync ${slug}: ${r.outcome}`)
       return r
@@ -102,7 +103,7 @@ export class Syncer {
     }
   }
 
-  private async run(slug: string): Promise<SyncResult> {
+  private async run(slug: string, manual = false): Promise<SyncResult> {
     const { store, lib, spend } = this.d
     const p = lib.get(slug)
     if (p.source.kind !== "github") return { project: slug, outcome: "skipped", reason: "not a git project" }
@@ -112,6 +113,10 @@ export class Syncer {
     if (!base) return { project: slug, outcome: "skipped", reason: "the branch is empty" }
     const through = store.project(slug)?.checkedThrough
     if (through === base) return { project: slug, outcome: "unchanged", checkedThrough: base }
+    // a draft for this very commit failed (no push rights, no key…): the hourly check waits for new commits or
+    // "Sync now" instead of spending the budget again every hour (review of #2 F2)
+    const failure = store.project(slug)?.syncFailure
+    if (failure && failure.base === base && !manual) return { project: slug, outcome: "skipped", reason: `waiting: ${failure.message}` }
     if (await covered(dir, head, base)) {
       this.mark(slug, base)
       return { project: slug, outcome: "unchanged", checkedThrough: base }
@@ -125,6 +130,8 @@ export class Syncer {
     if (refusal) return { project: slug, outcome: "skipped", reason: refusal }
 
     const files = await lib.files(slug)
+    // the versions the draft starts from: an edit saved while the agent works wins over the draft (review of #2 F4)
+    const versions = new Map(files.map(f => [f.name, f.version]))
     const outlines: string[] = []
     for (const f of files) {
       try {
@@ -139,29 +146,40 @@ export class Syncer {
       return { project: slug, outcome: "no-architecture-change", checkedThrough: base, commits: commits.length, why: verdict.why }
     }
     const range = through ? `${through.slice(0, 12)}..${base.slice(0, 12)}` : base.slice(0, 12)
-    const proposals = await this.draft(slug, commits, range, verdict)
     const written: string[] = []
-    for (const pr of proposals) {
-      let current: string | null = null
-      try {
-        current = (await lib.read(slug, pr.name)).version
-      } catch {
-        /* a new diagram */
+    const kept: string[] = []
+    try {
+      const proposals = await this.draft(slug, commits, range, verdict)
+      for (const pr of proposals) {
+        try {
+          await lib.save(slug, pr.name, pr.source, versions.get(pr.name) ?? null, {
+            doc: pr.doc,
+            message: `archdraw: ${verdict.why.slice(0, 60)}\n\n${commits.length} commit(s) ${range}: ${verdict.why}\n\nArchdraw-Base: ${base}`,
+          })
+          written.push(pr.name)
+        } catch (e) {
+          if (e instanceof AppError && e.status === 409 && /changed since|already exists|removed since/.test(e.message)) kept.push(pr.name)
+          else throw e
+        }
       }
-      await lib.save(slug, pr.name, pr.source, current, {
-        doc: pr.doc,
-        message: `archdraw: ${verdict.why.slice(0, 60)}\n\n${commits.length} commit(s) ${range}: ${verdict.why}\n\nArchdraw-Base: ${base}`,
+    } catch (e) {
+      const message = String((e as Error).message ?? e).slice(0, 300)
+      store.update(c => {
+        const x = c.projects.find(q => q.slug === slug)
+        if (x) x.syncFailure = { base, at: Date.now(), message }
       })
-      written.push(pr.name)
+      return { project: slug, outcome: "failed", reason: message, checkedThrough: through ?? "" }
     }
     this.mark(slug, base)
-    if (written.length === 0) return { project: slug, outcome: "no-architecture-change", checkedThrough: base, commits: commits.length, why: `${verdict.why} (the draft changed no diagram)` }
-    return { project: slug, outcome: "drafted", checkedThrough: base, commits: commits.length, why: verdict.why, files: written, headline: verdict.why }
+    const note = kept.length ? ` (kept your edits to ${kept.join(", ")})` : ""
+    if (written.length === 0) return { project: slug, outcome: "no-architecture-change", checkedThrough: base, commits: commits.length, why: `${verdict.why} (the draft changed no diagram)${note}` }
+    return { project: slug, outcome: "drafted", checkedThrough: base, commits: commits.length, why: verdict.why + note, files: written, headline: verdict.why }
   }
 
   private mark(slug: string, sha: string) {
     this.d.store.update(c => {
       const p = c.projects.find(x => x.slug === slug)
+      if (p) delete p.syncFailure
       if (p) p.checkedThrough = sha
     })
   }
@@ -225,7 +243,7 @@ export class Syncer {
     })
     const listing = commits.map(c => `- ${c.sha.slice(0, 8)} ${c.subject} (${c.files.slice(0, 8).join(", ")})`).join("\n")
     await agent.prompt(
-      `Background job, no user is watching: keep this project's architecture diagrams current.\n\n` +
+      `Background job, no user is watching: keep the architecture diagrams of project \`${slug}\` current (links between its diagrams are url: "#/${slug}/<file>").\n\n` +
         `Commits ${range} changed the architecture: ${verdict.why}\nDiagrams likely affected: ${verdict.touches.join(", ") || "(unknown)"}\n\n${listing}\n\n` +
         `Read the changes (git_diff with this range, the files), read the affected diagrams, and propose each diagram that must change ` +
         `with propose_diagram (complete file, the fewest changed lines, never reordered) and an updated explanation. Do not ask questions; ` +

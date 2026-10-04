@@ -37,6 +37,7 @@ export type Project = {
   settings?: ProjectSettings
   checkedThrough?: string // the last commit of the branch the sync has looked at
   sample?: boolean // the tour's Bean There: scripted agent, no sync
+  syncFailure?: { base: string; at: number; message: string } // a draft for `base` failed; the hourly check waits
 }
 
 /** The tour: offered once, run on the sample, resumable, replayable; shared by every device (it lives on the server). */
