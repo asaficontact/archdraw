@@ -113,7 +113,9 @@ export class Library {
     }
     const head = (await git(dir, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { ok: [1, 128] })).stdout.trim()
     const branch = opts.branch || head.replace(/^origin\//, "") || "main"
-    const project: Project = { slug, title: opts.title || repo.split("/").pop()!, source: { kind: "github", repo, url, branch }, addedAt: Date.now() }
+    // tracking starts now: the sync drafts from the commits that land after connecting, not the project's whole past
+    const checkedThrough = (await revParse(dir, `origin/${branch}`)) ?? undefined
+    const project: Project = { slug, title: opts.title || repo.split("/").pop()!, source: { kind: "github", repo, url, branch }, addedAt: Date.now(), checkedThrough }
     this.store.update(c => {
       c.projects.push(project)
     })
@@ -166,11 +168,10 @@ export class Library {
     const s = p.source
     await this.locks.run(slug, async () => {
       const dir = this.clonePath(slug)
-      await git(dir, ["fetch", "--prune", "origin", `+refs/heads/${s.branch}:refs/remotes/origin/${s.branch}`, `+refs/heads/${UPDATE_BRANCH}:refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [128], timeoutMs: 300_000 }).catch(async () => {
-        await git(dir, ["fetch", "--prune", "origin", `+refs/heads/${s.branch}:refs/remotes/origin/${s.branch}`], { timeoutMs: 300_000 })
-      })
-      // the update branch may not exist remotely: fetch it alone so a missing ref does not stop the main fetch
-      await git(dir, ["fetch", "origin", `+refs/heads/${UPDATE_BRANCH}:refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [128] })
+      // the branch must arrive (a failure is an error); the update branch may not exist, so it is fetched on its own
+      await git(dir, ["fetch", "--prune", "origin", `+refs/heads/${s.branch}:refs/remotes/origin/${s.branch}`], { timeoutMs: 300_000 })
+      const upd = await git(dir, ["fetch", "origin", `+refs/heads/${UPDATE_BRANCH}:refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [1, 128] })
+      if (upd.code !== 0) await git(dir, ["update-ref", "-d", `refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [1] })
       if (!(await revParse(dir, `origin/${UPDATE_BRANCH}`))) await git(dir, ["update-ref", "-d", `refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [1] })
       await git(dir, ["checkout", "--quiet", "--detach", `origin/${s.branch}`])
     })
@@ -283,7 +284,9 @@ export class Library {
     await git(work, ["add", "-A", "--", DIAGRAM_DIR])
     const staged = await git(work, ["diff", "--cached", "--quiet"], { ok: [1] })
     if (staged.code === 0) return null
-    await git(work, ["commit", "--quiet", "-m", `${message}\n\nAgent: ${this.by}`])
+    // one trailer block: when the message already ends in trailers (Archdraw-Base: …), Agent joins them
+    const trailing = /\n[A-Za-z][A-Za-z-]*: \S[^\n]*$/.test(message)
+    await git(work, ["commit", "--quiet", "-m", `${message}${trailing ? "\n" : "\n\n"}Agent: ${this.by}`])
     const sha = (await git(work, ["rev-parse", "HEAD"])).stdout.trim()
     const clone = this.clonePath(p.slug)
     const expected = (await revParse(clone, `origin/${UPDATE_BRANCH}`)) ?? ""
