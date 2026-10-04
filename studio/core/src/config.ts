@@ -36,9 +36,12 @@ export type Project = {
   archived?: boolean
   settings?: ProjectSettings
   checkedThrough?: string // the last commit of the branch the sync has looked at
+  sample?: boolean // the tour's Bean There: scripted agent, no sync
 }
 
-export type Config = { version: 1; projects: Project[]; settings: Settings; onboarded?: boolean }
+/** The tour: offered once, run on the sample, resumable, replayable; shared by every device (it lives on the server). */
+export type Onboarding = { status: "new" | "active" | "done" | "skipped"; step: number; chipDismissed?: boolean }
+export type Config = { version: 1; projects: Project[]; settings: Settings; onboarded?: boolean; onboarding?: Onboarding }
 
 export const DEFAULTS: Settings = {
   provider: "openai",
@@ -75,7 +78,7 @@ export class Store {
     } catch {
       /* first run */
     }
-    this.cache = { version: 1, projects: raw.projects ?? [], settings: { ...DEFAULTS, ...(raw.settings ?? {}) }, onboarded: raw.onboarded }
+    this.cache = { version: 1, projects: raw.projects ?? [], settings: { ...DEFAULTS, ...(raw.settings ?? {}) }, onboarded: raw.onboarded, onboarding: raw.onboarding ?? { status: "new", step: 0 } }
     return this.cache
   }
 

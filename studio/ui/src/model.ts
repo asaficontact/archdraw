@@ -2,7 +2,7 @@
 // in node (model.test.ts).
 
 export type Source = { kind: "github"; repo: string; url: string; branch: string } | { kind: "folder"; path: string }
-export type Project = { slug: string; title: string; files: number; updated: number; pending: boolean; archived: boolean; source: Source; settings: Partial<Settings>; checkedThrough: string | null }
+export type Project = { slug: string; title: string; files: number; updated: number; pending: boolean; archived: boolean; sample?: boolean; source: Source; settings: Partial<Settings>; checkedThrough: string | null }
 export type FileStatus = "same" | "added" | "changed"
 export type FileMeta = { name: string; title: string; summary: string; updated: number; bytes: number; version: string; status: FileStatus }
 export type FileDoc = { project: string; name: string; source: string; version: string; doc: string | null; title?: string; summary?: string }
@@ -74,6 +74,7 @@ export const api = {
   settings: () => call<SettingsView>("settings"),
   saveSettings: (s: Partial<Settings> & { onboarded?: boolean }) => call<{ settings: Settings; onboarded: boolean }>("settings", { method: "PUT", body: JSON.stringify(s) }),
   setKey: (key: string, provider?: string) => call<{ provider: string }>("keys", { method: "PUT", body: JSON.stringify({ key, provider }) }),
+  startSample: () => post<Project>("sample"),
   exportUrl: (p: string, only?: string, at: "head" | "base" = "head") => `api/projects/${p}/export?at=${at}${only ? `&only=${only}` : ""}`,
 }
 

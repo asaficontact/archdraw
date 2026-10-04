@@ -1,0 +1,26 @@
+// title: Bean There, the whole system
+// summary: How a coffee order goes from the customer's phone to the barista, and how it is paid.
+
+style ours   fill: theme-primary-subtle  border: theme-primary
+style store  fill: theme-fill  border: theme-border  badge: database
+style ext    border: theme-secondary
+style dim    text: (color: theme-muted)
+
+node phone "Customer" icon: desktop
+node app "Customer app / [dim]iOS + Android[/dim]"  right of phone  style: ours
+node api "Orders API / [dim]Node[/dim]"  right of app (gap: wide)  style: ours  url: "#/bean-there/ordering"
+node queue "Barista queue"  below api  style: ours
+node menu "Menu DB"  right of api  style: store
+node pay "Payments / [dim]card[/dim]"  above api  style: ours  url: "#/bean-there/payments"
+node fax "Fax orders / [dim]legacy[/dim]"  below app  style: ext
+
+edge phone -> app "taps" from: right to: left
+edge app -> api "HTTPS" from: right to: left
+edge api -> queue "enqueue" from: bottom to: top
+edge api -> menu "SQL" from: right to: left
+edge api -> pay "charge" from: top to: bottom
+edge fax -> queue "manual entry" from: right to: left
+node loyalty "Loyalty service"  below menu  style: ours
+node points "Points DB"  right of loyalty  level with loyalty  style: store
+edge api -> loyalty "order paid" from: right to: left
+edge loyalty -> points "add points" from: right to: left

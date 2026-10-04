@@ -37,12 +37,13 @@ export function git(cwd: string, args: string[], opts: { input?: string; ok?: nu
         LC_ALL: "C",
         ...opts.env,
       },
-      stdio: ["pipe", "pipe", "pipe"],
+      // stdin only when there is input: writing to a git that has already exited raises EPIPE (seen in CI)
+      stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     })
     let stdout = ""
     let stderr = ""
-    child.stdout.setEncoding("utf8").on("data", d => (stdout += d))
-    child.stderr.setEncoding("utf8").on("data", d => (stderr += d))
+    child.stdout!.setEncoding("utf8").on("data", d => (stdout += d))
+    child.stderr!.setEncoding("utf8").on("data", d => (stderr += d))
     const timer = setTimeout(() => child.kill("SIGTERM"), opts.timeoutMs ?? 120_000)
     child.on("error", e => {
       clearTimeout(timer)
@@ -54,7 +55,10 @@ export function git(cwd: string, args: string[], opts: { input?: string; ok?: nu
       if (c === 0 || opts.ok?.includes(c)) resolve({ stdout, stderr, code: c })
       else reject(new GitError(args, c, stderr || stdout))
     })
-    child.stdin.end(opts.input ?? "")
+    if (child.stdin) {
+      child.stdin.on("error", () => undefined) // the exit code reports any real failure
+      child.stdin.end(opts.input)
+    }
   })
 }
 

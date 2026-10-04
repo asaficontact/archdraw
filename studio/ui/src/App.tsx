@@ -5,9 +5,10 @@ import { ChatPanel } from "./Chat"
 import { ConnectDialog, Confirm, ExportDialog, NameDialog, SettingsDialog, TrashDialog } from "./Dialogs"
 import { Inbox } from "./Inbox"
 import { Menu } from "./Menu"
-import { ApiError, api, hashFor, inboxHash, meta, parseHash, type FileMeta, type Project } from "./model"
+import { ApiError, api, hashFor, type SettingsView, inboxHash, meta, parseHash, type FileMeta, type Project } from "./model"
 import { Palette } from "./Palette"
 import { renderSource } from "./render"
+import { StartScreen, Tour, tourEvent, type TourState } from "./Tour"
 
 const DOCK_W = 440
 const EDIT_W = 560
@@ -92,6 +93,8 @@ export default function App() {
   const [staged, setStaged] = useState<{ p: Proposal } | null>(null)
   const [chatFocus, setChatFocus] = useState(0)
   const [loaded, setLoaded] = useState<string | null>(null) // the project whose diagrams have arrived
+  const [tour, setTour] = useState<TourState>({ status: "new", step: 0 })
+  const [starting, setStarting] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null })
 
   // switching project drops this project's drafts: ask first, and stay put on no (review L-c)
   const unsavedRef = useRef(false)
@@ -112,13 +115,39 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    api.settings().then(v => setTheme(v.settings.theme), () => undefined)
+    api.settings().then(v => {
+      setTheme(v.settings.theme)
+      const o = (v as SettingsView & { onboarding?: TourState }).onboarding
+      if (o) setTour(o)
+    }, () => undefined)
   }, [])
+
 
   const loadProjects = useCallback(() => {
     api.projects().then(setProjects, e => setError(String(e.message ?? e)))
   }, [])
   useEffect(loadProjects, [loadProjects])
+
+  // -- the tour --------------------------------------------------------------------------------------------------
+  const saveTour = useCallback((next: TourState) => {
+    setTour(next)
+    void fetch("api/onboarding", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) }).catch(() => undefined)
+  }, [])
+  const startTour = useCallback(async () => {
+    try {
+      await api.startSample()
+      saveTour({ status: "active", step: 2, chipDismissed: true })
+      loadProjects()
+      location.hash = hashFor("bean-there")
+    } catch (e) {
+      setNotice(e instanceof ApiError ? e.message : String(e))
+    }
+  }, [saveTour, loadProjects])
+  useEffect(() => {
+    const on = () => void startTour()
+    window.addEventListener("archdraw:tour", on)
+    return () => window.removeEventListener("archdraw:tour", on)
+  }, [startTour])
 
   // default to the first project that is not archived
   useEffect(() => {
@@ -156,6 +185,9 @@ export default function App() {
   useEffect(() => {
     setFocus(f => ({ key: route.file, n: f.n + 1 }))
   }, [route.file, project, files.length])
+  useEffect(() => {
+    if (current?.sample && route.file === "payments") tourEvent("drilled")
+  }, [current?.sample, route.file])
 
   const accept = useCallback(
     async (p: Proposal) => {
@@ -169,6 +201,7 @@ export default function App() {
           return rest
         })
         setStaged(null)
+        tourEvent("proposal.accepted")
         setNotice(current?.source.kind === "github" ? "Accepted · waiting for review in the Inbox" : "Accepted and saved")
         await reload()
         location.hash = hashFor(project, p.name)
@@ -211,7 +244,7 @@ export default function App() {
         badge: before === undefined ? "Proposed · new diagram" : `Proposed · +${added} −${removed}`,
         actions: (
           <>
-            <button type="button" className="ad-btn" onClick={() => setStaged(null)}>
+            <button type="button" className="ad-btn" onClick={() => (setStaged(null), tourEvent("proposal.dismissed"))}>
               Dismiss
             </button>
             <button type="button" className="ad-btn ad-btn-primary" onClick={() => void accept(p).catch(() => undefined)} data-testid="ghost-accept">
@@ -396,7 +429,7 @@ export default function App() {
   const diagramMenu = (name: string) => [
     { label: "Rename…", onSelect: () => setDialog({ kind: "rename", name }) },
     { label: "Duplicate…", onSelect: () => setDialog({ kind: "duplicate", name }) },
-    { label: "Export…", onSelect: () => setDialog({ kind: "export", name }) },
+    { label: "Export…", onSelect: () => (setDialog({ kind: "export", name }), tourEvent("export.opened")) },
     {
       label: "Copy link",
       onSelect: () => {
@@ -473,6 +506,7 @@ export default function App() {
             <div key={p.slug} className={`ad-item ad-row-hover ${p.slug === route.project && !route.inbox ? "ad-item-on" : ""}`}>
               <a href={hashFor(p.slug)} className="flex min-w-0 flex-1 items-center gap-2" data-testid={`project-${p.slug}`}>
                 <span className="truncate">{p.title}</span>
+                {p.sample && <span className="ad-tag">Sample</span>}
                 {p.pending && <span className="ad-pip" title="changes waiting" />}
               </a>
               <span className="text-xs text-[var(--muted)]">{p.files}</span>
@@ -483,6 +517,16 @@ export default function App() {
           <button type="button" className="ad-item text-[var(--muted)]" onClick={() => setDialog({ kind: "connect" })} data-testid="add-project">
             + Add project
           </button>
+          {tour.status === "new" && !tour.chipDismissed && (projects?.length ?? 0) > 0 && (
+            <div className="ad-chip" data-testid="tour-chip">
+              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => void startTour()}>
+                New here? 2-minute tour
+              </button>
+              <button type="button" aria-label="Dismiss" onClick={() => saveTour({ ...tour, chipDismissed: true })}>
+                ✕
+              </button>
+            </div>
+          )}
           {project && (
             <>
               <div className="ad-label mt-4">Diagrams</div>
@@ -527,6 +571,9 @@ export default function App() {
             </button>
           )}
           <span className="ml-auto" />
+          <button type="button" className="ad-btn ad-btn-quiet" onClick={() => void startTour()} title="Show me around" aria-label="Show me around" data-testid="open-tour">
+            ?
+          </button>
           <button type="button" className="ad-btn ad-btn-quiet" onClick={() => setDialog({ kind: "settings" })} data-testid="open-settings" aria-label="Settings">
             ⚙ Settings
           </button>
@@ -542,7 +589,7 @@ export default function App() {
                 ☰
               </button>
             </div>
-            <Inbox dark={dark} focusProject={route.project} onAsk={askAbout} onOpen={(p, f) => (location.hash = hashFor(p, f))} onChanged={loadProjects} />
+            <Inbox dark={dark} focusProject={route.project} onAsk={askAbout} onOpen={(p, f) => (location.hash = hashFor(p, f))} onChanged={() => (loadProjects(), tourEvent("update.done"))} />
           </div>
         ) : (
           <>
@@ -566,7 +613,7 @@ export default function App() {
                   </button>
                 )}
                 {project && files.length > 0 && (
-                  <button type="button" className="ad-btn max-sm:hidden" onClick={() => setDialog({ kind: "export", name: sel })} data-testid="open-export">
+                  <button type="button" className="ad-btn max-sm:hidden" onClick={() => (setDialog({ kind: "export", name: sel }), tourEvent("export.opened"))} data-testid="open-export">
                     Export
                   </button>
                 )}
@@ -587,7 +634,22 @@ export default function App() {
             {error ? (
               <div className="grid h-full place-items-center p-6 text-center text-sm text-[var(--muted)]">{error}</div>
             ) : projects && projects.length === 0 ? (
-              <Empty onAdd={() => setDialog({ kind: "connect" })} />
+              <StartScreen
+                busy={starting.busy}
+                error={starting.error}
+                onSample={() => void startTour()}
+                onConnect={async v => {
+                  setStarting({ busy: true, error: null })
+                  try {
+                    const p = await api.connect(v)
+                    setStarting({ busy: false, error: null })
+                    loadProjects()
+                    location.hash = hashFor(p.slug)
+                  } catch (e) {
+                    setStarting({ busy: false, error: e instanceof ApiError ? e.message : String(e) })
+                  }
+                }}
+              />
             ) : project && loaded !== project ? (
               <div className="grid h-full place-items-center text-sm text-[var(--muted)]" data-testid="loading">
                 Loading {current?.title ?? project}…
@@ -623,7 +685,7 @@ export default function App() {
                     ✕
                   </button>
                 </div>
-                <Editor value={selSource} onChange={v => setDrafts(d => ({ ...d, [sel]: v }))} />
+                <Editor value={selSource} onChange={v => (setDrafts(d => ({ ...d, [sel]: v })), current?.sample && tourEvent("source.changed"))} />
                 <div className={`border-t border-[var(--line)] px-3 py-2 text-xs ${selCard?.r.error ? "text-[var(--danger)]" : "text-[var(--muted)]"}`} data-testid="status">
                   {selCard?.r.error ?? (current?.source.kind === "github" ? "Renders. ⌘/Ctrl-S saves it as a change waiting for review; the card updates as you type." : "Renders. ⌘/Ctrl-S saves it; the card updates as you type.")}
                 </div>
@@ -672,12 +734,22 @@ export default function App() {
             }}
             onAsk={text => {
               setPalette(false)
+              if (/^\s*(tour|show me around)\s*$/i.test(text)) return void startTour()
               if (!project) return setNotice("Open a project first, then ask about it")
               openChat()
               void ask(text).catch(() => undefined)
             }}
           />
         )}
+        <Tour
+          state={tour}
+          onAdvance={step => saveTour({ ...tour, status: "active", step })}
+          onSkip={() => saveTour({ ...tour, status: "skipped", step: 0 })}
+          onFinish={openRepo => {
+            saveTour({ ...tour, status: "done", step: 0 })
+            if (openRepo) setDialog({ kind: "connect" })
+          }}
+        />
         {notice && (
           <div className="ad-toast absolute bottom-16 left-1/2 z-30 -translate-x-1/2" role="status" data-testid="toast">
             {notice}
@@ -812,19 +884,6 @@ function ProjectTitleDialog({ project, onClose, onSaved }: { project: Project; o
   )
 }
 
-function Empty({ onAdd }: { onAdd: () => void }) {
-  return (
-    <div className="grid h-full place-items-center p-6 text-center" data-testid="empty">
-      <div className="max-w-sm">
-        <h2 className="text-xl font-semibold">Show me my architecture.</h2>
-        <p className="mt-2 text-sm text-[var(--muted)]">Add a GitHub repo or a folder. archdraw keeps its diagrams in the repo's .archdraw/ folder and checks main every hour.</p>
-        <button type="button" className="ad-btn ad-btn-primary mt-4" onClick={onAdd} data-testid="empty-add">
-          Add a project
-        </button>
-      </div>
-    </div>
-  )
-}
 
 function Editor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ta = useRef<HTMLTextAreaElement>(null)

@@ -14,6 +14,7 @@ import type { Library } from "./library.js"
 import { type KeyStore, pickModel } from "./models.js"
 import type { Spend } from "./spend.js"
 import { makeTools, type Proposal } from "./tools.js"
+import { demoAgent } from "./sample.js"
 
 export type AgentEvent = { n: number; at: number; type: string; [k: string]: unknown }
 
@@ -71,6 +72,7 @@ export class Conversation {
   private agent: Agent | null = null
   private waiters: (() => void)[] = []
   private live = new Map<string, string>() // message id → text so far
+  private demo: ReturnType<typeof demoAgent> | null = null // the sample's scripted agent
 
   constructor(
     readonly project: string,
@@ -109,10 +111,12 @@ export class Conversation {
     const d = this.deps!
     const p = d.lib.get(this.project)
     const s = d.store.settingsFor(this.project)
-    const key = d.keys.get(s.provider)
+    if (p.sample) this.demo = demoAgent()
+    const key = this.demo ? "demo" : d.keys.get(s.provider)
     if (!key) throw new AppError(412, `add your ${s.provider} key in Settings to talk to the agent`)
-    const model: Model<any> = pickModel(d.models, s.provider, s.chatModel, "chat")
-    this.model = `${model.provider}/${model.id}`
+    const models = this.demo ? this.demo.models : d.models
+    const model: Model<any> = this.demo ? this.demo.model : pickModel(d.models, s.provider, s.chatModel, "chat")
+    this.model = this.demo ? "demo (scripted, no AI)" : `${model.provider}/${model.id}`
     const root = p.source.kind === "github" ? d.lib.clonePath(this.project) : p.source.path
     const tools = makeTools({
       root,
@@ -128,8 +132,8 @@ export class Conversation {
     })
     const agent = new Agent({
       initialState: { systemPrompt: systemPrompt(), model, tools, thinkingLevel: "medium" },
-      streamFn: d.models.streamSimple.bind(d.models),
-      getApiKey: async () => d.keys.get(s.provider),
+      streamFn: models.streamSimple.bind(models),
+      getApiKey: async () => (this.demo ? "demo" : d.keys.get(s.provider)),
       sessionId: `archdraw-${this.id}`,
       toolExecution: "sequential",
     })
@@ -194,6 +198,7 @@ export class Conversation {
     if (!this.agent) this.agent = this.build()
     this.emit({ type: "user", text })
     const message = context ? `${context}\n\n---\n\n${text}` : text
+    this.demo?.script(text)
     if (this.agent.state.isStreaming) {
       this.agent.followUp({ role: "user", content: message, timestamp: Date.now() } as any)
       return

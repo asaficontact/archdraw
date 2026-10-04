@@ -9,6 +9,7 @@ import { serveStatic } from "@hono/node-server/serve-static"
 import type { Conversations } from "../../core/src/agent.js"
 import { AppError, checkSlug, DIAGRAM_DIR, type Settings, type Store } from "../../core/src/config.js"
 import { bundle, zip } from "../../core/src/export.js"
+import { installSample } from "../../core/src/sample.js"
 import { diff, graph } from "../../core/src/graph.js"
 import type { Library } from "../../core/src/library.js"
 import { type KeyStore, PROVIDERS, providerOfKey } from "../../core/src/models.js"
@@ -75,7 +76,7 @@ export function createApp(d: Deps): Hono<AppEnv> {
   app.get("/api/settings", c => {
     const cfg = d.store.read()
     const keys = Object.fromEntries(Object.keys(PROVIDERS).map(p => [p, d.keys.has(p)]))
-    return c.json({ settings: cfg.settings, keys, keysEditable: !!d.keys.set, keysWeak: !!d.keys.weak, providers: PROVIDERS, onboarded: cfg.onboarded ?? false, spentToday: d.spend.day() })
+    return c.json({ settings: cfg.settings, keys, keysEditable: !!d.keys.set, keysWeak: !!d.keys.weak, providers: PROVIDERS, onboarded: cfg.onboarded ?? false, onboarding: cfg.onboarding, spentToday: d.spend.day() })
   })
 
   app.put("/api/settings", async c => {
@@ -103,6 +104,22 @@ export function createApp(d: Deps): Hono<AppEnv> {
     return c.json({ provider: p, ok: true })
   })
 
+  /** The tour's state: { status, step, chipDismissed }. */
+  app.put("/api/onboarding", async c => {
+    const b = await body<{ status?: string; step?: number; chipDismissed?: boolean }>(c)
+    const next = d.store.update(cfg => {
+      const o = cfg.onboarding ?? { status: "new", step: 0 }
+      if (b.status && ["new", "active", "done", "skipped"].includes(b.status)) o.status = b.status as never
+      if (typeof b.step === "number" && b.step >= 0 && b.step <= 6) o.step = b.step
+      if (typeof b.chipDismissed === "boolean") o.chipDismissed = b.chipDismissed
+      cfg.onboarding = o
+    })
+    return c.json(next.onboarding)
+  })
+
+  /** (Re)build the sample project the tour runs on. */
+  app.post("/api/sample", async c => c.json(await installSample(d.lib)))
+
   // -- projects ----------------------------------------------------------------------------------------------------
 
   app.get("/api/projects", async c => {
@@ -119,7 +136,7 @@ export function createApp(d: Deps): Hono<AppEnv> {
       } catch {
         /* a broken clone shows as empty */
       }
-      out.push({ slug: p.slug, title: p.title, files, updated, pending, archived: !!p.archived, source: p.source, settings: p.settings ?? {}, checkedThrough: p.checkedThrough ?? null })
+      out.push({ slug: p.slug, title: p.title, files, updated, pending, archived: !!p.archived, sample: !!p.sample, source: p.source, settings: p.settings ?? {}, checkedThrough: p.checkedThrough ?? null })
     }
     return c.json(out)
   })

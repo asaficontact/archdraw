@@ -100,7 +100,7 @@ async function main() {
       await page.waitForSelector("[data-testid=empty]")
     })
     await step("add a GitHub-style project; its diagrams appear on the canvas", async () => {
-      await page.click("[data-testid=empty-add]")
+      await page.click("[data-testid=add-project]")
       await page.fill("[data-testid=connect-input]", origin)
       await page.click("[data-testid=connect-submit]")
       await page.waitForSelector("[data-card=system]", { timeout: 30_000 })

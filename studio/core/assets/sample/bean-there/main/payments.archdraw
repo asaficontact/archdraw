@@ -1,0 +1,16 @@
+// title: Payments
+// summary: Card payments through the provider, and the receipt the customer gets.
+
+style ours  fill: theme-primary-subtle  border: theme-primary
+style ext  border: theme-secondary
+style store  fill: theme-fill  border: theme-border  badge: database
+
+node api "Orders API"  style: ours
+node pay "Payments / Card"  right of api  style: ours
+node psp "Card provider"  right of pay  style: ext
+node receipts "Receipts"  below pay  style: store
+
+edge api -> pay "charge" from: right to: left
+edge pay -> psp "authorize" from: right to: left
+edge psp -> pay "webhook" from: bottom to: bottom
+edge pay -> receipts "store" from: bottom to: top

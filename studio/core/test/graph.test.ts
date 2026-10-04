@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { describe, expect, it } from "vitest"
 import { diff, graph, outline, plain } from "../src/graph.js"
 
@@ -45,7 +44,7 @@ describe("graph", () => {
   })
 
   it("outlines a real house diagram as text an agent can read", () => {
-    const src = readFileSync(`${homedir()}/work/brain/projects/ohara/archdraw/system.archdraw`, "utf8")
+    const src = readFileSync(new URL("../assets/sample/bean-there/main/overview.archdraw", import.meta.url), "utf8")
     const o = outline(graph(src))
     expect(o).toContain("Parts:")
     expect(o).toMatch(/Connections:\n- \S+ → \S+/)
