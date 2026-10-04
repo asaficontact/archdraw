@@ -1,0 +1,55 @@
+# archdraw desktop: tests, then the Linux and macOS packages as build artifacts. macOS builds on a macOS runner because
+# only there can electron-builder sign (ad-hoc for now; Apple Silicon refuses an unsigned app).
+name: desktop
+on:
+  push:
+    branches: [feat/app]
+    paths: ["studio/**", "src/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["studio/**", "src/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: oven-sh/setup-bun@v2
+      - name: engine
+        run: npm ci && npm run build
+      - name: studio deps
+        working-directory: studio
+        run: npm ci && cd ui && bun install --frozen-lockfile
+      - name: unit tests
+        if: runner.os == 'Linux'
+        working-directory: studio
+        run: |
+          git config --global user.name ci && git config --global user.email ci@example.com
+          npx vitest run && cd ui && npx vitest run
+      - name: build
+        working-directory: studio
+        run: npm run build:all
+      - name: package (Linux)
+        if: runner.os == 'Linux'
+        working-directory: studio
+        run: npx electron-builder --linux --publish never
+      - name: package (macOS)
+        if: runner.os == 'macOS'
+        working-directory: studio
+        env: { CSC_IDENTITY_AUTO_DISCOVERY: "false" }
+        run: npx electron-builder --mac --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archdraw-${{ runner.os }}
+          path: |
+            studio/release/*.AppImage
+            studio/release/*.deb
+            studio/release/*.zip
+          retention-days: 14
