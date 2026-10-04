@@ -9,7 +9,13 @@
     "start": "node dist/server.mjs",
     "build": "node scripts/build.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:ui": "cd ui && npx vite build",
+    "build:all": "npm run build:ui && node scripts/build.mjs",
+    "dist:linux": "npm run build:all && electron-builder --linux",
+    "dist:mac": "npm run build:all && electron-builder --mac",
+    "e2e": "tsx e2e/app.e2e.ts",
+    "e2e:desktop": "xvfb-run -a tsx e2e/desktop.e2e.ts"
   },
   "engines": {
     "node": ">=22.19.0"

@@ -41,9 +41,11 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
+// --exe <packaged binary> tests a built package (e.g. an extracted AppImage) instead of the development app
+const exe = process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : null
 const app = await _electron.launch({
-  executablePath: join(studio, "node_modules/electron/dist/electron"),
-  args: [join(studio, "desktop/app/main.mjs"), `--user-data-dir=${userData}`, "--no-sandbox"],
+  executablePath: exe ?? join(studio, "node_modules/electron/dist/electron"),
+  args: [...(exe ? [] : [join(studio, "desktop/app/main.mjs")]), `--user-data-dir=${userData}`, "--no-sandbox"],
   env: { ...process.env, OPENAI_API_KEY: "" },
 })
 try {

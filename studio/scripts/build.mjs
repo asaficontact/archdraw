@@ -32,6 +32,6 @@ if (what === "all" || what === "desktop") {
   mkdirSync(out, { recursive: true })
   await build({ entryPoints: { main: join(root, "desktop/src/main.ts") }, outdir: out, bundle: true, platform: "node", format: "esm", target: "node22", splitting: true, outExtension: { ".js": ".mjs" }, external: ["electron"], banner, logLevel: "warning" })
   await build({ entryPoints: [join(root, "desktop/src/preload.ts")], outfile: join(out, "preload.cjs"), bundle: true, platform: "node", format: "cjs", external: ["electron"], logLevel: "warning" })
-  writeFileSync(join(out, "package.json"), JSON.stringify({ name: "archdraw", productName: "archdraw", version: pkg.version, description: pkg.description, main: "main.mjs", type: "module", author: "Safiware", license: "UNLICENSED" }, null, 1))
+  writeFileSync(join(out, "package.json"), JSON.stringify({ name: "archdraw", productName: "archdraw", version: pkg.version, description: pkg.description, main: "main.mjs", type: "module", author: { name: "Safiware", email: "archdraw@users.noreply.github.com" }, homepage: "https://github.com/asaficontact/archdraw", desktopName: "archdraw.desktop", license: "UNLICENSED" }, null, 1))
   console.log("built desktop/app")
 }
