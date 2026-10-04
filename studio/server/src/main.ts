@@ -11,7 +11,7 @@ import { Conversations } from "../../core/src/agent.js"
 import { appHome, Store } from "../../core/src/config.js"
 import { GhForge } from "../../core/src/gh.js"
 import { Library } from "../../core/src/library.js"
-import { EnvKeys, type KeyStore, models } from "../../core/src/models.js"
+import { EnvKeys, type KeyStore, type ModelSet, models } from "../../core/src/models.js"
 import { Spend } from "../../core/src/spend.js"
 import { Syncer } from "../../core/src/sync.js"
 import { createApp } from "./app.js"
@@ -23,6 +23,7 @@ export type StartOptions = {
   port?: number // 0 = any free port
   gate?: Gate
   keys?: KeyStore
+  models?: ModelSet // tests and the onboarding demo inject a scripted model set
   ui?: string | null
   sync?: boolean
   by?: string // the commit author name for diagram changes
@@ -41,7 +42,7 @@ export async function start(o: StartOptions = {}): Promise<{ port: number; url: 
   const keys = o.keys ?? new EnvKeys(process.env.ARCHDRAW_SECRETS ?? join(homedir(), "work", "secrets", "providers.env"))
   const lib = new Library(store, new GhForge(), o.by ?? process.env.ARCHDRAW_AUTHOR ?? "archdraw")
   const spend = new Spend(store)
-  const m = models()
+  const m = o.models ?? models()
   const talks = new Conversations({ store, lib, keys, models: m, spend })
   const syncer = new Syncer({ store, lib, keys, models: m, spend, log })
   let port = o.port ?? 8088

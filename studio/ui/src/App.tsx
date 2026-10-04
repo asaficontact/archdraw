@@ -278,9 +278,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", on)
   }, [save, palette, dialog])
 
-  // the palette's targets: every project, and every diagram in each
+  // the palette's targets: every project, and every diagram in each. Loaded ahead of time (and again when the palette
+  // opens), so a name typed the moment it opens still jumps instead of falling through to "ask the agent"
   useEffect(() => {
-    if (!palette || !projects) return
+    if (!projects) return
     Promise.all(projects.filter(p => !p.archived).map(p => api.files(p.slug).then(fs => [p, fs] as const)))
       .then(all =>
         setTargets(
@@ -291,7 +292,7 @@ export default function App() {
         ),
       )
       .catch(() => undefined)
-  }, [palette, projects])
+  }, [palette, projects, files.length])
 
   // the agent's budget and this project's conversations, while the chat is open
   const refreshStatus = useCallback(() => {
