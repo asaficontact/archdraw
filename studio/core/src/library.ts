@@ -17,6 +17,8 @@ import { git, lastChange, lsTree, revParse, show } from "./git.js"
 
 export const EXT = ".archdraw"
 export const UPDATE_BRANCH = "archdraw/update"
+/** Names the page uses as routes (`#/inbox`), never a project's. */
+const RESERVED = ["inbox", "settings"]
 const MAX_BYTES = 200_000
 const META = /^\/\/\s*(title|summary)\s*:\s*(.+?)\s*$/
 
@@ -89,7 +91,7 @@ export class Library {
   // -- connecting ------------------------------------------------------------------------------------------------
 
   private freeSlug(base: string): string {
-    const taken = new Set(this.store.read().projects.map(p => p.slug))
+    const taken = new Set([...this.store.read().projects.map(p => p.slug), ...RESERVED])
     let s = slugFrom(base)
     for (let i = 2; taken.has(s); i++) s = `${slugFrom(base).slice(0, 58)}-${i}`
     return s
@@ -99,7 +101,7 @@ export class Library {
   async addRepo(input: string, opts: { title?: string; branch?: string; slug?: string } = {}): Promise<Project> {
     const { repo, url } = parseRepo(input)
     if (this.store.read().projects.some(p => p.source.kind === "github" && p.source.repo === repo)) throw new AppError(409, `${repo} is already connected`)
-    const slug = opts.slug ? checkSlug(opts.slug, "project") : this.freeSlug(repo)
+    const slug = opts.slug && !RESERVED.includes(opts.slug) ? checkSlug(opts.slug, "project") : this.freeSlug(opts.slug || repo)
     const dir = this.clonePath(slug)
     mkdirSync(join(this.store.home, "repos"), { recursive: true })
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
@@ -125,7 +127,7 @@ export class Library {
   /** Connect a local folder; its diagrams are read and written in `<path>/.archdraw/`. */
   addFolder(path: string, opts: { title?: string; slug?: string } = {}): Project {
     if (!existsSync(path) || !statSync(path).isDirectory()) throw new AppError(404, `no folder ${path}`)
-    const slug = opts.slug ? checkSlug(opts.slug, "project") : this.freeSlug(path)
+    const slug = opts.slug && !RESERVED.includes(opts.slug) ? checkSlug(opts.slug, "project") : this.freeSlug(opts.slug || path)
     const project: Project = { slug, title: opts.title || path.split("/").filter(Boolean).pop()!, source: { kind: "folder", path }, addedAt: Date.now() }
     mkdirSync(join(path, DIAGRAM_DIR), { recursive: true })
     this.store.update(c => {
@@ -465,8 +467,19 @@ export class Library {
         return { name: path.slice(DIAGRAM_DIR.length + 1, -EXT.length), status: (st === "A" ? "added" : st === "D" ? "removed" : "changed") as "added" | "changed" | "removed" }
       })
       .filter(f => !f.name.includes("/"))
-    const pr = this.forge ? await this.forge.pullRequest(p, dir).catch(() => null) : null
-    return { head, base, behind, files, pr }
+    return { head, base, behind, files, pr: await this.prOf(p, head) }
+  }
+
+  private prCache = new Map<string, { at: number; head: string; pr: { number: number; url: string; state: string } | null }>()
+
+  /** The waiting update's pull request, if the repo is on GitHub; remembered for a minute per head (it is a network call). */
+  private async prOf(p: Project, head: string) {
+    if (!this.forge || p.source.kind !== "github" || p.source.repo.startsWith("local/")) return null
+    const hit = this.prCache.get(p.slug)
+    if (hit && hit.head === head && Date.now() - hit.at < 60_000) return hit.pr
+    const pr = await this.forge.pullRequest(p, this.clonePath(p.slug)).catch(() => null)
+    this.prCache.set(p.slug, { at: Date.now(), head, pr })
+    return pr
   }
 
   /** Publish the waiting update: merge its pull request, or push it onto the branch when the project publishes directly. */
@@ -474,7 +487,8 @@ export class Library {
     const p = this.get(slug)
     if (p.source.kind !== "github") throw new AppError(400, "a folder project has nothing waiting")
     const s = p.source
-    const mode = this.store.settingsFor(slug).publish
+    // a repo that is not on GitHub (a plain git remote) has no pull requests: publishing pushes to its branch
+    const mode = !this.forge || s.repo.startsWith("local/") ? "direct" : this.store.settingsFor(slug).publish
     return this.locks.run(slug, async () => {
       const { head } = await this.revisions(slug)
       if (!head) throw new AppError(409, "nothing is waiting")

@@ -115,7 +115,7 @@ export function createApp(d: Deps): Hono<AppEnv> {
         const rows = await d.lib.files(p.slug)
         files = rows.length
         updated = Math.max(updated, ...rows.map(r => r.updated))
-        pending = rows.some(r => r.status !== "same") || !!(await d.lib.pending(p.slug))
+        pending = !!(await d.lib.revisions(p.slug)).head // a local lookup; the inbox asks GitHub about the PR
       } catch {
         /* a broken clone shows as empty */
       }

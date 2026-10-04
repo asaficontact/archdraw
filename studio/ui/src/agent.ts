@@ -6,7 +6,7 @@ import { ApiError } from "./model"
 export type AgentEvent = { n: number; at: number; type: string; [k: string]: unknown }
 export type Summary = { id: string; project: string; title: string; state: string; cost: number; started: number; last: number; events: number }
 export type Status = { spent_today: number; day_budget: number; conversation_budget: number; conversations: Summary[] }
-export type Proposal = { kind: "archdraw" | "markdown"; name: string; source: string; error: string | null; n: number }
+export type Proposal = { kind: "archdraw" | "markdown"; name: string; source: string; error: string | null; n: number; doc?: string | null }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`api/agent${path}`, { headers: { "content-type": "application/json" }, ...init })
@@ -78,7 +78,7 @@ export function transcript(events: AgentEvent[]): Transcript {
         turns.push({ kind: "fixing", n: e.n, errors: (e.errors as string[]) ?? [] })
         break
       case "proposal":
-        turns.push({ kind: "proposal", n: e.n, p: { kind: e.kind as Proposal["kind"], name: s("name"), source: s("source"), error: (e.error as string) ?? null, n: e.n } })
+        turns.push({ kind: "proposal", n: e.n, p: { kind: e.kind as Proposal["kind"], name: s("name"), source: s("source"), error: (e.error as string) ?? null, n: e.n, doc: (e.doc as string) ?? null } })
         break
       case "settled":
         t.busy = false

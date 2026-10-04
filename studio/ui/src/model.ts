@@ -1,9 +1,33 @@
 // Pure pieces of the studio: the API, card layout on the canvas, and camera math. No DOM here, so they are tested
 // in node (model.test.ts).
 
-export type Project = { slug: string; title: string; files: number; updated: number }
-export type FileMeta = { name: string; title: string; summary: string; updated: number; bytes: number; version: string }
-export type FileDoc = { project: string; name: string; source: string; version: string; title?: string; summary?: string }
+export type Source = { kind: "github"; repo: string; url: string; branch: string } | { kind: "folder"; path: string }
+export type Project = { slug: string; title: string; files: number; updated: number; pending: boolean; archived: boolean; source: Source; settings: Partial<Settings>; checkedThrough: string | null }
+export type FileStatus = "same" | "added" | "changed"
+export type FileMeta = { name: string; title: string; summary: string; updated: number; bytes: number; version: string; status: FileStatus }
+export type FileDoc = { project: string; name: string; source: string; version: string; doc: string | null; title?: string; summary?: string }
+export type Settings = {
+  provider: string
+  chatModel: string
+  triageModel: string
+  syncEveryMinutes: number
+  dayBudgetUsd: number
+  projectDayBudgetUsd: number
+  conversationBudgetUsd: number
+  publish: "pull-request" | "direct"
+  ignore: string[]
+  theme: "system" | "light" | "dark"
+}
+export type ProviderInfo = { name: string; env: string; chat: string; triage: string; prefix: string; keyUrl: string }
+export type SettingsView = { settings: Settings; keys: Record<string, boolean>; keysEditable: boolean; providers: Record<string, ProviderInfo>; onboarded: boolean; spentToday: { total: number; projects: Record<string, number> } }
+export type Change =
+  | { on: "node"; id: string; kind: "added" | "removed" | "changed" | "moved" | "restyled"; label: string; what?: string }
+  | { on: "edge"; id: string; kind: "added" | "removed" | "changed"; from: string; to: string; label: string; what?: string }
+export type DiagramDiff = { name: string; before: string | null; after: string | null; beforeDoc: string | null; afterDoc: string | null; diff: { changes: Change[]; added: number; removed: number; changed: number } }
+export type Pending = { head: string; base: string; behind: number; files: { name: string; status: "added" | "changed" | "removed" }[]; pr?: { number: number; url: string; state: string } | null }
+export type SyncResult = { project: string; outcome: string; checkedThrough?: string; commits?: number; why?: string; files?: string[]; headline?: string; reason?: string; at?: number }
+export type InboxItem = { project: string; title: string; pending: Pending | null; commits?: { subject: string; at: number }[]; headline?: string; checkedThrough: string | null; last: SyncResult | null }
+export type TrashItem = { name: string; deletedAt: number; commit: string }
 
 export class ApiError extends Error {
   status: number
@@ -20,13 +44,37 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+const post = <T>(path: string, json: unknown = {}) => call<T>(path, { method: "POST", body: JSON.stringify(json) })
+
 export const api = {
   projects: () => call<Project[]>("projects"),
-  createProject: (slug: string) => call<{ slug: string }>("projects", { method: "POST", body: JSON.stringify({ slug }) }),
+  connect: (b: { repo?: string; folder?: string; title?: string }) => post<Project>("projects", b),
+  updateProject: (p: string, b: { title?: string; archived?: boolean; settings?: Partial<Settings> }) => call<Project>(`projects/${p}`, { method: "PATCH", body: JSON.stringify(b) }),
+  disconnect: (p: string) => call(`projects/${p}`, { method: "DELETE" }),
+  refresh: (p: string) => post(`projects/${p}/refresh`),
   files: (p: string) => call<FileMeta[]>(`projects/${p}/files`),
-  read: (p: string, f: string) => call<FileDoc>(`projects/${p}/files/${f}`),
-  save: (p: string, f: string, source: string, base: string | null) =>
-    call<{ version: string; commit: string | null }>(`projects/${p}/files/${f}`, { method: "PUT", body: JSON.stringify({ source, base }) }),
+  read: (p: string, f: string, at: "head" | "base" = "head") => call<FileDoc>(`projects/${p}/files/${f}${at === "base" ? "?at=base" : ""}`),
+  save: (p: string, f: string, source: string, base: string | null, doc?: string | null) =>
+    call<{ version: string; commit: string | null }>(`projects/${p}/files/${f}`, { method: "PUT", body: JSON.stringify({ source, base, doc }) }),
+  rename: (p: string, f: string, to: string) => post(`projects/${p}/files/${f}/rename`, { to }),
+  duplicate: (p: string, f: string, to: string) => post(`projects/${p}/files/${f}/duplicate`, { to }),
+  archive: (p: string, f: string) => post(`projects/${p}/files/${f}/archive`),
+  unarchive: (p: string, f: string) => post(`projects/${p}/archive/${f}/restore`),
+  remove: (p: string, f: string) => call(`projects/${p}/files/${f}`, { method: "DELETE" }),
+  archived: (p: string) => call<string[]>(`projects/${p}/archive`),
+  trash: (p: string) => call<TrashItem[]>(`projects/${p}/trash`),
+  restore: (p: string, f: string) => post(`projects/${p}/trash/${f}/restore`),
+  diff: (p: string, f: string) => call<DiagramDiff>(`projects/${p}/files/${f}/diff`),
+  pending: (p: string) => call<Pending | null>(`projects/${p}/pending`),
+  approve: (p: string) => post<{ published: string }>(`projects/${p}/approve`),
+  discard: (p: string) => post(`projects/${p}/discard`),
+  pullRequest: (p: string) => post<{ number: number; url: string }>(`projects/${p}/pull-request`),
+  sync: (p: string) => post<SyncResult>(`projects/${p}/sync`),
+  inbox: () => call<InboxItem[]>("inbox"),
+  settings: () => call<SettingsView>("settings"),
+  saveSettings: (s: Partial<Settings> & { onboarded?: boolean }) => call<{ settings: Settings; onboarded: boolean }>("settings", { method: "PUT", body: JSON.stringify(s) }),
+  setKey: (key: string, provider?: string) => call<{ provider: string }>("keys", { method: "PUT", body: JSON.stringify({ key, provider }) }),
+  exportUrl: (p: string, only?: string, at: "head" | "base" = "head") => `api/projects/${p}/export?at=${at}${only ? `&only=${only}` : ""}`,
 }
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/
@@ -143,11 +191,13 @@ export function lerp(a: Camera, b: Camera, t: number): Camera {
 
 // ---- route ----------------------------------------------------------------------------------------------------
 
-/** `#/<project>/<file>` ⇄ { project, file }. */
-export function parseHash(hash: string): { project?: string; file?: string } {
+/** `#/<project>/<file>` ⇄ { project, file }; `#/inbox` and `#/inbox/<project>` are the inbox. */
+export function parseHash(hash: string): { project?: string; file?: string; inbox?: boolean } {
   const [p, f] = hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent)
+  if (p === "inbox") return { inbox: true, project: f && SLUG.test(f) ? f : undefined }
   if (!p || !SLUG.test(p)) return { project: undefined, file: undefined }
   return { project: p, file: f && SLUG.test(f) ? f : undefined }
 }
 
 export const hashFor = (project?: string, file?: string) => (project ? `#/${project}${file ? `/${file}` : ""}` : "#/")
+export const inboxHash = (project?: string) => `#/inbox${project ? `/${project}` : ""}`
