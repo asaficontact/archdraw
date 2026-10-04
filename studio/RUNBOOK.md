@@ -25,7 +25,8 @@ every change waits on the repo's `archdraw/update` branch until it is approved i
 
 `npx vitest run` (core + server) · `cd ui && npx vitest run` · `npx tsx e2e/app.e2e.ts` · `npx tsx e2e/tour.e2e.ts` ·
 `xvfb-run -a npx tsx e2e/desktop.e2e.ts [--exe <packaged binary>]` (the e2e need `PLAYWRIGHT_CORE` and
-`PLAYWRIGHT_BROWSERS_PATH`).
+`PLAYWRIGHT_BROWSERS_PATH`; on trex: `PLAYWRIGHT_CORE=~/.npm/_npx/e41f203b7505f1fb/node_modules/playwright-core` (1.63.0),
+`PLAYWRIGHT_BROWSERS_PATH=~/work/playwright-browsers`; another pairing finds no browser or hangs on screenshots).
 
 ## When it is down
 
