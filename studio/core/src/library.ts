@@ -10,7 +10,8 @@
 
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, renameSync, unlinkSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
+import { homedir } from "node:os"
 import { AppError, checkSlug, DIAGRAM_DIR, type Project, type Store, slugFrom } from "./config.js"
 import { check } from "./engine.js"
 import { git, lastChange, lsTree, revParse, show } from "./git.js"
@@ -111,7 +112,9 @@ export class Library {
     const dir = this.clonePath(slug)
     mkdirSync(join(this.store.home, "repos"), { recursive: true })
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
-    const clone = (from: string) => git(this.store.home, ["clone", "--filter=blob:none", "--no-tags", "--", from, dir], { timeoutMs: 600_000, env: { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" } })
+    // SSH must never wait for a passphrase nobody sees, but a user's own SSH setup (an agent, an identity file) wins (re-review L4)
+    const ownSsh = !!process.env.GIT_SSH_COMMAND || !!(await git(this.store.home, ["config", "--get", "core.sshCommand"], { ok: [1] })).stdout.trim()
+    const clone = (from: string) => git(this.store.home, ["clone", "--filter=blob:none", "--no-tags", "--", from, dir], { timeoutMs: 600_000, env: ownSsh ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" } })
     try {
       await clone(url)
     } catch (e) {
@@ -148,12 +151,19 @@ export class Library {
   addFolder(path: string, opts: { title?: string; slug?: string } = {}): Project {
     if (!existsSync(path) || !statSync(path).isDirectory()) throw new AppError(404, `no folder ${path}`)
     // a server can confine folder projects (trex: ~/work), so the agent never reads a home's credentials (review of #2 F16)
+    const real = realpathSync(path)
     const root = process.env.ARCHDRAW_FOLDER_ROOT
     if (root) {
-      const real = realpathSync(path)
       const top = realpathSync(root)
       if (real !== top && !real.startsWith(top + "/")) throw new AppError(403, `folders must be inside ${top} on this server`)
     }
+    // never the folder that holds this machine's keys, nor one inside it (re-review of #2 R1)
+    const secretsDir = process.env.ARCHDRAW_SECRETS ? dirname(process.env.ARCHDRAW_SECRETS) : join(homedir(), "work", "secrets")
+    if (existsSync(secretsDir)) {
+      const sec = realpathSync(secretsDir)
+      if (real === sec || real.startsWith(sec + "/")) throw new AppError(403, "that folder holds this machine's secrets; choose a project folder")
+    }
+    path = real // stored resolved (L5)
     const slug = opts.slug && !RESERVED.includes(opts.slug) ? checkSlug(opts.slug, "project") : this.freeSlug(opts.slug || path)
     const project: Project = { slug, title: opts.title || path.split("/").filter(Boolean).pop()!, source: { kind: "folder", path }, addedAt: Date.now() }
     mkdirSync(join(path, DIAGRAM_DIR), { recursive: true })
@@ -597,9 +607,10 @@ export class Library {
       if (expectedHead && head !== expectedHead) throw new AppError(409, "the update changed since you opened it; look at it again before discarding")
       const onGitHub = p.source.kind === "github" && !p.source.repo.startsWith("local/")
       const pr = this.forge && onGitHub ? await this.forge.pullRequest(p, dir).catch(() => null) : null
-      if (pr && pr.state === "OPEN" && this.forge) await this.forge.close(p, dir, pr.number)
+      // the leased delete first: if another device pushed meanwhile, nothing (not even the PR) is closed (re-review L2)
       const del = await git(dir, ["push", `--force-with-lease=refs/heads/${UPDATE_BRANCH}:${head}`, "origin", `:refs/heads/${UPDATE_BRANCH}`], { ok: [1] })
       if (del.code !== 0 && /stale info|rejected/.test(del.stderr)) throw new AppError(409, "another device changed the update just now; look at it again")
+      if (pr && pr.state === "OPEN" && this.forge) await this.forge.close(p, dir, pr.number).catch(() => undefined) // deleting its branch usually closed it already
       await git(dir, ["update-ref", "-d", `refs/remotes/origin/${UPDATE_BRANCH}`], { ok: [1] })
       rmSync(this.workPath(slug), { recursive: true, force: true })
       await git(dir, ["worktree", "prune"])
@@ -639,6 +650,8 @@ export function parseRepo(input: string): { repo: string; url: string; ssh?: str
 function pushError(p: Project, stderr: string, other?: string): AppError {
   const repo = p.source.kind === "github" ? p.source.repo : p.slug
   if (/stale info|fetch first|non-fast-forward|\[rejected\]/.test(stderr)) return new AppError(409, "another device changed this project's waiting update first; reload and try again")
+  const refused = /remote rejected\]?\s*\S*\s*\(([^)]+)\)|push declined[^\n]*|repository rule[^\n]*/i.exec(stderr)
+  if (refused && !/stale info/.test(stderr)) return new AppError(403, other ?? `${repo}'s remote refused the push: ${(refused[1] ?? refused[0]).trim().slice(0, 160)}`)
   if (/Authentication|could not read Username|Permission|denied|403|terminal prompts disabled|protected branch/i.test(stderr))
     return new AppError(403, other ?? `archdraw cannot push to ${repo} with this machine's git login. You need write access; sign git in to GitHub ("gh auth login") and try again.`)
   return new AppError(502, other ?? `could not reach ${repo}'s remote: ${stderr.trim().slice(0, 160)}`)

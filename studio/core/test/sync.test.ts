@@ -116,7 +116,7 @@ describe("the sync", () => {
     ])
     const r = await w.syncer.sync("shop")
     expect(r).toMatchObject({ outcome: "failed" })
-    expect((r as { reason: string }).reason).toMatch(/cannot push/)
+    expect((r as { reason: string }).reason).toMatch(/refused the push|cannot push/)
     w.faux.setResponses([]) // a second automatic tick must not call the model at all
     expect(await w.syncer.sync("shop")).toMatchObject({ outcome: "skipped", reason: expect.stringMatching(/^waiting:/) })
   })

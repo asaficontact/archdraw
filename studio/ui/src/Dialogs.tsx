@@ -352,7 +352,7 @@ export function SettingsDialog({ project, onClose, onSaved }: { project?: Projec
             Approving an update
             <select className="ad-input" value={s.publish} onChange={e => set("publish", e.target.value as Settings["publish"])}>
               <option value="pull-request">merges a pull request (recommended)</option>
-              <option value="direct">pushes straight to the branch</option>
+              <option value="direct">pushes straight to the branch (with a merge commit when it moved meanwhile)</option>
             </select>
           </label>
           <label>

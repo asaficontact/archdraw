@@ -9,7 +9,7 @@ import { Store } from "../src/config.js"
 import { Library } from "../src/library.js"
 import { MemoryKeys } from "../src/models.js"
 import { Spend } from "../src/spend.js"
-import { Jail } from "../src/tools.js"
+import { Jail, makeTools } from "../src/tools.js"
 
 const SYSTEM = '// title: Shop\n\nnode web "Web"\nnode api "API" right of web\nedge web -> api "calls" from: right to: left\n'
 const GOOD = SYSTEM + 'node db "DB" right of api\nedge api -> db "SQL" from: right to: left\n'
@@ -68,6 +68,55 @@ describe("the agent", () => {
     expect(prop.doc).toContain("Where data lives")
     const grep = c.events.find(e => e.type === "tool") as any
     expect(grep.name).toBe("grep")
+  })
+
+  it("keeps *.env files and secrets/ folders out of read, grep and git_diff (re-review of #2 R1)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "archdraw-r1-"))
+    const sh = (...a: string[]) => execFileSync("git", a, { cwd: root, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
+    sh("init", "-q", "-b", "main")
+    writeFileSync(join(root, "app.ts"), "export const ok = 1\n")
+    sh("add", "-A")
+    sh("commit", "-q", "-m", "one")
+    const first = sh("rev-parse", "HEAD").trim()
+    mkdirSync(join(root, "config", "secrets"), { recursive: true })
+    writeFileSync(join(root, "providers.env"), "OPENAI_API_KEY=sk-hunter2\n")
+    writeFileSync(join(root, "config", "secrets", "prod.yml"), "password: hunter2\n")
+    writeFileSync(join(root, "app.ts"), "export const ok = 2 // hunter2 is not a secret here\n")
+    sh("add", "-A")
+    sh("commit", "-q", "-m", "two")
+    const tools = makeTools({ root, rev: "HEAD", ignore: [], diagrams: async () => [], readDiagram: async () => ({ source: "", doc: null }), skills: {}, onProposal: () => undefined })
+    const run = async (name: string, args: object) => {
+      const t = tools.find(x => x.name === name)!
+      try {
+        const r = await t.execute("1", args as never)
+        return (r.content as { text: string }[]).map(c => c.text).join("")
+      } catch (e) {
+        return `refused: ${(e as Error).message}`
+      }
+    }
+    expect(await run("read", { path: "providers.env" })).toMatch(/^refused/)
+    expect(await run("read", { path: "config/secrets/prod.yml" })).toMatch(/^refused/)
+    const found = await run("grep", { pattern: "hunter2" })
+    expect(found).toContain("app.ts")
+    expect(found).not.toContain("providers.env")
+    expect(found).not.toContain("prod.yml")
+    const diff = await run("git_diff", { range: `${first}..HEAD` })
+    expect(diff).toContain("app.ts")
+    expect(diff).not.toContain("sk-hunter2")
+    expect(diff).not.toContain("password")
+  })
+
+  it("never connects the folder that holds this machine's keys", () => {
+    const home = mkdtempSync(join(tmpdir(), "archdraw-sec-"))
+    mkdirSync(join(home, "secrets"))
+    writeFileSync(join(home, "secrets", "providers.env"), "X=1\n")
+    process.env.ARCHDRAW_SECRETS = join(home, "secrets", "providers.env")
+    try {
+      const lib = new Library(new Store(join(home, "app")), null)
+      expect(() => lib.addFolder(join(home, "secrets"))).toThrow(/secrets/)
+    } finally {
+      delete process.env.ARCHDRAW_SECRETS
+    }
   })
 
   it("never reads secrets or leaves the project", () => {

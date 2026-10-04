@@ -128,8 +128,10 @@ ipcMain.handle("archdraw:pick-folder", async () => {
 
 app.whenReady().then(async () => {
   // the app needs no camera, microphone, location or notifications from the page
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, done) => done(false))
-  session.defaultSession.setPermissionCheckHandler(() => false)
+  // except writing to the clipboard ("Copy link"; re-review of #2 L7)
+  const allowed = (perm: string) => perm === "clipboard-sanitized-write"
+  session.defaultSession.setPermissionRequestHandler((_wc, perm, done) => done(allowed(perm)))
+  session.defaultSession.setPermissionCheckHandler((_wc, perm) => allowed(perm))
   const keys = new SafeKeys(join(app.getPath("userData"), "keys.json"))
   server = await start({
     home: app.getPath("userData"),

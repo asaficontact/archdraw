@@ -34,7 +34,7 @@ export async function installSample(lib: Library): Promise<Project> {
   const src = join(assetsDir(), "sample", SAMPLE)
   if (!existsSync(src)) throw new Error("this build has no sample project")
   const existing = lib.store.project(SAMPLE)
-  if (existing && !existing.sample) throw new Error(`a project called ${SAMPLE} is not the sample; rename it to replay the tour`) // review of #2 F8
+  if (existing && !existing.sample) throw new Error(`a project called ${SAMPLE} is not the sample; remove it from archdraw (its … menu) to replay the tour`) // review of #2 F8
   if (existing) await lib.disconnect(SAMPLE)
   const dir = join(lib.store.home, "sample")
   rmSync(dir, { recursive: true, force: true })

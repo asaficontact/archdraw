@@ -19,6 +19,8 @@ const CAP = 32_000
 const SECRET = [
   /(^|\/)\.git(\/|$)/,
   /(^|\/)\.env(\..*)?$/,
+  /\.env$/, // providers.env and the like (re-review of #2 R1)
+  /(^|\/)(secrets?|credentials?)\//, // anything inside a secrets/ or credentials/ folder (R1)
   /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/,
   /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
   /(^|\/)(secrets?|credentials?)(\.[a-z]+)?$/,
@@ -29,7 +31,7 @@ const SECRET = [
 ]
 /** The same refusals as git pathspecs, so git_diff/git_log/grep never print a secret's contents (review of #2 F1). */
 const SECRET_PATHSPECS = [
-  "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
+  "**/.env", "**/.env.*", "**/*.env", "**/secret/**", "**/secrets/**", "**/credential/**", "**/credentials/**", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.kdbx",
   "**/id_rsa*", "**/id_ed25519*", "**/id_ecdsa*", "**/id_dsa*", "**/secret", "**/secrets", "**/secret.*", "**/secrets.*",
   "**/credential*", "**/.npmrc", "**/.netrc", "**/.pypirc", "**/.git-credentials", "**/.ssh/**", "**/.aws/**", "**/.gnupg/**",
   "**/.kube/**", "**/.docker/**", "**/.config/**", "**/node_modules/**",
@@ -54,6 +56,13 @@ export class Jail {
     private ignore: string[] = [],
   ) {
     this.root = realpathSync(root)
+    // a server that confines projects (trex: ~/work) re-checks the resolved root each time, so a symlink retargeted
+    // after connecting cannot escape it (re-review of #2 L5)
+    const top = process.env.ARCHDRAW_FOLDER_ROOT
+    if (top) {
+      const t = realpathSync(top)
+      if (this.root !== t && !this.root.startsWith(t + sep)) throw new Error(`this project's folder is outside ${t}`)
+    }
   }
   /** The real absolute path of `p` inside the root, or a refusal that says why. */
   path(p: string): string {
