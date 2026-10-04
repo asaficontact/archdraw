@@ -1,0 +1,34 @@
+# archdraw desktop packages. Unsigned for now (signing and notarization come with LoomDraw).
+appId: com.safiware.archdraw
+productName: archdraw
+copyright: Copyright © 2026 Safiware
+directories:
+  app: desktop/app
+  output: release
+  buildResources: desktop
+electronVersion: 44.5.1
+asar: true
+files:
+  - "**/*"
+  - "!**/*.map"
+extraResources:
+  - { from: ui/dist, to: ui }
+  - { from: core/assets, to: assets }
+  - { from: desktop/icon.png, to: icon.png }
+  - { from: ../LICENSE, to: licenses/reladraw-LICENSE }
+  - { from: ../NOTICE, to: licenses/reladraw-NOTICE }
+linux:
+  syncDesktopName: true
+  target: [AppImage, deb]
+  category: Development
+  icon: desktop/icon.png
+  maintainer: Safiware <archdraw@users.noreply.github.com>
+  synopsis: Architecture diagrams for code projects, kept current from git
+mac:
+  target: [{ target: zip, arch: [arm64, x64] }]
+  category: public.app-category.developer-tools
+  icon: desktop/icon.png
+  identity: "-" # ad-hoc: Apple Silicon refuses to run an unsigned app; real signing comes with LoomDraw
+deb:
+  depends: [git]
+artifactName: "${productName}-${version}-${arch}.${ext}"

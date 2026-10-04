@@ -1,0 +1,19 @@
+// title: Ordering, end to end
+// summary: An order is placed, queued for the barista, made, and the customer is told it is ready.
+
+style ours  fill: theme-primary-subtle  border: theme-primary
+style store  fill: theme-fill  border: theme-border  badge: database
+
+node app "Customer app"  style: ours
+node api "Orders API"  right of app  style: ours
+node orders "Orders"  right of api  style: store
+node queue "Barista queue"  below api  style: ours
+node tablet "Barista tablet"  below queue  style: ours
+node push "Push service"  below app  level with tablet
+
+edge app -> api "place order" from: right to: left
+edge api -> orders "insert" from: right to: left
+edge api -> queue "enqueue" from: bottom to: top
+edge queue -> tablet "next order" from: bottom to: top
+edge tablet -> push "ready!" from: left to: right
+edge push -> app "notify" from: top to: bottom

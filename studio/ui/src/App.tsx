@@ -1,32 +1,50 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { agentApi, diffCount, lineDiff, type Proposal, type Status, type Target } from "./agent"
 import { Canvas, type Card } from "./Canvas"
-import { ApiError, SLUG, api, hashFor, meta, parseHash, type FileMeta, type Project } from "./model"
+import { ChatPanel } from "./Chat"
+import { ConnectDialog, Confirm, ExportDialog, NameDialog, SettingsDialog, TrashDialog } from "./Dialogs"
+import { Inbox } from "./Inbox"
+import { Menu } from "./Menu"
+import { ApiError, api, hashFor, type SettingsView, inboxHash, meta, parseHash, type FileMeta, type Project } from "./model"
+import { Palette } from "./Palette"
 import { renderSource } from "./render"
+import { StartScreen, Tour, tourEvent, type TourState } from "./Tour"
+import { Working } from "./Working"
 
-const useDark = () => {
+const DOCK_W = 440
+const EDIT_W = 560
+const GHOST = "~proposed"
+
+const remember = (k: string, v: string | null) => {
+  try {
+    if (v === null) localStorage.removeItem(k)
+    else localStorage.setItem(k, v)
+  } catch {
+    /* storage blocked: the choice lasts this visit */
+  }
+}
+const recall = (k: string) => {
+  try {
+    return localStorage.getItem(k)
+  } catch {
+    return null
+  }
+}
+
+/** Light or dark: the Settings theme, where "system" follows the OS. */
+const useDark = (theme: "system" | "light" | "dark") => {
   const media = window.matchMedia("(prefers-color-scheme: dark)")
-  const stored = () => localStorage.getItem("archdraw:theme")
-  const [mode, setMode] = useState<string>(() => stored() ?? "system")
   const [sys, setSys] = useState(media.matches)
   useEffect(() => {
     const on = (e: MediaQueryListEvent) => setSys(e.matches)
     media.addEventListener("change", on)
     return () => media.removeEventListener("change", on)
   }, [media])
-  const dark = mode === "dark" || (mode === "system" && sys)
+  const dark = theme === "dark" || (theme === "system" && sys)
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light"
   }, [dark])
-  const cycle = () => {
-    const next = mode === "system" ? (sys ? "light" : "dark") : mode === "dark" ? "light" : "dark"
-    try {
-      localStorage.setItem("archdraw:theme", next)
-    } catch {
-      /* storage blocked: the choice lasts this visit */
-    }
-    setMode(next)
-  }
-  return { dark, cycle }
+  return dark
 }
 
 const ago = (t: number) => {
@@ -37,8 +55,24 @@ const ago = (t: number) => {
   return `${Math.round(s / 86400)} d ago`
 }
 
+const STATUS_LABEL: Record<string, string> = { added: "new · waiting", changed: "changed · waiting" }
+
+type DialogState =
+  | null
+  | { kind: "connect" }
+  | { kind: "new-diagram" }
+  | { kind: "rename"; name: string }
+  | { kind: "duplicate"; name: string }
+  | { kind: "delete"; name: string }
+  | { kind: "export"; name?: string }
+  | { kind: "trash" }
+  | { kind: "settings" }
+  | { kind: "rename-project"; slug: string }
+  | { kind: "disconnect"; slug: string }
+
 export default function App() {
-  const { dark, cycle } = useDark()
+  const [theme, setTheme] = useState<"system" | "light" | "dark">("system")
+  const dark = useDark(theme)
   const [route, setRoute] = useState(() => parseHash(location.hash))
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [files, setFiles] = useState<FileMeta[]>([])
@@ -47,11 +81,27 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [menu, setMenu] = useState(false)
-  const [focus, setFocus] = useState<{ key?: string; n: number }>({ n: 0 })
+  const [focus, setFocus] = useState<{ key?: string; with?: string; n: number }>({ n: 0 })
   const [fitAll, setFitAll] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [creating, setCreating] = useState<null | "project" | "file">(null)
+  const [dialog, setDialog] = useState<DialogState>(null)
+  const [palette, setPalette] = useState(false)
+  const [targets, setTargets] = useState<Target[]>([])
+  const [chat, setChat] = useState(false)
+  const [prefill, setPrefill] = useState<{ text: string; n: number } | null>(null) // the tour types the request for you
+  const [talk, setTalk] = useState<string | null>(null)
+  const [status, setStatus] = useState<Status | null>(null)
+  const [staged, setStaged] = useState<{ p: Proposal } | null>(null)
+  const [chatFocus, setChatFocus] = useState(0)
+  const [loaded, setLoaded] = useState<string | null>(null) // the project whose diagrams have arrived
+  const [tour, setTour] = useState<TourState>({ status: "new", step: 0 })
+  const [keysView, setKeysView] = useState<{ keys: Record<string, boolean>; editable: boolean; provider: string } | null>(null)
+  const loadKeys = useCallback(() => {
+    api.settings().then(v => setKeysView({ keys: v.keys, editable: v.keysEditable, provider: v.settings.provider }), () => undefined)
+  }, [])
+  useEffect(loadKeys, [loadKeys])
+  const [starting, setStarting] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null })
 
   // switching project drops this project's drafts: ask first, and stay put on no (review L-c)
   const unsavedRef = useRef(false)
@@ -60,57 +110,205 @@ export default function App() {
   useEffect(() => {
     const on = (e: HashChangeEvent) => {
       const next = parseHash(location.hash)
-      if (unsavedRef.current && next.project !== routeRef.current.project && !window.confirm("Discard unsaved edits in this project?")) {
+      if (unsavedRef.current && (next.inbox || next.project !== routeRef.current.project) && !window.confirm("Discard unsaved edits in this project?")) {
         history.replaceState(null, "", new URL(e.oldURL).hash)
         return
       }
       setRoute(next)
+      setMenu(false)
     }
     window.addEventListener("hashchange", on)
     return () => window.removeEventListener("hashchange", on)
   }, [])
+
+  useEffect(() => {
+    api.settings().then(v => {
+      setTheme(v.settings.theme)
+      const o = (v as SettingsView & { onboarding?: TourState }).onboarding
+      if (o) setTour(o)
+    }, () => undefined)
+  }, [])
+
 
   const loadProjects = useCallback(() => {
     api.projects().then(setProjects, e => setError(String(e.message ?? e)))
   }, [])
   useEffect(loadProjects, [loadProjects])
 
-  // default to the first project
+  // -- the tour --------------------------------------------------------------------------------------------------
+  const saveTour = useCallback((next: TourState) => {
+    setTour(next)
+    void fetch("api/onboarding", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) }).catch(() => undefined)
+  }, [])
+  const startTour = useCallback(async () => {
+    try {
+      await api.startSample()
+      saveTour({ status: "active", step: 2, chipDismissed: true })
+      loadProjects()
+      location.hash = hashFor("bean-there")
+    } catch (e) {
+      setNotice(e instanceof ApiError ? e.message : String(e))
+    }
+  }, [saveTour, loadProjects])
+  // each step opens the place where its action happens, so nobody hunts for a button (Tawab, 10-04: "the next steps
+  // open up in the places where the action needs to be taken")
+  const entered = useRef(0)
   useEffect(() => {
-    if (projects?.length && !route.project) location.replace(hashFor(projects[0].slug))
-  }, [projects, route.project])
+    if (tour.status !== "active") {
+      entered.current = 0
+      return
+    }
+    if (entered.current === tour.step) return
+    entered.current = tour.step
+    const sample = projects?.find(p => p.sample)?.slug ?? "bean-there"
+    const desktop = window.innerWidth >= 640
+    if (tour.step === 2) {
+      setEditing(false)
+      setChat(false)
+      location.hash = hashFor(sample)
+      setTimeout(() => setFitAll(n => n + 1), 50) // every card in view, none under the toolbar
+    } else if (tour.step === 3) {
+      setChat(false)
+      location.hash = hashFor(sample, "payments")
+      if (desktop) setEditing(true)
+    } else if (tour.step === 4) {
+      setEditing(false)
+      location.hash = hashFor(sample, "overview")
+      setChat(true)
+      setPrefill(n => ({ text: "Add a loyalty program", n: (n?.n ?? 0) + 1 }))
+      setChatFocus(n => n + 1)
+    } else if (tour.step === 5) {
+      setEditing(false)
+      setChat(false)
+      location.hash = inboxHash(sample)
+    } else if (tour.step === 6) {
+      setChat(false)
+      location.hash = hashFor(sample)
+      setTimeout(() => setFitAll(n => n + 1), 50)
+    }
+  }, [tour.status, tour.step, projects])
 
-  // a project's files and their sources
-  const project = route.project
+  useEffect(() => {
+    const on = () => void startTour()
+    window.addEventListener("archdraw:tour", on)
+    return () => window.removeEventListener("archdraw:tour", on)
+  }, [startTour])
+
+  // default to the first project that is not archived
+  useEffect(() => {
+    const first = projects?.find(p => !p.archived)
+    if (first && !route.project && !route.inbox) location.replace(hashFor(first.slug))
+  }, [projects, route.project, route.inbox])
+
+  const project = route.inbox ? undefined : route.project
+  const current = projects?.find(p => p.slug === (route.project ?? ""))
+  // only the project on screen may fill the screen: a slower load of the one before is dropped, never shown (Tawab, 10-04:
+  // a project's diagrams did not appear until a sync)
+  const showing = useRef<string | undefined>(undefined)
   const loadFiles = useCallback(async (p: string) => {
     const list = await api.files(p)
     const docs = await Promise.all(list.map(f => api.read(p, f.name)))
+    if (showing.current !== p) return
     setFiles(list)
     setSources(Object.fromEntries(docs.map(d => [d.name, { source: d.source, version: d.version }])))
+    setLoaded(p)
   }, [])
+  const reload = useCallback(async () => {
+    loadProjects()
+    if (project) await loadFiles(project).catch(e => setError(e instanceof ApiError ? e.message : String(e)))
+  }, [project, loadFiles, loadProjects])
+
   useEffect(() => {
+    showing.current = project
     if (!project) return
     setFiles([])
     setSources({})
     setDrafts({})
-    loadFiles(project).catch(e => setError(e instanceof ApiError ? e.message : String(e)))
+    setStaged(null)
+    setError(null)
+    setLoaded(null)
+    setTalk(recall(`archdraw:talk:${project}`))
+    loadFiles(project).catch(e => showing.current === project && setError(e instanceof ApiError ? e.message : String(e)))
   }, [project, loadFiles])
 
   // the selected file flies into view
   useEffect(() => {
     setFocus(f => ({ key: route.file, n: f.n + 1 }))
-    setMenu(false)
   }, [route.file, project, files.length])
+  useEffect(() => {
+    if (current?.sample && route.file === "payments") tourEvent("drilled")
+  }, [current?.sample, route.file])
 
-  const cards: Card[] = useMemo(
-    () =>
-      files.map(f => {
-        const source = drafts[f.name] ?? sources[f.name]?.source ?? ""
-        const m = meta(source)
-        return { key: f.name, title: m.title ?? f.name, summary: m.summary ?? "", r: renderSource(source, dark) }
-      }),
-    [files, sources, drafts, dark],
+  const accept = useCallback(
+    async (p: Proposal) => {
+      if (!project) return
+      const exists = files.some(f => f.name === p.name)
+      try {
+        const r = await api.save(project, p.name, p.source, exists ? (sources[p.name]?.version ?? null) : null, p.doc ?? null)
+        setSources(s => ({ ...s, [p.name]: { source: p.source, version: r.version } }))
+        setDrafts(d => {
+          const { [p.name]: _, ...rest } = d
+          return rest
+        })
+        setStaged(null)
+        setNotice(current?.source.kind === "github" ? "Accepted · waiting for review in the Inbox" : "Accepted and saved")
+        await reload()
+        location.hash = hashFor(project, p.name)
+        // told last: the tour's next step navigates, and must not be undone by this one's move (a race on a slow reload)
+        tourEvent("proposal.accepted")
+      } catch (e) {
+        setNotice(e instanceof ApiError ? `Not saved: ${e.message}` : `Not saved: ${String(e)}`)
+        throw e
+      }
+    },
+    [project, files, sources, reload, current],
   )
+
+  // a proposal on the canvas: a dashed card beside the diagram it would replace, framed together
+  const stage = useCallback(
+    (p: Proposal | null) => {
+      const exists = (name: string) => files.some(f => f.name === name)
+      setStaged(p ? { p } : null)
+      if (p && window.innerWidth < 640) setChat(false) // on a phone the dock covers the canvas; the card carries Accept
+      if (p) setFocus(f => ({ key: p.name + GHOST, with: exists(p.name) ? p.name : undefined, n: f.n + 1 }))
+    },
+    [files],
+  )
+
+  const cards: Card[] = useMemo(() => {
+    const out: Card[] = files.map(f => {
+      const source = drafts[f.name] ?? sources[f.name]?.source ?? ""
+      const m = meta(source)
+      return { key: f.name, title: m.title ?? f.name, summary: m.summary ?? "", r: renderSource(source, dark), badge: STATUS_LABEL[f.status] }
+    })
+    const p = staged?.p
+    if (p) {
+      const m = meta(p.source)
+      const before = sources[p.name]?.source
+      const { added, removed } = diffCount(lineDiff(before ?? "", p.source))
+      const ghost: Card = {
+        key: p.name + GHOST,
+        title: m.title ?? p.name,
+        summary: m.summary ?? "",
+        r: renderSource(p.source, dark),
+        ghost: true,
+        badge: before === undefined ? "Proposed · new diagram" : `Proposed · +${added} −${removed}`,
+        actions: (
+          <>
+            <button type="button" className="ad-btn" onClick={() => (setStaged(null), tourEvent("proposal.dismissed"))}>
+              Dismiss
+            </button>
+            <button type="button" className="ad-btn ad-btn-primary" onClick={() => void accept(p).catch(() => undefined)} data-testid="ghost-accept">
+              {before === undefined ? "Create" : "Accept"}
+            </button>
+          </>
+        ),
+      }
+      const at = out.findIndex(c => c.key === p.name)
+      out.splice(at < 0 ? out.length : at + 1, 0, ghost)
+    }
+    return out
+  }, [files, sources, drafts, dark, staged, accept])
 
   const sel = route.file && files.some(f => f.name === route.file) ? route.file : undefined
   const selSource = sel ? (drafts[sel] ?? sources[sel]?.source ?? "") : ""
@@ -135,14 +333,16 @@ export default function App() {
         const { [sel]: _, ...rest } = d
         return rest
       })
-      setNotice(r.commit ? `Saved and committed to the brain (${r.commit})` : "Saved")
+      setNotice(current?.source.kind === "github" ? "Saved · waiting for review in the Inbox" : "Saved")
+      if (current?.sample) tourEvent("source.saved")
       api.files(project).then(setFiles)
+      loadProjects()
     } catch (e) {
       setNotice(e instanceof ApiError ? `Not saved: ${e.message}` : `Not saved: ${String(e)}`)
     } finally {
       setSaving(false)
     }
-  }, [project, sel, dirty, saving, drafts, sources, selCard])
+  }, [project, sel, dirty, saving, drafts, sources, selCard, current, loadProjects])
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
@@ -150,11 +350,112 @@ export default function App() {
         e.preventDefault()
         void save()
       }
-      if (e.key === "Escape") setEditing(false)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        setPalette(p => !p)
+      }
+      if (e.key === "Escape" && !dialog) {
+        if (palette) setPalette(false)
+        else setEditing(false)
+      }
     }
     window.addEventListener("keydown", on)
     return () => window.removeEventListener("keydown", on)
-  }, [save])
+  }, [save, palette, dialog])
+
+  // the palette's targets: every project, and every diagram in each. Loaded ahead of time (and again when the palette
+  // opens), so a name typed the moment it opens still jumps instead of falling through to "ask the agent"
+  useEffect(() => {
+    if (!projects) return
+    Promise.all(projects.filter(p => !p.archived).map(p => api.files(p.slug).then(fs => [p, fs] as const)))
+      .then(all =>
+        setTargets(
+          all.flatMap(([p, fs]) => [
+            { kind: "project" as const, project: p.slug, title: p.title, hint: `${fs.length} diagrams` },
+            ...fs.map(f => ({ kind: "file" as const, project: p.slug, file: f.name, title: f.title, hint: p.title })),
+          ]),
+        ),
+      )
+      .catch(() => undefined)
+  }, [palette, projects, files.length])
+
+  // the agent's budget and this project's conversations, while the chat is open
+  const refreshStatus = useCallback(() => {
+    agentApi.status().then(setStatus, () => undefined)
+  }, [])
+  useEffect(() => {
+    if (!chat) return
+    refreshStatus()
+    const t = setInterval(refreshStatus, 20000)
+    return () => clearInterval(t)
+  }, [chat, refreshStatus])
+
+  // every path that needs a conversation goes through `opening`, so the panel and a ⌘K ask never start two
+  const opening = useRef<Promise<string> | null>(null)
+  const openTalk = useCallback(
+    (forProject?: string) => {
+      const p = forProject ?? project
+      if (!p) return Promise.reject(new Error("no project"))
+      if (!opening.current) {
+        opening.current = agentApi
+          .open(p)
+          .then(c => {
+            remember(`archdraw:talk:${p}`, c.id)
+            setTalk(c.id)
+            return c.id
+          })
+          .finally(() => (opening.current = null))
+      }
+      return opening.current
+    },
+    [project],
+  )
+  useEffect(() => {
+    if (chat && project && !talk) openTalk().catch(e => setNotice(e instanceof ApiError ? e.message : String(e)))
+  }, [chat, project, talk, openTalk])
+
+  const openChat = () => {
+    setChat(true)
+    setEditing(false)
+    setChatFocus(n => n + 1)
+  }
+
+  const ask = useCallback(
+    async (text: string) => {
+      if (!project) return
+      const send = (id: string) => agentApi.say(id, text, sel, sel ? selSource : undefined)
+      try {
+        try {
+          await send(talk ?? (await openTalk()))
+        } catch (e) {
+          // the remembered conversation ended (409) or the app restarted (404): one fresh conversation, then send
+          if (!(e instanceof ApiError) || (e.status !== 404 && e.status !== 409)) throw e
+          setTalk(null)
+          await send(await openTalk())
+        }
+      } catch (e) {
+        setNotice(e instanceof ApiError ? e.message : String(e))
+        throw e
+      }
+      refreshStatus()
+    },
+    [project, talk, sel, selSource, refreshStatus, openTalk],
+  )
+
+  // asking from the inbox: go to the project, open the chat, send
+  const pendingAsk = useRef<string | null>(null)
+  const askAbout = (p: string, text: string) => {
+    pendingAsk.current = text
+    location.hash = hashFor(p)
+    openChat()
+  }
+  useEffect(() => {
+    if (project && pendingAsk.current && files.length) {
+      const t = pendingAsk.current
+      pendingAsk.current = null
+      void ask(t).catch(() => undefined)
+    }
+  }, [project, files.length, ask])
 
   // unsaved edits survive nothing: warn before the tab closes or reloads (review L5)
   const unsaved = Object.entries(drafts).some(([k, v]) => v !== sources[k]?.source)
@@ -168,154 +469,483 @@ export default function App() {
 
   useEffect(() => {
     if (!notice) return
-    const t = setTimeout(() => setNotice(null), 4000)
+    const t = setTimeout(() => setNotice(null), 4500)
     return () => clearTimeout(t)
   }, [notice])
 
-  const current = projects?.find(p => p.slug === project)
+  const waitingCount = projects?.filter(p => p.pending && !p.archived).length ?? 0
+  const panelW = editing && sel ? Math.min(EDIT_W, window.innerWidth) : chat && !route.inbox ? Math.min(DOCK_W, window.innerWidth) : 0
+  const live = projects?.filter(p => !p.archived) ?? []
+  const shelved = projects?.filter(p => p.archived) ?? []
+
+  const diagramMenu = (name: string) => [
+    { label: "Rename…", onSelect: () => setDialog({ kind: "rename", name }) },
+    { label: "Duplicate…", onSelect: () => setDialog({ kind: "duplicate", name }) },
+    { label: "Export…", onSelect: () => (setDialog({ kind: "export", name }), tourEvent("export.opened")) },
+    {
+      label: "Copy link",
+      onSelect: () => {
+        const url = `${location.origin}${location.pathname}${hashFor(project, name)}`
+        navigator.clipboard?.writeText(url).then(() => setNotice("Link copied"), () => setNotice(url))
+      },
+    },
+    "separator" as const,
+    {
+      label: "Archive",
+      onSelect: async () => {
+        try {
+          await api.archive(project!, name)
+          setNotice(`${name} archived · restore it from Archive and trash`)
+          if (route.file === name) location.hash = hashFor(project)
+          await reload()
+        } catch (e) {
+          setNotice(e instanceof ApiError ? e.message : String(e))
+        }
+      },
+    },
+    { label: "Delete…", danger: true, onSelect: () => setDialog({ kind: "delete", name }) },
+  ]
+
+  const projectMenu = (p: Project) => [
+    { label: "Rename…", onSelect: () => setDialog({ kind: "rename-project", slug: p.slug }) },
+    ...(p.source.kind === "github"
+      ? [
+          {
+            label: "Sync now",
+            onSelect: async () => {
+              setNotice(`Checking ${p.title}…`)
+              try {
+                const r = await api.sync(p.slug)
+                setNotice(r.outcome === "drafted" ? `${p.title}: an update is waiting in the Inbox` : r.outcome === "skipped" ? `${p.title}: ${r.reason}` : `${p.title}: up to date`)
+                await reload()
+              } catch (e) {
+                setNotice(e instanceof ApiError ? e.message : String(e))
+              }
+            },
+          },
+        ]
+      : []),
+    { label: "Export…", onSelect: () => (location.hash = hashFor(p.slug), setDialog({ kind: "export" })) },
+    { label: "Settings…", onSelect: () => (location.hash = hashFor(p.slug), setDialog({ kind: "settings" })) },
+    "separator" as const,
+    {
+      label: p.archived ? "Unarchive" : "Archive",
+      onSelect: async () => {
+        await api.updateProject(p.slug, { archived: !p.archived })
+        loadProjects()
+      },
+    },
+    { label: "Remove from archdraw…", danger: true, onSelect: () => setDialog({ kind: "disconnect", slug: p.slug }) },
+  ]
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--page)] text-[var(--text)]">
-      {/* sidebar: projects, then the selected project's diagrams */}
       <aside
         className={`ad-side z-20 flex w-72 shrink-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:shadow-2xl ${menu ? "" : "max-md:-translate-x-full"} transition-transform`}
+        data-tour="sidebar"
       >
         <div className="flex items-center gap-2 px-4 pt-4 pb-3">
           <Logo />
           <span className="text-[15px] font-semibold tracking-tight">archdraw</span>
-          <span className="ml-auto text-xs text-[var(--muted)]">studio</span>
         </div>
         <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-          <div className="ad-label">Projects</div>
-          {projects?.map(p => (
-            <a key={p.slug} href={hashFor(p.slug)} className={`ad-item ${p.slug === project ? "ad-item-on" : ""}`} data-testid={`project-${p.slug}`}>
-              <span className="truncate">{p.title}</span>
-              <span className="ml-auto text-xs text-[var(--muted)]">{p.files}</span>
-            </a>
+          <a href={inboxHash()} className={`ad-item ${route.inbox ? "ad-item-on" : ""}`} data-testid="nav-inbox" data-tour="inbox">
+            <span>Inbox</span>
+            {waitingCount > 0 && <span className="ad-count">{waitingCount}</span>}
+          </a>
+          <div className="ad-label mt-2">Projects</div>
+          {live.map(p => (
+            <div key={p.slug} className={`ad-item ad-row-hover ${p.slug === route.project && !route.inbox ? "ad-item-on" : ""}`}>
+              <a href={hashFor(p.slug)} className="flex min-w-0 flex-1 items-center gap-2" data-testid={`project-${p.slug}`}>
+                <span className="truncate">{p.title}</span>
+                {p.sample && <span className="ad-tag">Sample</span>}
+                {p.pending && <span className="ad-pip" title="changes waiting" />}
+              </a>
+              <span className="text-xs text-[var(--muted)]">{p.files}</span>
+              <Menu label={`${p.title} menu`} items={projectMenu(p)} testid={`project-menu-${p.slug}`} />
+            </div>
           ))}
           {projects?.length === 0 && <p className="px-3 py-2 text-sm text-[var(--muted)]">No projects yet.</p>}
-          <button type="button" className="ad-item text-[var(--muted)]" onClick={() => setCreating("project")}>
-            + New project
+          <button type="button" className="ad-item text-[var(--muted)]" onClick={() => setDialog({ kind: "connect" })} data-testid="add-project">
+            + Add project
           </button>
+          {tour.status === "new" && !tour.chipDismissed && (projects?.length ?? 0) > 0 && (
+            <div className="ad-chip" data-testid="tour-chip">
+              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => void startTour()}>
+                New here? 2-minute tour
+              </button>
+              <button type="button" aria-label="Dismiss" onClick={() => saveTour({ ...tour, chipDismissed: true })}>
+                ✕
+              </button>
+            </div>
+          )}
           {project && (
             <>
               <div className="ad-label mt-4">Diagrams</div>
+              {loaded !== project && !error && <div className="ad-item text-xs text-[var(--muted)]">Loading…</div>}
               {files.map(f => {
                 const m = meta(drafts[f.name] ?? sources[f.name]?.source ?? "")
                 return (
-                  <a key={f.name} href={hashFor(project, f.name)} className={`ad-item ad-file ${f.name === sel ? "ad-item-on" : ""}`} data-testid={`file-${f.name}`}>
-                    <span className="block truncate font-medium">{m.title ?? f.title}</span>
-                    <span className="block truncate text-xs text-[var(--muted)]">{m.summary ?? f.summary}</span>
-                    <span className="block text-[11px] text-[var(--muted)]">
-                      {f.name}.archdraw · {ago(f.updated)}
-                      {drafts[f.name] !== undefined && drafts[f.name] !== sources[f.name]?.source ? " · unsaved" : ""}
-                    </span>
-                  </a>
+                  <div key={f.name} className={`ad-item ad-file ad-row-hover ${f.name === sel ? "ad-item-on" : ""}`}>
+                    <a href={hashFor(project, f.name)} className="block min-w-0 flex-1" data-testid={`file-${f.name}`}>
+                      <span className="block truncate font-medium">{m.title ?? f.title}</span>
+                      <span className="block truncate text-xs text-[var(--muted)]">{m.summary ?? f.summary}</span>
+                      <span className="block text-[11px] text-[var(--muted)]">
+                        {f.name} · {ago(f.updated)}
+                        {f.status !== "same" ? ` · ${STATUS_LABEL[f.status]}` : ""}
+                        {drafts[f.name] !== undefined && drafts[f.name] !== sources[f.name]?.source ? " · unsaved" : ""}
+                      </span>
+                    </a>
+                    <Menu label={`${f.name} menu`} items={diagramMenu(f.name)} testid={`file-menu-${f.name}`} />
+                  </div>
                 )
               })}
-              <button type="button" className="ad-item text-[var(--muted)]" onClick={() => setCreating("file")}>
+              <button type="button" className="ad-item text-[var(--muted)]" onClick={() => setDialog({ kind: "new-diagram" })} data-testid="new-diagram">
                 + New diagram
               </button>
             </>
           )}
+          {shelved.length > 0 && (
+            <details className="mt-4">
+              <summary className="ad-label cursor-pointer">Archived projects ({shelved.length})</summary>
+              {shelved.map(p => (
+                <div key={p.slug} className="ad-item ad-row-hover text-[var(--muted)]">
+                  <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                  <Menu label={`${p.title} menu`} items={projectMenu(p)} />
+                </div>
+              ))}
+            </details>
+          )}
         </nav>
+        <div className="ad-foot flex items-center gap-1 border-t border-[var(--line)] px-2 py-2">
+          {project && (
+            <button type="button" className="ad-icon-btn" onClick={() => setDialog({ kind: "trash" })} aria-label="Archive and trash" data-tip="Archive and trash" data-testid="open-trash">
+              <Icon name="archive" />
+            </button>
+          )}
+          <span className="ml-auto" />
+          <button type="button" className="ad-icon-btn" onClick={() => void startTour()} aria-label="Show me around" data-tip="Show me around" data-testid="open-tour">
+            <Icon name="help" />
+          </button>
+          <button type="button" className="ad-icon-btn" onClick={() => setDialog({ kind: "settings" })} aria-label="Settings" data-tip="Settings" data-testid="open-settings">
+            <Icon name="settings" />
+          </button>
+        </div>
       </aside>
       {menu && <div className="fixed inset-0 z-10 bg-black/30 md:hidden" onClick={() => setMenu(false)} />}
 
       <main className="relative min-w-0 flex-1">
-        <header
-          className="ad-top absolute left-0 top-0 z-10 flex items-center gap-2 px-3 py-2"
-          style={{ right: editing && sel ? Math.min(560, window.innerWidth) : 0 }}
-        >
-          <button type="button" className="ad-btn md:hidden" aria-label="Menu" onClick={() => setMenu(true)}>
-            ☰
-          </button>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{selCard?.title ?? current?.title ?? "archdraw"}</div>
-            <div className="truncate text-xs text-[var(--muted)]">{selCard ? selCard.summary : current ? `${files.length} diagrams` : ""}</div>
-          </div>
-          <div className="ml-auto flex items-center gap-1">
-            {sel && (
-              <button type="button" className="ad-btn" onClick={() => setEditing(e => !e)} data-testid="toggle-source">
-                {editing ? "Close source" : "Source"}
+        {route.inbox ? (
+          <div className="h-full overflow-y-auto">
+            <div className="flex items-center gap-2 px-3 py-2 md:hidden">
+              <button type="button" className="ad-btn" aria-label="Menu" onClick={() => setMenu(true)}>
+                ☰
               </button>
-            )}
-            <button type="button" className="ad-btn" onClick={() => setFitAll(n => n + 1)} title="Fit every diagram">
-              All
-            </button>
-            <button type="button" className="ad-btn" onClick={cycle} aria-label="Toggle theme" title="Light / dark">
-              {dark ? "☾" : "☀"}
-            </button>
+            </div>
+            <Inbox dark={dark} focusProject={route.project} onAsk={askAbout} onOpen={(p, f) => (location.hash = hashFor(p, f))} onChanged={() => (loadProjects(), tourEvent("update.done"))} />
           </div>
-        </header>
-
-        {error ? (
-          <div className="grid h-full place-items-center p-6 text-center text-sm text-[var(--muted)]">{error}</div>
         ) : (
-          <Canvas
-            cards={cards}
-            selected={sel}
-            onSelect={k => (location.hash = hashFor(project, k))}
-            focus={focus}
-            fitAll={fitAll}
-            dark={dark}
-            insetRight={editing && sel ? Math.min(560, window.innerWidth) : 0}
-          />
+          <>
+            <header className="ad-top absolute left-0 top-0 z-10 flex items-center gap-2 px-3 py-2" style={{ right: panelW }}>
+              <button type="button" className="ad-btn md:hidden" aria-label="Menu" onClick={() => setMenu(true)}>
+                ☰
+              </button>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">{selCard?.title ?? current?.title ?? "archdraw"}</div>
+                <div className="truncate text-xs text-[var(--muted)]">{selCard ? selCard.summary : current ? `${files.length} diagram${files.length === 1 ? "" : "s"}` : ""}</div>
+              </div>
+              <div className="ml-auto flex items-center gap-1">
+                {sel && (
+                  <button type="button" className="ad-btn max-sm:hidden" onClick={() => (setEditing(e => !e), setChat(false))} data-testid="toggle-source">
+                    {editing ? "Close source" : "Source"}
+                  </button>
+                )}
+                {project && (
+                  <button type="button" className="ad-btn ad-btn-ask" onClick={() => (chat ? setChat(false) : openChat())} data-testid="open-chat" data-tour="ask" title="The archdraw agent (⌘K to jump or ask)">
+                    ✦ Ask<kbd className="max-sm:hidden">⌘K</kbd>
+                  </button>
+                )}
+                {project && files.length > 0 && (
+                  <button type="button" className="ad-btn max-sm:hidden" onClick={() => (setDialog({ kind: "export", name: sel }), tourEvent("export.opened"))} data-testid="open-export">
+                    Export
+                  </button>
+                )}
+                <button type="button" className="ad-btn" onClick={() => setFitAll(n => n + 1)} title="Fit every diagram">
+                  All
+                </button>
+              </div>
+            </header>
+
+            {current?.pending && tour.status !== "active" && (
+              <a href={inboxHash(current.slug)} className="ad-banner" style={{ right: panelW + 16 }} data-testid="waiting-banner">
+                <span className="ad-dot" data-busy />
+                Changes waiting for review
+                <span className="font-semibold">Review →</span>
+              </a>
+            )}
+
+            {error ? (
+              <div className="grid h-full place-items-center p-6 text-center text-sm text-[var(--muted)]">{error}</div>
+            ) : projects && projects.length === 0 ? (
+              <StartScreen
+                busy={starting.busy}
+                error={starting.error}
+                onSample={() => void startTour()}
+                onConnect={async v => {
+                  setStarting({ busy: true, error: null })
+                  try {
+                    const p = await api.connect(v)
+                    setStarting({ busy: false, error: null })
+                    loadProjects()
+                    location.hash = hashFor(p.slug)
+                  } catch (e) {
+                    setStarting({ busy: false, error: e instanceof ApiError ? e.message : String(e) })
+                  }
+                }}
+              />
+            ) : project && loaded !== project ? (
+              <div className="grid h-full place-items-center p-6 text-center text-sm" data-testid="loading">
+                <Working label={`Reading ${current?.title ?? project}'s diagrams`} slowNote="This is taking longer than it should." onRetry={() => void reload()} />
+              </div>
+            ) : project && files.length === 0 && !staged ? (
+              <div className="grid h-full place-items-center p-6 text-center">
+                <div className="max-w-sm">
+                  <p className="text-sm text-[var(--muted)]">No diagrams in this project yet.</p>
+                  <div className="mt-3 flex justify-center gap-2">
+                    <button type="button" className="ad-btn ad-btn-primary" onClick={() => (openChat(), void ask("Draw this project's system overview: read the code first, then propose the diagram and its explanation.").catch(() => undefined))} data-testid="draft-first">
+                      ✦ Draw it for me
+                    </button>
+                    <button type="button" className="ad-btn" onClick={() => setDialog({ kind: "new-diagram" })}>
+                      Start from a blank diagram
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <Canvas cards={cards} selected={sel} onSelect={k => (location.hash = hashFor(project, k))} focus={focus} fitAll={fitAll} dark={dark} insetRight={panelW} />
+            )}
+
+            {editing && sel && (
+              <section className="ad-editor absolute bottom-0 right-0 top-0 z-20 flex w-[min(560px,100%)] flex-col" data-testid="editor">
+                <div className="flex items-center gap-2 border-b border-[var(--line)] px-3 py-2">
+                  <span className="truncate font-mono text-xs text-[var(--muted)]">.archdraw/{sel}.archdraw</span>
+                  <span className="ml-auto" />
+                  {dirty && <span className="text-xs text-[var(--accent)]">unsaved</span>}
+                  <button type="button" className="ad-btn ad-btn-primary" disabled={!dirty || saving || !!selCard?.r.error} onClick={() => void save()} data-testid="save">
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button type="button" className="ad-btn" onClick={() => setEditing(false)} aria-label="Close">
+                    ✕
+                  </button>
+                </div>
+                <Editor value={selSource} onChange={v => (setDrafts(d => ({ ...d, [sel]: v })), current?.sample && tourEvent("source.changed"))} />
+                <div className={`border-t border-[var(--line)] px-3 py-2 text-xs ${selCard?.r.error ? "text-[var(--danger)]" : "text-[var(--muted)]"}`} data-testid="status">
+                  {selCard?.r.error ?? (current?.source.kind === "github" ? "Renders. ⌘/Ctrl-S saves it as a change waiting for review; the card updates as you type." : "Renders. ⌘/Ctrl-S saves it; the card updates as you type.")}
+                </div>
+              </section>
+            )}
+
+            {chat && project && (
+              <ChatPanel
+                variant="dock"
+                project={project}
+                id={talk}
+                history={(status?.conversations ?? []).filter(c => c.project === project)}
+                budget={{ conversation: status?.conversation_budget ?? 1, spentToday: status?.spent_today ?? 0, day: status?.day_budget ?? 10 }}
+                existing={Object.fromEntries(Object.entries(sources).map(([k, v]) => [k, v.source]))}
+                staged={staged ? { name: staged.p.name, n: staged.p.n } : null}
+                onSend={ask}
+                onNew={() => {
+                  remember(`archdraw:talk:${project}`, null)
+                  if (talk) void agentApi.close(talk).catch(() => undefined)
+                  setTalk(null)
+                  setStaged(null)
+                  setChatFocus(n => n + 1)
+                }}
+                onPick={id => {
+                  remember(`archdraw:talk:${project}`, id)
+                  setTalk(id)
+                }}
+                onClose={() => setChat(false)}
+                onStage={stage}
+                onAccept={accept}
+                focusKey={chatFocus}
+                prefill={prefill}
+                onCost={refreshStatus}
+                needsKey={keysView && !current?.sample && !keysView.keys[keysView.provider] ? { editable: keysView.editable, provider: keysView.provider } : null}
+                onKey={async key => {
+                  await api.setKey(key)
+                  loadKeys()
+                  setNotice("Key saved. Ask away.")
+                }}
+              />
+            )}
+          </>
         )}
 
-        {editing && sel && (
-          <section className="ad-editor absolute bottom-0 right-0 top-0 z-20 flex w-[min(560px,100%)] flex-col" data-testid="editor">
-            <div className="flex items-center gap-2 border-b border-[var(--line)] px-3 py-2">
-              <span className="truncate font-mono text-xs text-[var(--muted)]">
-                {project}/{sel}.archdraw
-              </span>
-              <span className="ml-auto" />
-              {dirty && <span className="text-xs text-[var(--accent)]">unsaved</span>}
-              <button type="button" className="ad-btn ad-btn-primary" disabled={!dirty || saving || !!selCard?.r.error} onClick={() => void save()} data-testid="save">
-                {saving ? "Saving…" : "Save"}
-              </button>
-              <button type="button" className="ad-btn" onClick={() => setEditing(false)} aria-label="Close">
-                ✕
-              </button>
-            </div>
-            <Editor value={selSource} onChange={v => setDrafts(d => ({ ...d, [sel]: v }))} />
-            <div className={`border-t border-[var(--line)] px-3 py-2 text-xs ${selCard?.r.error ? "text-[var(--danger)]" : "text-[var(--muted)]"}`} data-testid="status">
-              {selCard?.r.error ?? "Renders. ⌘/Ctrl-S saves and commits to the brain; the card on the canvas updates as you type."}
-            </div>
-          </section>
-        )}
-
-        {notice && (
-          <div className="ad-toast absolute bottom-16 left-1/2 z-30 -translate-x-1/2" role="status">
-            {notice}
-          </div>
-        )}
-        {creating && (
-          <CreateDialog
-            kind={creating}
-            existing={creating === "project" ? (projects ?? []).map(p => p.slug) : files.map(f => f.name)}
-            onCancel={() => setCreating(null)}
-            onCreate={async (slug, title) => {
-              if (creating === "project") {
-                await api.createProject(slug)
-                setCreating(null)
-                loadProjects()
-                location.hash = hashFor(slug, "overview")
-              } else if (project) {
-                const src = `// title: ${title || slug}\n// summary: One sentence on what this diagram shows.\n\nnode app "App"\nnode store "Store"  right of app\nedge app -> store  "reads"  from: right  to: left\n`
-                await api.save(project, slug, src, null)
-                setCreating(null)
-                await loadFiles(project)
-                location.hash = hashFor(project, slug)
-                setEditing(true)
-              }
+        {palette && (
+          <Palette
+            targets={targets}
+            project={route.project}
+            onClose={() => setPalette(false)}
+            onGo={t => {
+              setPalette(false)
+              location.hash = hashFor(t.project, t.file)
+            }}
+            onAsk={text => {
+              setPalette(false)
+              if (/^\s*(tour|show me around)\s*$/i.test(text)) return void startTour()
+              if (!project) return setNotice("Open a project first, then ask about it")
+              openChat()
+              void ask(text).catch(() => undefined)
             }}
           />
         )}
+        <Tour
+          state={tour}
+          where={{ file: route.file }}
+          onAdvance={step => saveTour({ ...tour, status: "active", step })}
+          onSkip={() => saveTour({ ...tour, status: "skipped", step: 0 })}
+          onFinish={openRepo => {
+            saveTour({ ...tour, status: "done", step: 0 })
+            if (openRepo) setDialog({ kind: "connect" })
+          }}
+        />
+        {notice && (
+          <div className="ad-toast absolute bottom-16 left-1/2 z-30 -translate-x-1/2" role="status" data-testid="toast">
+            {notice}
+          </div>
+        )}
       </main>
+
+      {dialog?.kind === "connect" && (
+        <ConnectDialog
+          onClose={() => setDialog(null)}
+          onConnected={p => {
+            setDialog(null)
+            loadProjects()
+            location.hash = hashFor(p.slug)
+          }}
+        />
+      )}
+      {dialog?.kind === "new-diagram" && project && (
+        <NameDialog
+          title="New diagram"
+          action="Create"
+          withTitle
+          taken={files.map(f => f.name)}
+          onClose={() => setDialog(null)}
+          onSubmit={async (name, title) => {
+            const src = `// title: ${title || name}\n// summary: One sentence on what this diagram shows.\n\nnode app "App"\nnode store "Store"  right of app\nedge app -> store  "reads"  from: right  to: left\n`
+            await api.save(project, name, src, null)
+            setDialog(null)
+            await reload()
+            location.hash = hashFor(project, name)
+            setEditing(true)
+          }}
+        />
+      )}
+      {(dialog?.kind === "rename" || dialog?.kind === "duplicate") && project && (
+        <NameDialog
+          title={dialog.kind === "rename" ? `Rename ${dialog.name}` : `Duplicate ${dialog.name}`}
+          initial={dialog.kind === "rename" ? dialog.name : `${dialog.name}-copy`}
+          action={dialog.kind === "rename" ? "Rename" : "Duplicate"}
+          taken={files.map(f => f.name)}
+          onClose={() => setDialog(null)}
+          onSubmit={async name => {
+            if (dialog.kind === "rename") await api.rename(project, dialog.name, name)
+            else await api.duplicate(project, dialog.name, name)
+            setDialog(null)
+            await reload()
+            location.hash = hashFor(project, name)
+          }}
+        />
+      )}
+      {dialog?.kind === "delete" && project && (
+        <Confirm
+          title={`Delete ${dialog.name}?`}
+          body={<p>It goes to the trash: Archive and trash brings it back for 30 days.</p>}
+          action="Delete"
+          danger
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            await api.remove(project, dialog.name)
+            setDialog(null)
+            if (route.file === dialog.name) location.hash = hashFor(project)
+            await reload()
+            setNotice(`${dialog.name} deleted`)
+          }}
+        />
+      )}
+      {dialog?.kind === "rename-project" && (
+        <ProjectTitleDialog
+          project={projects!.find(p => p.slug === dialog.slug)!}
+          onClose={() => setDialog(null)}
+          onSaved={() => (setDialog(null), loadProjects())}
+        />
+      )}
+      {dialog?.kind === "disconnect" && (
+        <Confirm
+          title="Remove this project from archdraw?"
+          body={<p>archdraw forgets it and deletes its own copy on this machine. The repo and its diagrams are not touched; add it again any time.</p>}
+          action="Remove"
+          danger
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            await api.disconnect(dialog.slug)
+            setDialog(null)
+            location.hash = "#/"
+            loadProjects()
+          }}
+        />
+      )}
+      {dialog?.kind === "export" && project && (
+        <ExportDialog project={project} diagram={dialog.name} source={dialog.name ? (drafts[dialog.name] ?? sources[dialog.name]?.source) : undefined} svg={dialog.name ? cards.find(c => c.key === dialog.name)?.r.svg : undefined} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === "trash" && project && <TrashDialog project={project} onClose={() => setDialog(null)} onRestored={name => (setNotice(`${name} restored`), void reload())} />}
+      {dialog?.kind === "settings" && (
+        <SettingsDialog
+          project={current}
+          onClose={() => setDialog(null)}
+          onSaved={() => {
+            loadKeys()
+            api.settings().then(v => setTheme(v.settings.theme), () => undefined)
+            loadProjects()
+          }}
+        />
+      )}
     </div>
   )
 }
+
+function ProjectTitleDialog({ project, onClose, onSaved }: { project: Project; onClose: () => void; onSaved: () => void }) {
+  const [title, setTitle] = useState(project.title)
+  return (
+    <div className="ad-scrim" onMouseDown={onClose}>
+      <form
+        className="ad-dialog w-full max-w-sm"
+        onMouseDown={e => e.stopPropagation()}
+        onSubmit={async e => {
+          e.preventDefault()
+          await api.updateProject(project.slug, { title })
+          onSaved()
+        }}
+      >
+        <h3 className="mb-3 text-base font-semibold">Rename project</h3>
+        <input autoFocus className="ad-input" value={title} onChange={e => setTitle(e.target.value)} data-testid="project-title" />
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" className="ad-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="ad-btn ad-btn-primary" disabled={!title.trim()}>
+            Rename
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 
 function Editor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ta = useRef<HTMLTextAreaElement>(null)
@@ -352,65 +982,39 @@ function Editor({ value, onChange }: { value: string; onChange: (v: string) => v
   )
 }
 
-function CreateDialog({
-  kind,
-  existing,
-  onCancel,
-  onCreate,
-}: {
-  kind: "project" | "file"
-  existing: string[]
-  onCancel: () => void
-  onCreate: (slug: string, title: string) => Promise<void>
-}) {
-  const [slug, setSlug] = useState("")
-  const [title, setTitle] = useState("")
-  const [err, setErr] = useState<string | null>(null)
-  const bad = slug && !SLUG.test(slug) ? "lowercase letters, digits and dashes" : existing.includes(slug) ? "that name is taken" : null
-  return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-4" onClick={onCancel}>
-      <form
-        className="ad-dialog w-full max-w-sm"
-        onClick={e => e.stopPropagation()}
-        onSubmit={async e => {
-          e.preventDefault()
-          if (!slug || bad) return
-          try {
-            await onCreate(slug, title)
-          } catch (x) {
-            setErr(x instanceof Error ? x.message : String(x))
-          }
-        }}
-      >
-        <h3 className="mb-3 text-base font-semibold">{kind === "project" ? "New project" : "New diagram"}</h3>
-        <label className="mb-1 block text-xs text-[var(--muted)]">{kind === "project" ? "Project name (the brain folder)" : "File name"}</label>
-        <input autoFocus className="ad-input" value={slug} onChange={e => setSlug(e.target.value.trim())} placeholder={kind === "project" ? "my-project" : "data-flow"} />
-        {kind === "file" && (
-          <>
-            <label className="mt-3 mb-1 block text-xs text-[var(--muted)]">Title</label>
-            <input className="ad-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Data flow" />
-          </>
-        )}
-        <p className="mt-2 min-h-5 text-xs text-[var(--danger)]">{bad ?? err}</p>
-        <div className="mt-2 flex justify-end gap-2">
-          <button type="button" className="ad-btn" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="submit" className="ad-btn ad-btn-primary" disabled={!slug || !!bad}>
-            Create
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
 function Logo() {
   return (
     <svg viewBox="0 0 32 32" className="size-6" aria-hidden>
       <rect x="3" y="7" width="11" height="8" rx="2" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
       <rect x="18" y="17" width="11" height="8" rx="2" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
       <path d="M14 11h4v10" fill="none" stroke="var(--accent)" strokeWidth="2.5" />
+    </svg>
+  )
+}
+
+/** The footer's icons (24px line icons, currentColor). */
+function Icon({ name }: { name: "archive" | "help" | "settings" }) {
+  const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true }
+  if (name === "archive")
+    return (
+      <svg {...common}>
+        <rect x="3" y="4" width="18" height="5" rx="1.5" />
+        <path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9" />
+        <path d="M10 13h4" />
+      </svg>
+    )
+  if (name === "help")
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.5 9.5a2.5 2.5 0 0 1 4.9.7c0 1.7-2.4 2.2-2.4 3.8" />
+        <path d="M12 17.2h.01" />
+      </svg>
+    )
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   )
 }

@@ -1,13 +1,19 @@
 [Unit]
-Description=archdraw studio — architecture diagrams of every project, on an infinite canvas; tailnet only, its own origin via Serve https:8445
+Description=archdraw — architecture diagrams of every connected project, kept current from git; tailnet only, its own origin via Serve https:8445
 
 [Service]
-WorkingDirectory=/home/agent3/work/projects/archdraw/studio
+WorkingDirectory=/home/agent3/work/projects/archdraw-live/studio
 Environment=HOME=/home/agent3
 Environment=PATH=/home/agent3/.nvm/versions/node/v24.21.0/bin:/home/agent3/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=ARCHDRAW_LIBRARY=/home/agent3/work/brain/projects
-Environment=ARCHDRAW_NODE=/home/agent3/.nvm/versions/node/v24.21.0/bin/node
-ExecStart=/home/agent3/work/projects/archdraw/studio/.venv/bin/uvicorn --factory archdraw_studio.app:main_app --app-dir server --host 127.0.0.1 --port 8088 --no-access-log --no-proxy-headers
+Environment=ARCHDRAW_GATE=tailnet
+Environment=ARCHDRAW_HOME=/home/agent3/work/data/archdraw
+Environment=ARCHDRAW_FOLDER_ROOT=/home/agent3/work
+Environment=ARCHDRAW_PORT=8088
+Environment=ARCHDRAW_AUTHOR=Banna
+# the identity Banna's commits carry on Tawab's repos (each repo's own git config; trex has no global one): Vercel
+# builds only commits by a member of the team, and Ohara's main requires its checks
+Environment=ARCHDRAW_AUTHOR_EMAIL=asaficontact@gmail.com
+ExecStart=/home/agent3/.nvm/versions/node/v24.21.0/bin/node /home/agent3/work/projects/archdraw-live/studio/dist/server.mjs
 Restart=always
 RestartSec=2
 
