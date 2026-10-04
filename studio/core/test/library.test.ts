@@ -62,8 +62,8 @@ describe("a GitHub project", () => {
     await l.refresh("demo")
     const files = await l.files("demo")
     expect(files.map(f => [f.name, f.title, f.status])).toEqual([
+      ["system", "The system", "same"], // system first, then the rest (no order.json)
       ["detail", "Detail", "same"],
-      ["system", "The system", "same"],
     ])
     const doc = await l.read("demo", "system")
     expect(doc.source).toBe(SYSTEM)
@@ -112,7 +112,7 @@ describe("a GitHub project", () => {
     await l.save("demo", "fresh", '// title: Fresh\n\nnode x "X"\n', null)
     await l.discard("demo")
     expect(await l.pending("demo")).toBeNull()
-    expect((await l.files("demo")).map(f => f.name)).toEqual(["detail", "system"])
+    expect((await l.files("demo")).map(f => f.name)).toEqual(["system", "detail"])
   })
 
   it("renames and fixes links, duplicates, archives, deletes to the trash and restores", async () => {
@@ -245,5 +245,21 @@ describe("a folder project", () => {
     expect((await l.read("local", "system")).doc).toBe("# The system\n")
     await l.rename("local", "system", "overview")
     expect((await l.files("local")).map(f => f.name)).toEqual(["overview"])
+  })
+
+  it("keeps the reading order itself: new diagrams go last, system first", async () => {
+    const dir = join(root, "ordered")
+    mkdirSync(dir)
+    const l = lib()
+    l.addFolder(dir, { slug: "ordered" })
+    await l.save("ordered", "zeta", '// title: Z\n\nnode z "Z"\n', null)
+    await l.save("ordered", "alpha", '// title: A\n\nnode a "A"\n', null)
+    expect((await l.files("ordered")).map(f => f.name)).toEqual(["zeta", "alpha"])
+    expect(JSON.parse(readFileSync(join(dir, ".archdraw", "order.json"), "utf8"))).toEqual(["zeta", "alpha"])
+    const bare = join(root, "bare")
+    mkdirSync(join(bare, ".archdraw"), { recursive: true })
+    for (const n of ["api", "system", "web"]) writeFileSync(join(bare, ".archdraw", `${n}.archdraw`), `// title: ${n}\n\nnode x "X"\n`)
+    l.addFolder(bare, { slug: "bare" })
+    expect((await l.files("bare")).map(f => f.name)).toEqual(["system", "api", "web"])
   })
 })

@@ -366,12 +366,14 @@ export class Library {
         mkdirSync(dir, { recursive: true })
         atomicWrite(join(dir, name + EXT), source)
         if (opts.doc != null) atomicWrite(join(dir, name + ".md"), opts.doc)
+        if (current === null) addToOrder(dir, name)
         return { version: digest(source), commit: null }
       }
       const work = await this.worktree(p)
       mkdirSync(join(work, DIAGRAM_DIR), { recursive: true })
       writeFileSync(join(work, DIAGRAM_DIR, name + EXT), source)
       if (opts.doc != null) writeFileSync(join(work, DIAGRAM_DIR, name + ".md"), opts.doc)
+      if (current === null) addToOrder(join(work, DIAGRAM_DIR), name)
       const commit = await this.commitAndPush(p, work, message)
       return { version: digest(source), commit }
     })
@@ -379,8 +381,8 @@ export class Library {
 
   /**
    * Bring several files into the project's `.archdraw/` as one change waiting for review: diagrams (`<name>.archdraw`,
-   * each checked by the engine first), their explanations (`<name>.md`), `order.json` and `README.md`. Existing files
-   * are replaced. Used to import diagrams kept elsewhere.
+   * each checked by the engine first), their explanations (`<name>.md`), `order.json` and `README.md`. An existing
+   * diagram is replaced only with `replace`. Used to import diagrams kept elsewhere.
    */
   async importFiles(slug: string, files: Record<string, string>, message: string, opts: { replace?: boolean } = {}): Promise<void> {
     const ok = /^([a-z0-9][a-z0-9-]{0,62}\.(archdraw|md)|order\.json|README\.md)$/
@@ -678,7 +680,18 @@ function readOrder(text: string | null): string[] {
   }
 }
 
-const rank = (order: string[], name: string) => (order.includes(name) ? order.indexOf(name) : order.length)
+// the reading order: order.json's, then `system` (the entry point by convention) before the rest
+const rank = (order: string[], name: string) => (order.includes(name) ? order.indexOf(name) : name === "system" && !order.length ? -1 : order.length)
+
+/** A new diagram joins the reading order at the end, so nobody edits order.json by hand (`system` stays first). */
+function addToOrder(dir: string, name: string) {
+  const f = join(dir, "order.json")
+  const order = existsSync(f) ? readOrder(readFileSync(f, "utf8")) : []
+  if (order.includes(name)) return
+  if (!order.length && name !== "system" && existsSync(join(dir, "system" + EXT))) order.push("system")
+  order.push(name)
+  writeFileSync(f, JSON.stringify(order, null, 1) + "\n")
+}
 
 function renameInOrder(dir: string, from: string, to: string) {
   const f = join(dir, "order.json")
