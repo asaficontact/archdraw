@@ -552,7 +552,7 @@ export default function App() {
               </button>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{selCard?.title ?? current?.title ?? "archdraw"}</div>
-                <div className="truncate text-xs text-[var(--muted)]">{selCard ? selCard.summary : current ? `${files.length} diagrams` : ""}</div>
+                <div className="truncate text-xs text-[var(--muted)]">{selCard ? selCard.summary : current ? `${files.length} diagram${files.length === 1 ? "" : "s"}` : ""}</div>
               </div>
               <div className="ml-auto flex items-center gap-1">
                 {sel && (

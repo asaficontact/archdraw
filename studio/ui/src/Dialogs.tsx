@@ -323,6 +323,7 @@ export function SettingsDialog({ project, onClose, onSaved }: { project?: Projec
             <label>
               Key {view.keys[s.provider] ? <span className="text-[var(--muted)]">(saved; paste to replace)</span> : null}
               <input className="ad-input" type="password" value={key} placeholder={prov ? `${prov.prefix}…` : "key"} onChange={e => setKey(e.target.value)} data-testid="set-key" autoComplete="off" />
+              {view.keysWeak && <span className="text-xs text-[var(--chg)]">This machine has no system keyring, so the key is kept with basic protection only.</span>}
               {prov && (
                 <a className="text-xs text-[var(--accent)]" href={prov.keyUrl} target="_blank" rel="noopener noreferrer">
                   Get a {prov.name} key

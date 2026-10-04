@@ -19,7 +19,7 @@ export type Settings = {
   theme: "system" | "light" | "dark"
 }
 export type ProviderInfo = { name: string; env: string; chat: string; triage: string; prefix: string; keyUrl: string }
-export type SettingsView = { settings: Settings; keys: Record<string, boolean>; keysEditable: boolean; providers: Record<string, ProviderInfo>; onboarded: boolean; spentToday: { total: number; projects: Record<string, number> } }
+export type SettingsView = { settings: Settings; keys: Record<string, boolean>; keysEditable: boolean; keysWeak?: boolean; providers: Record<string, ProviderInfo>; onboarded: boolean; spentToday: { total: number; projects: Record<string, number> } }
 export type Change =
   | { on: "node"; id: string; kind: "added" | "removed" | "changed" | "moved" | "restyled"; label: string; what?: string }
   | { on: "edge"; id: string; kind: "added" | "removed" | "changed"; from: string; to: string; label: string; what?: string }

@@ -75,7 +75,7 @@ export function createApp(d: Deps): Hono<AppEnv> {
   app.get("/api/settings", c => {
     const cfg = d.store.read()
     const keys = Object.fromEntries(Object.keys(PROVIDERS).map(p => [p, d.keys.has(p)]))
-    return c.json({ settings: cfg.settings, keys, keysEditable: !!d.keys.set, providers: PROVIDERS, onboarded: cfg.onboarded ?? false, spentToday: d.spend.day() })
+    return c.json({ settings: cfg.settings, keys, keysEditable: !!d.keys.set, keysWeak: !!d.keys.weak, providers: PROVIDERS, onboarded: cfg.onboarded ?? false, spentToday: d.spend.day() })
   })
 
   app.put("/api/settings", async c => {

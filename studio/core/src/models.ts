@@ -29,6 +29,8 @@ export function providerOfKey(key: string): ProviderId | null {
 }
 
 export interface KeyStore {
+  /** True when keys can only be kept with basic protection (a Linux desktop without a keyring). */
+  readonly weak?: boolean
   get(provider: string): string | undefined
   set?(provider: string, key: string): void
   has(provider: string): boolean
