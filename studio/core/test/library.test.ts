@@ -229,6 +229,9 @@ describe("commit identity", () => {
       expect(sh(origin, "log", "-1", "--format=%an <%ae>", "archdraw/update").trim()).toBe("Tawab <tawab@example.com>")
       writeFileSync(cfg, "")
       expect(await l.identity(root)).toEqual({ name: "test", email: "archdraw@users.noreply.github.com" })
+      process.env.ARCHDRAW_AUTHOR_EMAIL = "banna@example.com"
+      expect(await l.identity(root)).toEqual({ name: "test", email: "banna@example.com" })
+      delete process.env.ARCHDRAW_AUTHOR_EMAIL
     } finally {
       for (const [k, v] of [["GIT_CONFIG_GLOBAL", was.g], ["GIT_CONFIG_NOSYSTEM", was.n]] as const) {
         if (v === undefined) delete process.env[k]

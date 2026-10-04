@@ -321,8 +321,11 @@ export class Library {
     return work
   }
 
-  /** The user's git name and email (global, then system config); the app's name and a no-reply address only without one. */
+  /** Who commits: ARCHDRAW_AUTHOR_EMAIL (a server whose identity lives in each repo's config, like trex), else the user's
+   *  git name and email (global, then system config); the app's name and a no-reply address only without either. */
   async identity(cwd: string): Promise<{ name: string; email: string }> {
+    const set = process.env.ARCHDRAW_AUTHOR_EMAIL?.trim()
+    if (set) return { name: this.by, email: set }
     const get = async (key: string) => {
       for (const scope of ["--global", "--system"]) {
         const v = (await git(cwd, ["config", scope, "--get", key], { ok: [1, 128] })).stdout.trim()

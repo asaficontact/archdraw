@@ -10,6 +10,9 @@ Environment=ARCHDRAW_HOME=/home/agent3/work/data/archdraw
 Environment=ARCHDRAW_FOLDER_ROOT=/home/agent3/work
 Environment=ARCHDRAW_PORT=8088
 Environment=ARCHDRAW_AUTHOR=Banna
+# the identity Banna's commits carry on Tawab's repos (each repo's own git config; trex has no global one): Vercel
+# builds only commits by a member of the team, and Ohara's main requires its checks
+Environment=ARCHDRAW_AUTHOR_EMAIL=asaficontact@gmail.com
 ExecStart=/home/agent3/.nvm/versions/node/v24.21.0/bin/node /home/agent3/work/projects/archdraw-live/studio/dist/server.mjs
 Restart=always
 RestartSec=2
