@@ -1,0 +1,211 @@
+@import "tailwindcss";
+
+/* Tokens: light by default, dark when the toggle (data-theme) or the system says so. */
+:root {
+  --page: #f6f7f9;
+  --panel: #ffffff;
+  --card: #ffffff;
+  --text: #16181d;
+  --muted: #6b7280;
+  --line: #e4e6eb;
+  --dot: #d4d7de;
+  --accent: #5b5bd6;
+  --accent-soft: #ededfb;
+  --danger: #c23b3b;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 8px 28px rgb(16 24 40 / 0.07);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --page: #0e0f13;
+  --panel: #15171c;
+  --card: #181a20;
+  --text: #e8e9ed;
+  --muted: #8b90a0;
+  --line: #262932;
+  --dot: #23262e;
+  --accent: #8b8cf6;
+  --accent-soft: #23243a;
+  --danger: #f07171;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 30px rgb(0 0 0 / 0.35);
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ad-canvas {
+  background-color: var(--page);
+  background-image: radial-gradient(circle, var(--dot) 1.2px, transparent 1.3px);
+}
+
+.ad-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ad-card-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow);
+}
+.ad-card-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.ad-card-summary {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ad-card-error {
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+.ad-svg svg {
+  display: block;
+  max-width: none;
+}
+.ad-svg .ad-link {
+  cursor: pointer;
+}
+.ad-svg .ad-link:hover {
+  filter: brightness(1.08) drop-shadow(0 0 6px var(--accent-soft));
+}
+
+.ad-label {
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ad-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  text-align: left;
+  color: inherit;
+  text-decoration: none;
+}
+.ad-item:hover {
+  background: var(--accent-soft);
+}
+.ad-item-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ad-file {
+  display: block;
+  padding: 8px 12px;
+}
+.ad-file.ad-item-on .text-\[var\(--muted\)\] {
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
+}
+
+.ad-top {
+  background: linear-gradient(to bottom, var(--page) 55%, transparent);
+  pointer-events: none;
+}
+.ad-top > * {
+  pointer-events: auto;
+}
+
+.ad-btn {
+  height: 32px;
+  min-width: 32px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.ad-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.ad-btn:disabled {
+  opacity: 0.45;
+}
+.ad-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.ad-zoom {
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+.ad-zoom button {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+.ad-zoom button:hover {
+  background: var(--accent-soft);
+}
+
+.ad-editor {
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.ad-gutter {
+  color: var(--muted);
+  opacity: 0.6;
+  user-select: none;
+  min-width: 3em;
+}
+
+.ad-toast {
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--text);
+  color: var(--page);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+.ad-dialog {
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.ad-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--page);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+.ad-input:focus {
+  border-color: var(--accent);
+}
