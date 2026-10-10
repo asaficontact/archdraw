@@ -80,6 +80,7 @@ def test_audit_uses_repo_archdraw_when_brain_folder_is_absent(tmp_path: Path, mo
     first = audit.audit("1 hour ago")
     assert [m["project"] for m in first["missing"]] == ["missing"]
     assert first["stale"] == []
+    assert first["broken"] == []  # the valid file passes a real engine check
 
     (projects / "ohara" / "app.txt").write_text("changed\n")
     commit(projects / "ohara", "change code")
@@ -91,3 +92,19 @@ def test_audit_uses_repo_archdraw_when_brain_folder_is_absent(tmp_path: Path, mo
     broken = audit.audit("1 hour ago")
     assert [b["file"] for b in broken["broken"]] == ["asaficontact/ohara/.archdraw/system.archdraw"]
     assert broken["stale"] == []
+
+    # A diagram fix merged with a merge commit, after main moved on: the merge is the folder's last change, not stale.
+    ohara = projects / "ohara"
+    git = ["git", "-C", str(ohara)]
+    base = subprocess.run([*git, "rev-parse", "--abbrev-ref", "HEAD"], check=True, capture_output=True, text=True)
+    subprocess.run([*git, "checkout", "-qb", "diagram"], check=True)
+    (ohara / ".archdraw" / "system.archdraw").write_text('node system "System"\n')
+    subprocess.run([*git, "commit", "-qam", "fix diagram"], check=True)
+    subprocess.run([*git, "checkout", "-q", base.stdout.strip()], check=True)
+    (ohara / "app.txt").write_text("merged meanwhile\n")
+    commit(ohara, "code merged while the diagram branch was open")
+    subprocess.run([*git, "merge", "-q", "--no-ff", "-m", "merge diagram", "diagram"], check=True)
+    subprocess.run([*git, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    merged = audit.audit("1 hour ago")
+    assert merged["broken"] == []
+    assert merged["stale"] == []

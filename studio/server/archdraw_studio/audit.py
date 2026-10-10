@@ -102,10 +102,12 @@ def repo_archdraw(slug: str, since: str) -> tuple[list[tuple[str, str]], bool]:
     if not names:
         return [], False
     files = [(name, git("show", f"{head}:{name}", cwd=path)) for name in names]
-    folder_commit = git("log", "-1", "--format=%H", head, "--", ".archdraw", cwd=path)
+    # First parent only: on a repo that merges with merge commits, the plain log names the diagram commit on its
+    # branch, and every commit merged since that branch was cut would count as later.
+    folder_commit = git("log", "-1", "--first-parent", "--format=%H", head, "--", ".archdraw", cwd=path)
     if not folder_commit:
         return files, False
-    later = git("rev-list", "--count", f"--since={since}", f"{folder_commit}..{head}", cwd=path)
+    later = git("rev-list", "--count", "--first-parent", f"--since={since}", f"{folder_commit}..{head}", cwd=path)
     return files, later.isdigit() and int(later) > 0
 
 
