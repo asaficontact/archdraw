@@ -42,7 +42,10 @@ Commands:
                                  out.png defaults to a temp file, path printed.
   readme-image                  Regenerate the README's tracked pictures:
                                  docs/arch-render.png, the rendered half of the
-                                 comparison, and docs/gap.png
+                                 comparison, and docs/gap.png. Redraws only a
+                                 picture whose SVG changed, judged by the
+                                 fingerprints in docs/readme-images.sum, so
+                                 another machine's rasterizer never churns them.
   playground                    Regenerate docs/index.html, the browser
                                  playground, with the compiled library inlined
                                  into the page. Edit tools/playground.html, not
@@ -224,8 +227,11 @@ compile() {
 # drawing changes its prefix, so this only tells a change to how ids are named
 # apart from a change to what is drawn.
 same_but_ids() {
-  local strip='s/(id="|url\(#)r[0-9a-f]{8}-/\1/g'
-  cmp -s <(sed -E "$strip" "$1") <(sed -E "$strip" "$2")
+  cmp -s <(strip_ids "$1") <(strip_ids "$2")
+}
+
+strip_ids() {
+  sed -E 's/(id="|url\(#)r[0-9a-f]{8}-/\1/g' "$1"
 }
 
 # Chrome clips to the window, so take the window from the drawing itself.
@@ -308,11 +314,25 @@ cmd="${1:-}"
 shift || true
 
 
+# Run a build's CLI to render: `cli <path/to/cli.js> <in> -o <out> [options]`.
+# From 0.17 the CLI takes a command first and refuses the bare file; builds of
+# older refs take only the bare file. Which one a build is comes from its own
+# usage text, so a comparison against any ref still runs.
+cli() {
+  local js="$1"
+  shift
+  if grep -q 'reladraw render' "$js"; then
+    node "$js" render "$@"
+  else
+    node "$js" "$@"
+  fi
+}
+
 # Render a file to an SVG, saying nothing unless it fails — then everything the
 # CLI said, since that is the error. Exits with the CLI's status.
 render_quietly() {
   local said
-  if ! said="$(node dist/cli.js "$1" -o "$2" 2>&1)"; then
+  if ! said="$(cli dist/cli.js "$1" -o "$2" 2>&1)"; then
     echo "$said" >&2
     exit 1
   fi
@@ -320,17 +340,34 @@ render_quietly() {
 
 # The README's pictures, rendered into the given directory. examples/out/ is
 # gitignored, so anything the front page shows needs a tracked copy of its own.
+#
+# Two machines rasterize the same SVG a few thousand pixels apart, so whether a
+# picture is current is judged by the SVG it was made from, never by its pixels:
+# docs/readme-images.sum holds a fingerprint of each picture's SVG, and a PNG is
+# redrawn only when its drawing changed. `readme_images write` redraws what
+# changed; `readme_images check` prints `ok` or `stale` and each picture's name.
+README_IMAGES=("arch:arch-render.png" "gap:gap.png")
+README_SUMS=docs/readme-images.sum
 readme_images() {
-  local dir="$1" pair name out svg
-  mkdir -p "$dir"
-  for pair in "arch:arch-render.png" "gap:gap.png"; do
+  local mode="$1" pair name png svg sum recorded
+  for pair in "${README_IMAGES[@]}"; do
     name="${pair%%:*}"
-    out="$dir/${pair#*:}"
+    png="${pair#*:}"
     svg="$(tmp_path readme svg)"
     render_quietly "examples/$name.reladraw" "$svg"
-    screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
+    sum="$(strip_ids "$svg" | node -e "process.stdout.write(require('crypto').createHash('sha256').update(require('fs').readFileSync(0)).digest('hex'))")"
+    recorded="$(awk -v png="$png" '$2 == png { print $1 }' "$README_SUMS" 2>/dev/null || true)"
+    if [ "$mode" = check ]; then
+      if [ "$sum" = "$recorded" ] && [ -f "docs/$png" ]; then echo "ok $png"; else echo "stale $png"; fi
+    elif [ "$sum" != "$recorded" ] || [ ! -f "docs/$png" ]; then
+      screenshot "$svg" "docs/$png" "$(svg_size "$svg")" ffffff
+      { grep -v "  $png\$" "$README_SUMS" 2>/dev/null || true; echo "$sum  $png"; } > "$README_SUMS.new"
+      mv "$README_SUMS.new" "$README_SUMS"
+      echo "docs/$png"
+    else
+      echo "docs/$png unchanged"
+    fi
     rm -f "$svg"
-    echo "$out"
   done
 }
 
@@ -373,13 +410,21 @@ case "$cmd" in
   render)
     in="${1:?input .reladraw path required}"
     out="${2:?output .svg path required}"
-    node dist/cli.js "$in" -o "$out"
+    cli dist/cli.js "$in" -o "$out"
     ;;
   try)
     src="${1:?source text required}"
     tmp="$(tmp_path try reladraw)"
     printf '%s\n' "$src" > "$tmp"
-    node dist/cli.js "$tmp" -o "${tmp%.reladraw}.svg" && echo "parsed, no complaint"
+    if said="$(cli dist/cli.js "$tmp" -o "${tmp%.reladraw}.svg" 2>&1)"; then
+      if grep -q 'warning(' <<<"$said"; then
+        grep 'warning(' <<<"$said"
+      else
+        echo "parsed, no complaint"
+      fi
+    else
+      echo "$said"
+    fi
     rm -f "$tmp" "${tmp%.reladraw}.svg"
     ;;
   out)
@@ -388,7 +433,7 @@ case "$cmd" in
     mkdir -p examples/out
     svg="examples/out/$base.svg"
     png="examples/out/$base.png"
-    node dist/cli.js "$in" -o "$svg" >/dev/null
+    cli dist/cli.js "$in" -o "$svg" >/dev/null
     screenshot "$svg" "$png" "$(svg_size "$svg")" ffffff
     echo "$svg"
     echo "$png"
@@ -402,7 +447,7 @@ case "$cmd" in
     for theme in $(node -e "import('./dist/themes.js').then((m) => console.log(m.THEME_NAMES.join(' ')))"); do
       svg="$dir/$base-$theme.svg"
       png="$dir/$base-$theme.png"
-      node dist/cli.js "$in" -o "$svg" --theme "$theme" >/dev/null
+      cli dist/cli.js "$in" -o "$svg" --theme "$theme" >/dev/null
       screenshot "$svg" "$png" "$(svg_size "$svg")" ffffff
       tiles+=(-label "$theme" "$png")
     done
@@ -433,7 +478,7 @@ case "$cmd" in
     # page shows needs a tracked copy of its own. Regenerate them whenever the
     # examples or the renderer change, or the front page stops being a picture
     # of this code.
-    readme_images docs
+    readme_images write
     ;;
   playground)
     # docs/index.html is generated: the page from tools/playground.html with the
@@ -471,7 +516,7 @@ case "$cmd" in
       cd "$t/probe"
       npm init -y >/dev/null 2>&1
       npm install "$t"/reladraw-*.tgz >/dev/null 2>&1
-      ./node_modules/.bin/reladraw probe.reladraw -o probe.svg >/dev/null 2>&1
+      ./node_modules/.bin/reladraw render probe.reladraw -o probe.svg >/dev/null 2>&1
     )
     if [ -s "$t/probe/probe.svg" ]; then
       echo "packed, installed and rendered: $(wc -c < "$t/probe/probe.svg" | tr -d ' ') bytes of SVG"
@@ -559,11 +604,9 @@ case "$cmd" in
     node tools/playground.mjs "$t/index.html" >/dev/null
     cmp -s "$t/index.html" docs/index.html \
       && fresh docs/index.html || stale "docs/index.html (the playground)" playground
-    readme_images "$t" >/dev/null
-    for png in arch-render.png gap.png; do
-      cmp -s "$t/$png" "docs/$png" \
-        && fresh "docs/$png" || stale "docs/$png (a README picture)" readme-image
-    done
+    while read -r verdict png; do
+      [ "$verdict" = ok ] && fresh "docs/$png" || stale "docs/$png (a README picture)" readme-image
+    done < <(readme_images check)
 
     # Between releases every one of these names the last release; mid-release,
     # README and SYNTAX.md name the next one until `npm version` catches up.
@@ -723,12 +766,12 @@ PY
       # rename an attribute and every example using it "moves", because the old
       # build drops the word it has never heard of. Say what actually happened
       # and point at the command that answers the question instead.
-      if ! node "$work/base/dist/cli.js" "$in" -o "$work/head/$name.base.svg" >/dev/null 2>&1; then
+      if ! cli "$work/base/dist/cli.js" "$in" -o "$work/head/$name.base.svg" >/dev/null 2>&1; then
         echo "OLDER $name  (source does not render at $ref — use ./dev.sh pictures)"
         moved=$((moved + 1))
         continue
       fi
-      node dist/cli.js "$in" -o "$work/head/$name.head.svg" >/dev/null 2>&1 || true
+      cli dist/cli.js "$in" -o "$work/head/$name.head.svg" >/dev/null 2>&1 || true
       if cmp -s "$work/head/$name.base.svg" "$work/head/$name.head.svg"; then
         echo "same  $name"
       elif same_but_ids "$work/head/$name.base.svg" "$work/head/$name.head.svg"; then
@@ -746,7 +789,7 @@ PY
     compile
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
-      node dist/cli.js "$in" -o "$dir/$name.svg" >/dev/null 2>&1 || echo "FAILS $name"
+      cli dist/cli.js "$in" -o "$dir/$name.svg" >/dev/null 2>&1 || echo "FAILS $name"
     done
     echo "$(ls "$dir"/*.svg | wc -l | tr -d ' ') examples rendered into $dir"
     ;;
@@ -761,7 +804,7 @@ PY
     moved=0
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
-      if ! node dist/cli.js "$in" -o "$work/$name.svg" >"$work/$name.err" 2>&1; then
+      if ! cli dist/cli.js "$in" -o "$work/$name.svg" >"$work/$name.err" 2>&1; then
         echo "FAILS $name: $(tail -1 "$work/$name.err")"
         moved=$((moved + 1))
       elif ! cmp -s "$dir/$name.svg" "$work/$name.svg"; then
@@ -801,13 +844,13 @@ PY
         moved=$((moved + 1))
         continue
       fi
-      if ! (cd "$work/base" && node dist/cli.js "examples/$name.reladraw" \
+      if ! (cd "$work/base" && cli dist/cli.js "examples/$name.reladraw" \
               -o "$work/out/$name.base.svg") >/dev/null 2>&1; then
         echo "BROKE $name  (does not render at $ref)"
         moved=$((moved + 1))
         continue
       fi
-      node dist/cli.js "$in" -o "$work/out/$name.head.svg" >/dev/null 2>&1 || true
+      cli dist/cli.js "$in" -o "$work/out/$name.head.svg" >/dev/null 2>&1 || true
       if cmp -s "$work/out/$name.base.svg" "$work/out/$name.head.svg"; then
         echo "same  $name"
       elif same_but_ids "$work/out/$name.base.svg" "$work/out/$name.head.svg"; then
@@ -833,7 +876,7 @@ PY
     ln -s "$PWD/node_modules" "$work/node_modules"
     (cd "$work" && npx tsc >/dev/null)
     mkdir -p examples/out
-    node "$work/dist/cli.js" "$in" -o "examples/out/$name-before.svg"
+    cli "$work/dist/cli.js" "$in" -o "examples/out/$name-before.svg"
     rm -f "examples/out/$name-before.png"
     screenshot "examples/out/$name-before.svg" "examples/out/$name-before.png" "$(svg_size "examples/out/$name-before.svg")" ffffff
     echo "examples/out/$name-before.png"

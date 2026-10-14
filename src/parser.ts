@@ -45,6 +45,7 @@ import {
   listTargets,
   nameTarget,
 } from './ast.js';
+import { CHECK_DEFAULTS, CHECK_KINDS, setCheck } from './checks.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
 import { isAttrKey, nameMark, OpenString, tokenizeLine, type Token } from './lexer.js';
@@ -337,6 +338,7 @@ const BRACKET_KEYS: Record<string, readonly string[]> = {
   text: TEXT_KEYS,
   contents: CONTENTS_KEYS,
   line: LINE_KEYS,
+  checks: CHECK_KINDS,
 };
 
 /** How each bracketed key's error quotes itself back, and what it is about. */
@@ -344,6 +346,7 @@ const BRACKET_ABOUT: Record<string, { kind: string; example: string }> = {
   text: { kind: 'a text', example: 'color: theme-muted' },
   contents: { kind: 'a `contents:` bracket', example: 'widths: match' },
   line: { kind: 'a line', example: 'path: square' },
+  checks: { kind: 'a `checks:` bracket', example: 'edge-crossings: on' },
 };
 
 /**
@@ -970,6 +973,10 @@ function parseDiagram(head: Token[], line: number): DiagramStmt {
       }
       continue;
     }
+    if (key.startsWith('checks.')) {
+      setCheck({ ...CHECK_DEFAULTS }, key.slice('checks.'.length), attrs[key]!, (message) => new SourceError(message, line));
+      continue;
+    }
     if (!(DIAGRAM_KEYS as readonly string[]).includes(key)) {
       throw new SourceError(
         `diagram has no "${key}" — it takes ${DIAGRAM_KEYS.join(', ')}`,
@@ -979,6 +986,9 @@ function parseDiagram(head: Token[], line: number): DiagramStmt {
   }
   if (attrs['text'] !== undefined) {
     throw new SourceError('diagram text: takes a bracket — `text: (color: #e0e0e0)`', line);
+  }
+  if (attrs['checks'] !== undefined) {
+    throw new SourceError('diagram checks: takes a bracket — `checks: (edge-crossings: on)`', line);
   }
   const theme = attrs['theme'];
   if (theme !== undefined && THEMES[theme] === undefined) {

@@ -7,6 +7,12 @@ import { plain, type Line } from './text.js';
 
 /** Inside a box, between its border and its contents. */
 export const PAD = 14;
+/**
+ * The file's unit, in pixels: about a quarter of an ordinary one-line box, so
+ * the gap words land near whole numbers. Findings measure in it. Provisional
+ * until the gap words are measured against it.
+ */
+export const UNIT = 12;
 /** Between stacked children of one container. */
 export const CHILD_GAP = 10;
 /** Between a container's own text and its first child. */

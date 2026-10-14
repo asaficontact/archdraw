@@ -466,8 +466,10 @@ export interface DiagramStmt {
  * The attributes a `diagram` statement understands. `text` takes a bracket,
  * `text: (color: …)`, and sets the text color of everything at once — the
  * theme has one text color, shared by nodes and edges, and this is that.
+ * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
+ * of finding on or off by name.
  */
-export const DIAGRAM_KEYS = ['theme', 'background', 'text'] as const;
+export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks'] as const;
 
 /**
  * `default leaf  fill: #2e5d3a` — a style that applies to every thing of one

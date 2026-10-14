@@ -28,7 +28,7 @@ Open all of these as [GitHub issues](https://github.com/reladraw/reladraw/issues
 
 ## Pull requests
 
-reladraw does not accept pull requests. Pull requests will be closed without review.
+reladraw does not accept pull requests.
 
 This isn't about the quality of anyone's code. The language is still being designed, I want that design to stay in one head, and the code underneath changes too quickly for an outside patch to keep up. The problem you hit is the valuable part: open an issue describing what you were trying to draw, and I'll take it from there.
 
