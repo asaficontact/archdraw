@@ -1164,7 +1164,7 @@ function readPlacement(
   }
 
   // `2 right of x` is `right of x (gap: 2)`: a distance written in front.
-  const distance = /^-?\d+(\.\d+)?(px)?$/.exec(word.text);
+  const distance = /^-?\d*\.?\d+(px)?$/.exec(word.text);
   if (distance && tokens[at + 1] && isDirection(tokens[at + 1]!.text)) {
     if (word.text.startsWith('-')) {
       const flipped = OPPOSITE[tokens[at + 1]!.text as Direction];
@@ -1514,7 +1514,7 @@ function startsPlacement(token: Token): boolean {
   if (token.quoted) return false;
   return (
     isDirection(token.text) ||
-    /^-?\d+(\.\d+)?(px)?$/.test(token.text) ||
+    /^-?\d*\.?\d+(px)?$/.test(token.text) ||
     token.text === 'level' ||
     token.text === 'even' ||
     token.text === 'on' ||

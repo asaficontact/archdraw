@@ -13,8 +13,6 @@ export const PAD = 14;
  * until the gap words are measured against it.
  */
 export const UNIT = 12;
-/** Between stacked children of one container. */
-export const CHILD_GAP = 10;
 /** Between a container's own text and its first child. */
 export const HEADER_GAP = 10;
 /**
@@ -24,18 +22,17 @@ export const HEADER_GAP = 10;
  */
 export const DECK_STEP = 34;
 /**
- * The named gaps a placement may ask for, each a *minimum* distance rather than a
- * fixed one. Anything the author puts between two things widens the space
- * between them on its own, so no gap here ever has to be chosen large enough
- * to leave room for something else.
+ * The named gaps a placement may ask for, each an exact distance in whole
+ * units. Chosen 2026-10-14 against today's spacing: 2, 4 and 8 units keep the
+ * old look, where 1, 2 and 3 left a line barely longer than its arrowhead.
  */
 export const GAPS: Record<string, number> = {
   // A zero gap turns an offset into edge-to-edge contact, so "my top edge
   // against Docker's bottom edge" needs no vocabulary of its own.
   none: 0,
-  tight: 24,
-  normal: 56,
-  wide: 110,
+  tight: 2 * UNIT,
+  normal: 4 * UNIT,
+  wide: 8 * UNIT,
 };
 
 /**
@@ -184,8 +181,8 @@ export function fontSizeFor(
   const named = textAttrs['size'] ?? DEFAULT_TEXT_SIZE[kind] ?? 'normal';
   const scale = TEXT_SIZES[named];
   if (scale !== undefined) return Math.round(fontSize * scale);
-  if (/^\d+(\.\d+)?$/.test(named) && Number(named) > 0) return Number(named);
-  const unit = named.match(/^(\d+(?:\.\d+)?)px$/);
+  if (/^\d*\.?\d+$/.test(named) && Number(named) > 0) return Number(named);
+  const unit = named.match(/^(\d*\.?\d+)px$/);
   const hint = unit
     ? `; write "size: ${unit[1]}", a size's number is already in pixels`
     : named.startsWith('-') || /^0+(\.0+)?$/.test(named)

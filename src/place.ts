@@ -20,7 +20,7 @@
  */
 import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget, Side } from './ast.js';
 import { describePlacement, nameTarget, PART_SIDES } from './ast.js';
-import { CHILD_GAP, DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
+import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
 import type { LayoutNode } from './model.js';
 import { type Dimension, SIZE_KEYS, type SizeExpr, type SpanSide, storedSize } from './size.js';
@@ -98,8 +98,8 @@ type Statement =
 export function gapPixels(written: string, subject: string, line: number): number {
   const word = GAPS[written];
   if (word !== undefined) return word;
-  if (/^\d+(\.\d+)?$/.test(written)) return Number(written) * UNIT;
-  const pixels = /^(\d+(?:\.\d+)?)px$/.exec(written);
+  if (/^\d*\.?\d+$/.test(written)) return Number(written) * UNIT;
+  const pixels = /^(\d*\.?\d+)px$/.exec(written);
   if (pixels) return Number(pixels[1]);
   if (written.startsWith('-')) {
     throw new SourceError(
@@ -411,8 +411,9 @@ export class Placer {
     const parent = node.parent;
     const own = parent !== undefined && placement.targets.some((target) => target.name === parent.name);
     if (own && placement.targets.some((target) => target.part === 'text')) {
-      // An empty text takes no room, and that includes the gap beside it.
-      return this.facts.get(parent)!.hasText ? CHILD_GAP : 0;
+      // One unit, so `badge:` draws as its long form `1 right of hub text`
+      // does. An empty text takes no room, and that includes the gap beside it.
+      return this.facts.get(parent)!.hasText ? UNIT : 0;
     }
     if (placement.written === 'inside') return own ? this.facts.get(parent)!.padding : GAPS['tight']!;
     return GAPS['normal']!;

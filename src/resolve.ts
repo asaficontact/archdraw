@@ -853,7 +853,7 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
   const thickness = ((): number => {
     const value = appearance['line.thickness'];
     if (value !== undefined && /^[0-9.]/.test(value)) {
-      if (!/^\d+(\.\d+)?$/.test(value) || Number(value) <= 0) {
+      if (!/^\d*\.?\d+$/.test(value) || Number(value) <= 0) {
         throw new SourceError(
           `edge ${what}: "thickness: ${value}" — a thickness is thin, normal, thick, ` +
             'or a plain number of pixels greater than zero, such as `thickness: 3`',

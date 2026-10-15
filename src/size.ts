@@ -37,7 +37,7 @@ export const SIZE_KEYS: Record<string, Dimension> = {
 
 const SPAN_SIDES: readonly string[] = ['top', 'bottom', 'left', 'right', 'center'];
 const RESERVED = new Set(['and', 'of', 'to', '+', '(', ')', 'larger', 'smaller']);
-const NUMBER = /^(\d+(?:\.\d+)?)(?:\/(\d+(?:\.\d+)?))?(px)?$/;
+const NUMBER = /^(\d*\.?\d+)(?:\/(\d*\.?\d+))?(px)?$/;
 
 interface Reading {
   tokens: Token[];
