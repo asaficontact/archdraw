@@ -50,7 +50,8 @@ node server.db "database"  below server.web (gap: tight)
 node server.cache "cache"  below server.db (gap: tight)
 node server.hot "hot"  right of server.db  style: mark
 
-// Beside the text, the way a badge is.
+// Beside the text, as a thing of its own: the text stays in the middle, where
+// it was put. badge: would make the picture part of the label instead.
 node fresh "Release notes"  below column (gap: wide)
 node fresh.tag "new"  right of fresh text  style: mark
 
@@ -60,15 +61,14 @@ node dot "Inbox"  right of fresh (gap: wide)
 node dot.count "3"  on dot top-right  style: mark
 
 // Beyond the frame. The note is placed on the router's finished box and is no
-// part of its size, so the switch placed right of the router lands on the note,
-// and the overlap is reported.
+// part of its size, so the switch is placed right of the note, not the router.
 node router "Router"  right of dot (gap: wide)
 node router.note "note"  outside router right (gap: tight)  style: mark
-node switch "Switch"  right of router
+node switch "Switch"  right of router.note
 
 // An edge between two children. Its text takes no room of its own, so the
-// gap is what the placements say.
+// gap is stated wide enough to hold it.
 node pipe "Pipeline"  below fresh (gap: wide)
-node pipe.src "source"    below-left of pipe text
-node pipe.out "artifact"  below-right of pipe text
+node pipe.src "source"
+node pipe.out "artifact"  15 right of pipe.src
 edge pipe.src -> pipe.out  "build and test"  from: right  to: left

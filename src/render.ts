@@ -246,6 +246,11 @@ function linked(svg: string, url: string | undefined): string {
   return `  <a href=${quote(escapeXml(url))} target="_blank" rel="noopener">\n${svg}\n  </a>`;
 }
 
+/** Whether a node holds anything besides its heading: what a theme draws as a container. */
+function holdsContents(node: LayoutNode): boolean {
+  return node.children.some((child) => child !== node.heading);
+}
+
 function drawNode(
   node: LayoutNode,
   theme: Theme,
@@ -287,9 +292,14 @@ function nodeSvg(
   if (node.body.kind === 'none') {
     const style = textStyleFor(node.textAttrs, node.line, 'start', 'center');
     const kids = node.children.map((child) => drawNode(child, theme, measurer, fontSize, markup, url));
+    // With no fill of its own, its text reads on whatever box it sits in:
+    // a badge's heading text on a box filled theme-primary is that box's text.
+    let behind = node.parent;
+    while (behind && behind.body.kind === 'none') behind = behind.parent;
+    const onFill = behind ? textOnFill(behind.appearance['fill'] ?? '', theme) : undefined;
     return { kids, own: [sized(
       textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
-        color: textColorOf(node.textAttrs, theme, theme.text),
+        color: textColorOf(node.textAttrs, theme, onFill ?? theme.text),
         align: style.align,
         ink,
       }),
@@ -328,9 +338,10 @@ function nodeSvg(
   const kids: string[] = [];
   const face = faceOf(node);
   // A node with children is colored as a backdrop however they are placed,
-  // including a lone badge beside its text. Every rule that tried to tell a
-  // badge from contents was a guess; this one is visible in the source.
-  const container = node.children.length > 0;
+  // except its heading, which is its title: a badged box with nothing else in
+  // it looks like the boxes beside it. Every rule that tried to tell a badge
+  // from contents by looking was a guess; `badge:` and `heading:` say it.
+  const container = holdsContents(node);
   const border = borderOf(node.appearance, theme, container ? theme.containerStroke : theme.boxStroke);
   const fill = fillOf(node.appearance, theme, container ? theme.containerFill : theme.boxFill);
   // A box is the one kind with two inkable parts, which is why its text needs
@@ -717,7 +728,7 @@ function placeTexts(drawn: DrawnEdge[], nodes: LayoutNode[]): void {
   const onBox = (area: Extent, at: Point): boolean =>
     nodes.some((node) => {
       const box = extentOfBox(faceOf(node));
-      const holds = node.children.length > 0 &&
+      const holds = holdsContents(node) &&
         box.minX < at.x && at.x < box.maxX && box.minY < at.y && at.y < box.maxY;
       return !holds && overlaps(area, box);
     });
@@ -2750,7 +2761,7 @@ function textOnWay(
       const box = extentOfBox(faceOf(node));
       // A container the text sits inside is not something it lands on.
       const holds = box.minX < mid.x && mid.x < box.maxX && box.minY < mid.y && mid.y < box.maxY &&
-        node.children.length > 0;
+        holdsContents(node);
       return holds ||
         mid.x + half.x <= box.minX || mid.x - half.x >= box.maxX ||
         mid.y + half.y <= box.minY || mid.y - half.y >= box.maxY;

@@ -6,13 +6,13 @@ style plain  fill: theme-fill  border: theme-border
 // A reciprocal pair around a corner. Further left along Gateway's bottom is
 // further down Queue's left, so the order reverses between the two ends.
 node gateway "Gateway"  style: plain
-node queue   "Queue"    below gateway  right of gateway (gap: wide)  style: plain
+node queue   "Queue"    6 below gateway  14 right of gateway  style: plain
 edge gateway -> queue  "publishes messages"  from: bottom  to: left
 edge queue -> gateway  "receives messages"   from: left    to: bottom
 
 // Two edges facing each other, where the order runs the same way at both ends.
 node client "Client"  below queue (gap: wide)  left of queue  style: plain
-node server "Server"  right of client (gap: wide)  style: plain
+node server "Server"  10 right of client  style: plain
 edge client -> server  "request"   from: right  to: left
 edge server -> client  "response"  from: left   to: right
 
@@ -30,7 +30,7 @@ edge fan -> hub  "five"   from: bottom  to: top
 // Two edges pointing the same way. Nothing tells them apart, so the order they
 // are written in decides. Swap these two lines and the texts swap lanes.
 node left_wall  "Producer"  below hub (gap: wide)  left of hub  style: plain
-node right_wall "Consumer"  right of left_wall (gap: wide)  style: plain
+node right_wall "Consumer"  9 right of left_wall  style: plain
 edge left_wall -> right_wall  "bulk"     from: right  to: left
 edge left_wall -> right_wall  "control"  from: right  to: left
 
@@ -46,7 +46,7 @@ edge spoke -> down  from: right  to: left
 // because there is nowhere further along an edge to go, and each line makes up
 // the shortfall by bowing out in the middle, where the texts ride.
 node narrow "Narrow"  below spoke (gap: wide)  left of spoke  style: plain
-node also   "Also"    right of narrow (gap: wide)  style: plain
+node also   "Also"    9 right of narrow  style: plain
 edge narrow -> also  "first"   from: right  to: left
 edge narrow -> also  "second"  from: right  to: left
 edge narrow -> also  "third"   from: right  to: left

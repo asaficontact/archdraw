@@ -262,6 +262,8 @@ export class Placer {
 
   private workOutStart(node: LayoutNode, axis: Axis): number {
     const parent = node.parent;
+    // A heading goes where its container's title would.
+    if (parent && parent.heading === node) return this.frame(parent, axis).titleStart;
     if (parent && this.facts.get(parent)!.layout) return this.inLayout(node, axis).start;
     if (node.placements.length === 0) {
       // The anchor of its frame. A container's title, when something is
@@ -413,9 +415,9 @@ export class Placer {
     const parent = node.parent;
     const own = parent !== undefined && placement.targets.some((target) => target.name === parent.name);
     if (own && placement.targets.some((target) => target.part === 'text')) {
-      // One unit, so `badge:` draws as its long form `1 right of hub text`
-      // does. An empty text takes no room, and that includes the gap beside it.
-      return this.facts.get(parent)!.hasText ? UNIT : 0;
+      // One unit, as beside any text of one's own. An empty text takes no
+      // room, and that includes the gap beside it.
+      return this.hasTitle(parent) ? UNIT : 0;
     }
     if (placement.written === 'inside') return own ? this.facts.get(parent)!.padding : GAPS['tight']!;
     return GAPS['normal']!;
@@ -454,11 +456,17 @@ export class Placer {
       // The top level is placed on the page, so anything anywhere can be named.
       whole = { start: this.page(named, axis), size: this.size(named, axis) };
       if (target.part === 'text') text = this.textOf(named, axis, whole.start);
-    } else if (named === parent && target.part === 'text' && parent.children.some((child) => !this.framed(child) && this.onTitle(child))) {
+    } else if (named === parent && target.part === 'text' && this.anchoredOnTitle(parent)) {
       // The title anchors the frame, so it is at the origin, known without the box.
-      const facts = this.facts.get(parent)!;
       whole = { start: 0, size: 0 };
-      text = { start: 0, size: facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0 };
+      text = { start: 0, size: this.titleSize(parent, axis) };
+    } else if (named === parent.heading) {
+      // The heading is the title: at the origin when something is placed
+      // against it, and otherwise wherever the title goes.
+      whole = this.anchoredOnTitle(parent)
+        ? { start: 0, size: this.size(named, axis) }
+        : { start: this.start(named, axis), size: this.size(named, axis) };
+      if (target.part === 'text') text = this.textOf(named, axis, whole.start);
     } else if (named === parent) {
       const frame = this.frame(parent, axis);
       whole = { start: frame.boxStart, size: frame.boxSize };
@@ -481,7 +489,7 @@ export class Placer {
       );
     }
     if (target.part === 'text') {
-      if (!text || (!this.facts.get(named)!.hasText && named !== parent)) {
+      if (!text || (!this.hasTitle(named) && named !== parent)) {
         throw new SourceError(
           `"${node.name}" is placed against "${nameTarget(target)}", and "${named.name}" has no text`,
           placement.line,
@@ -517,13 +525,54 @@ export class Placer {
     );
   }
 
-  /** A child placed against its container's text, which makes the text its frame's anchor. */
+  /**
+   * A child placed against its container's text, or against its heading,
+   * which makes the title its frame's anchor.
+   */
   private onTitle(node: LayoutNode): boolean {
     const parent = node.parent;
     if (!parent) return false;
     return node.placements.some((placement) =>
-      placement.targets.some((target) => target.name === parent.name && target.part === 'text'),
+      placement.targets.some(
+        (target) =>
+          (target.name === parent.name && target.part === 'text') ||
+          (parent.heading !== undefined && target.name === parent.heading.name),
+      ),
     );
+  }
+
+  /** Whether a container's title anchors its frame, because a child is placed against it. */
+  private anchoredOnTitle(node: LayoutNode): boolean {
+    return this.contentOf(node).some((child) => this.onTitle(child));
+  }
+
+  /** The children a container's box is the outline of: not its heading, and not those placed against the box. */
+  private contentOf(node: LayoutNode): LayoutNode[] {
+    return node.children.filter((child) => child !== node.heading && !this.framed(child));
+  }
+
+  /** Whether a node has a title: its text, or a heading. */
+  private hasTitle(node: LayoutNode): boolean {
+    return node.heading !== undefined || this.facts.get(node)!.hasText;
+  }
+
+  /** How big a container's title is on one axis: its heading, or its text. */
+  private titleSize(node: LayoutNode, axis: Axis): number {
+    if (node.heading) return this.size(node.heading, axis);
+    const facts = this.facts.get(node)!;
+    return facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0;
+  }
+
+  /**
+   * Where a container's title sits. A heading over nothing else is centered,
+   * as a leaf's text is, unless its bracket says where.
+   */
+  private titleOf(node: LayoutNode): TitlePlace {
+    const stated = node.textAttrs['place'] !== undefined;
+    if (node.heading && !stated && this.contentOf(node).length === 0) {
+      return { how: 'center', side: 'center', along: 'center' };
+    }
+    return this.facts.get(node)!.title;
   }
 
   // --- sizes ---------------------------------------------------------------
@@ -548,7 +597,7 @@ export class Placer {
       return pinned.size;
     }
     const parent = node.parent;
-    if (parent && this.stretches(parent, axis)) {
+    if (parent && parent.heading !== node && this.stretches(parent, axis)) {
       const laid = this.inLayout(node, axis);
       if (laid.size !== undefined) return laid.size;
     }
@@ -699,10 +748,11 @@ export class Placer {
    */
   private workOutFrame(node: LayoutNode, axis: Axis): FrameAxis {
     const facts = this.facts.get(node)!;
-    const title = facts.title;
-    const titleSize = facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0;
-    const content = node.children.filter((child) => !this.framed(child));
-    const anchoredOnTitle = content.some((child) => this.onTitle(child));
+    const title = this.titleOf(node);
+    const hasTitle = this.hasTitle(node);
+    const titleSize = this.titleSize(node, axis);
+    const content = this.contentOf(node);
+    const anchoredOnTitle = this.anchoredOnTitle(node);
 
     let low = Infinity;
     let high = -Infinity;
@@ -737,7 +787,7 @@ export class Placer {
     let titleStart: number;
     if (anchoredOnTitle || empty) {
       titleStart = 0;
-      if (empty && !anchoredOnTitle && facts.hasText) {
+      if (empty && !anchoredOnTitle && hasTitle) {
         low = 0;
         high = titleSize;
       }
@@ -758,7 +808,7 @@ export class Placer {
       titleStart = 0;
     }
 
-    const inBox = facts.hasText && title.how !== 'outside';
+    const inBox = hasTitle && title.how !== 'outside';
     let boxLow = low;
     let boxHigh = high;
     if (inBox && !empty) {
@@ -769,14 +819,14 @@ export class Placer {
     boxHigh += facts.padding;
 
     // On the border: the box's edge on that side runs through the title's middle.
-    if (title.how === 'on' && facts.hasText && axis !== across) {
+    if (title.how === 'on' && hasTitle && axis !== across) {
       const middle = titleStart + titleSize / 2;
       if (title.side === 'top' || title.side === 'left') boxLow = middle;
       else boxHigh = middle;
     }
 
     // Outside the border: placed off the finished box, so it never sizes it.
-    if (title.how === 'outside' && facts.hasText && !anchoredOnTitle) {
+    if (title.how === 'outside' && hasTitle && !anchoredOnTitle) {
       if (axis === across) {
         titleStart =
           title.along === 'start'
@@ -827,9 +877,9 @@ export class Placer {
     const outline = this.outline(node, axis);
     const extra = this.size(node, axis) - outline.boxSize;
     if (extra === 0) return outline;
-    const title = this.facts.get(node)!.title;
+    const title = this.titleOf(node);
     const across: Axis = title.side === 'top' || title.side === 'bottom' ? 'x' : 'y';
-    const anchored = node.children.some((child) => !this.framed(child) && this.onTitle(child));
+    const anchored = this.anchoredOnTitle(node);
     let shift = 0;
     if (!anchored && title.how !== 'center' && title.side !== 'center') {
       const toward = axis === across ? title.along : title.side === 'top' || title.side === 'left' ? 'start' : 'end';
@@ -845,18 +895,18 @@ export class Placer {
 
   /** The padded-in block of a circle on the other axis, which its diameter depends on as well. */
   private innerOther(node: LayoutNode, axis: Axis): number {
-    const facts = this.facts.get(node)!;
     const key = `inner\n${node.name}\n${axis}`;
     return this.guard(key, node, axis, undefined, () => {
-      const content = node.children.filter((child) => !this.framed(child));
+      const content = this.contentOf(node);
       let low = Infinity;
       let high = -Infinity;
       for (const child of content) {
         low = Math.min(low, this.start(child, axis));
         high = Math.max(high, this.start(child, axis) + this.size(child, axis));
       }
-      const titleSize = facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0;
-      const along = facts.title.side === 'top' || facts.title.side === 'bottom' ? 'x' : 'y';
+      const titleSize = this.titleSize(node, axis);
+      const title = this.titleOf(node);
+      const along = title.side === 'top' || title.side === 'bottom' ? 'x' : 'y';
       if (low > high) return titleSize;
       return axis === along ? Math.max(high - low, titleSize) : high - low + (titleSize > 0 ? titleSize + HEADER_GAP : 0);
     });
@@ -873,7 +923,7 @@ export class Placer {
     if (known) return known;
     const layout = this.facts.get(parent)!.layout!;
     const main: Axis = layout.kind === 'column' ? 'y' : 'x';
-    const children = parent.children;
+    const children = parent.children.filter((child) => child !== parent.heading);
     const natural = (child: LayoutNode, on: Axis) => this.ownSize(child, on);
     if (axis !== main && this.stretches(parent, axis)) {
       for (const child of children) {
@@ -902,11 +952,11 @@ export class Placer {
       // The band is the room the children are aligned in: as wide as the
       // widest of them, or the title along the top or bottom if that is wider.
       let widest = Math.max(...children.map((child) => natural(child, axis)));
-      const facts = this.facts.get(parent)!;
-      const titleAlong = facts.title.side === 'top' || facts.title.side === 'bottom';
+      const title = this.titleOf(parent);
+      const titleAlong = title.side === 'top' || title.side === 'bottom';
       const band =
-        axis === 'x' && titleAlong && facts.hasText && facts.title.how !== 'outside' && facts.title.how !== 'center'
-          ? Math.max(widest, facts.textBox.width)
+        axis === 'x' && titleAlong && this.hasTitle(parent) && title.how !== 'outside' && title.how !== 'center'
+          ? Math.max(widest, this.titleSize(parent, 'x'))
           : widest;
       if (layout.widths === 'fill') widest = band;
       this.bands.set(`${parent.name}\n${axis}`, band);
@@ -927,7 +977,10 @@ export class Placer {
    * other is placed against it, directly or through others. In a container a
    * title something is placed against anchors the frame instead.
    */
-  private checkAnchors(members: LayoutNode[], parent: LayoutNode | undefined): void {
+  private checkAnchors(all: LayoutNode[], parent: LayoutNode | undefined): void {
+    // A heading goes where the title would, and anchors nothing; the tree
+    // pass refused any placement on it.
+    const members = all.filter((member) => member !== parent?.heading);
     if (parent && this.facts.get(parent)!.layout) {
       for (const child of members) {
         const [placement] = child.placements;
@@ -965,7 +1018,7 @@ export class Placer {
         );
       }
     }
-    for (const member of members) this.checkAnchors(member.children, member);
+    for (const member of all) this.checkAnchors(member.children, member);
   }
 
   // --- finishing -----------------------------------------------------------

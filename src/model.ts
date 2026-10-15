@@ -45,6 +45,12 @@ export interface LayoutNode {
   lines: Line[];
   parent?: LayoutNode;
   children: LayoutNode[];
+  /**
+   * The child that is this box's heading (`heading:`, or the one `badge:`
+   * writes out): it sits where the title would, and the other children are
+   * arranged under it. It does not make the box a container to look at.
+   */
+  heading?: LayoutNode;
 
   x: number;
   y: number;

@@ -5,10 +5,10 @@ style quiet  text: (color: theme-muted, size: small)
 
 node web     "Web app"  badge: laptop
 node api     "API server"                          right of web (gap: wide)
-node cluster "Workers"                             below api
+node cluster "Workers"                             5 below api
 node cluster.a "worker a"
-node cluster.b "worker b"                          right of cluster.a
-node db      "Records"  icon: database             right of api (gap: wide)
+node cluster.b "worker b"                          right of cluster.a (gap: tight)
+node db      "Records"  icon: database             10 right of api
 node note    "Backed up nightly / to cold storage"  below db  shape: none  style: quiet
 
 edge web -> api "HTTPS"

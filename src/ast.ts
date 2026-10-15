@@ -496,14 +496,16 @@ export type DefaultTarget = (typeof DEFAULT_TARGETS)[number];
  *
  * - A default names its kind, so it is strict where a style is permissive —
  *   `default edge  fill:` can only be a mistake.
- * - `badge:` gives a box a child, which makes it a container, so every leaf
- *   given one by `default leaf` or `default node` would stop being a leaf.
  * - `icon:` draws a picture, and a picture cannot hold children, so it is a
  *   leaf's word and not a container's or every node's.
+ * - `heading:` names one node's own child, so it belongs to that node alone.
+ *
+ * `badge:` is every kind's: it makes the picture part of the label, a heading,
+ * and a heading doesn't make a leaf a container.
  */
 export const DEFAULT_KEYS: Record<DefaultTarget, readonly string[]> = {
-  node: ['style', 'shape', 'fill', 'border', 'text'],
-  leaf: ['style', 'shape', 'icon', 'fill', 'border', 'text'],
+  node: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
+  leaf: ['style', 'shape', 'icon', 'badge', 'fill', 'border', 'text'],
   container: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
   edge: ['style', 'line', 'text'],
 };
@@ -588,9 +590,9 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
+  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
   icon: ['style', 'overlap', 'icon', 'text', 'url'],
-  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'shape', 'text', 'url'],
+  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'shape', 'text', 'url'],
   edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
 };
 

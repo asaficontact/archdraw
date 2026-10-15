@@ -1,8 +1,8 @@
 // A node with no text of its own takes its name as its text.
 
 node parser
-node resolver  right of parser
-node renderer  right of resolver
+node resolver  10 right of parser
+node renderer  10 right of resolver
 edge parser -> resolver "statements"
 edge resolver -> renderer "geometry"
 

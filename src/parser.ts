@@ -418,6 +418,28 @@ function readAttr(
       line,
     );
   }
+  if (key === 'heading') {
+    // `heading: d1.head (inside top, align: left)` — the child, then where it
+    // sits, in the words a title uses.
+    const value = tokens[at + 1];
+    if (!value || value.quoted || isAttrKey(value) || value.text === '(') {
+      throw new SourceError(`${subject}: heading: names one of its own children, such as heading: ${subject.replace(/^node "|"$/g, '')}.head`, line);
+    }
+    setOnce(attrs, 'heading', value.text, subject, line);
+    const taken = takeTitlePlace(tokens, at + 2, subject, line);
+    const read = readBracket(taken.tokens, at + 2, ['align'], {
+      subject,
+      what: '`heading:`',
+      kind: 'a heading',
+      example: 'align: left',
+      line,
+    });
+    if (taken.place !== undefined) setOnce(attrs, 'heading.place', taken.place, subject, line);
+    if (read.values['align'] !== undefined) setOnce(attrs, 'heading.align', read.values['align'], subject, line);
+    // Taking the place words out shortened the tokens; count from the original.
+    const removed = tokens.length - taken.tokens.length;
+    return read.next + removed;
+  }
   if (key === 'layout') {
     // `layout: column (gap: 0, widths: match)` — a value, then its settings.
     // `centers: 5 apart` reads its last word as part of the value.
@@ -687,6 +709,29 @@ function refuseTextKey(attrs: Attrs, subject: string, where: string, line: numbe
 }
 
 /**
+ * `(inside top, align: left)`, `(on top)`, `(outside bottom)`, `(center)`:
+ * where a title or a heading sits, written first in a bracket. They are
+ * placements, so they take no colon. Returns the tokens with those words taken
+ * out, leaving the bracket's keyed settings for `readBracket`.
+ */
+function takeTitlePlace(tokens: Token[], open: number, subject: string, line: number): { tokens: Token[]; place?: string } {
+  if (!follows(tokens, open, '(')) return { tokens };
+  const first = tokens[open + 1];
+  const word = first && !first.quoted ? first.text.replace(/,$/, '') : undefined;
+  if (word === 'center') {
+    return { tokens: [...tokens.slice(0, open + 1), ...tokens.slice(open + 2)], place: 'center' };
+  }
+  if (word === 'inside' || word === 'on' || word === 'outside') {
+    const side = tokens[open + 2]?.text.replace(/,$/, '');
+    if (!side || !['top', 'bottom', 'left', 'right'].includes(side)) {
+      throw new SourceError(`${subject}: a title sits ${word} a side — top, bottom, left or right`, line);
+    }
+    return { tokens: [...tokens.slice(0, open + 1), ...tokens.slice(open + 3)], place: `${word} ${side}` };
+  }
+  return { tokens };
+}
+
+/**
  * `node <name> ["<text>"] [(<text modifiers>)] [<placement> ...]`
  *
  * The text is optional and the name stands in for it, because a bare `node a`
@@ -720,27 +765,10 @@ function parseNode(head: Token[], line: number): NodeStmt {
   }
   const text = textToken ? textToken.text : name.slice(name.lastIndexOf('.') + 1);
   const subject = `node "${name}"`;
-  // `(inside top, align: left)`, `(on top)`, `(outside bottom)`, `(center)`:
-  // where a title sits, written first in the text's bracket. They are
-  // placements, so they take no colon.
-  let place: string | undefined;
   const open = textToken ? 3 : 2;
-  if (follows(head, open, '(')) {
-    const first = head[open + 1];
-    const word = first && !first.quoted ? first.text.replace(/,$/, '') : undefined;
-    if (word === 'center') {
-      place = 'center';
-      head = [...head.slice(0, open + 1), ...head.slice(open + 2)];
-    } else if (word === 'inside' || word === 'on' || word === 'outside') {
-      const sideToken = head[open + 2];
-      const side = sideToken?.text.replace(/,$/, '');
-      if (!side || !['top', 'bottom', 'left', 'right'].includes(side)) {
-        throw new SourceError(`${subject}: a title sits ${word} a side — top, bottom, left or right`, line);
-      }
-      place = `${word} ${side}`;
-      head = [...head.slice(0, open + 1), ...head.slice(open + 3)];
-    }
-  }
+  const taken = takeTitlePlace(head, open, subject, line);
+  head = taken.tokens;
+  const place = taken.place;
   const bracket = readBracket(head, open, TEXT_KEYS, {
     subject,
     what: 'the text',
@@ -1103,9 +1131,8 @@ function parseDefault(head: Token[], line: number): DefaultStmt {
 function defaultRefusal(kind: DefaultTarget, key: string): string {
   const takes = `it takes ${DEFAULT_KEYS[kind].map((k) => `${k}:`).join(', ')}`;
   if (key === 'url') return `and a destination belongs to one thing rather than to every one of a kind`;
-  if (key === 'badge') {
-    return 'and a badge is a child, so every leaf given one would become a container. ' +
-      'Put the badge in a style, or write `default container  badge:`';
+  if (key === 'heading') {
+    return "and a heading names one node's own child, so it is written on that node";
   }
   if (key === 'icon') {
     return 'and a picture cannot hold children, so an icon is a leaf\'s word — write `default leaf  icon:`';

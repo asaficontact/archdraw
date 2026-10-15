@@ -5,9 +5,12 @@
 // anyone typing the word twice.
 style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 
-// badge: is shorthand. row1.disk below is the same as writing
-//   node row1.disk "Spinning disk" (center)
-//   node row1.disk.badge  icon: disk  1 right of row1.disk text
+// badge: makes the picture part of the label, and is shorthand for a heading.
+// row1.disk below is the same as writing
+//   node row1.disk  heading: row1.disk.head
+//   node row1.disk.head  ""  shape: none
+//   node row1.disk.head.text  "Spinning disk" (size: normal)  shape: none
+//   node row1.disk.head.badge  icon: disk  1 right of row1.disk.head.text
 node row1 ""  shape: none
 node row1.disk     "Spinning disk"     badge: disk
 node row1.desktop  "Workstation"       right of row1.disk (gap: tight)     badge: desktop

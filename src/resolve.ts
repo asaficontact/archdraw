@@ -115,7 +115,7 @@ function titlePlaceOf(node: LayoutNode): TitlePlace {
       node.line,
     );
   }
-  const written = node.textAttrs['place'] ?? (node.attrs['badge'] !== undefined || node.appearance['badge'] !== undefined ? 'center' : 'inside top');
+  const written = node.textAttrs['place'] ?? 'inside top';
   if (written === 'center') return { how: 'center', side: 'center', along: 'center' };
   const [how, side] = written.split(' ') as [TitlePlace['how'], TitlePlace['side']];
   const across = side === 'top' || side === 'bottom';
@@ -327,20 +327,25 @@ function buildTree(
   const nodes: LayoutNode[] = [];
   const byName = new Map<string, LayoutNode>();
   const roots: LayoutNode[] = [];
-  /** Each badge child's name, and the node whose `badge:` it was written out from. */
+  /** Each name `badge:` writes out, and the node whose `badge:` it was. */
   const badges = new Map<string, string>();
 
   // Which nodes will hold children has to be known before any node is built,
   // because it decides which default a node wears, and its children are
-  // declared after it. A child is a dotted name, or a badge the node's own
-  // line or styles give it; a default cannot give a leaf a badge, so what
-  // the defaults say cannot change the answer.
+  // declared after it. A child is a dotted name; the heading doesn't count
+  // (design.org 9.3), so a badged box with nothing else in it is a leaf, and
+  // neither `badge:` nor anything a default says can change the answer.
+  const headings = new Map<string, string>();
+  for (const stmt of statements) {
+    if (stmt.kind === 'node' && stmt.attrs['heading'] !== undefined) headings.set(stmt.name, stmt.attrs['heading']);
+  }
   const parents = new Set<string>();
   for (const stmt of statements) {
     if (stmt.kind !== 'node') continue;
     const cut = stmt.name.lastIndexOf('.');
-    if (cut !== -1) parents.add(stmt.name.slice(0, cut));
-    if (appearanceOf(stmt.attrs, styles, stmt.line)['badge'] !== undefined) parents.add(stmt.name);
+    if (cut === -1) continue;
+    const parent = stmt.name.slice(0, cut);
+    if (headings.get(parent) !== stmt.name) parents.add(parent);
   }
 
   for (const stmt of statements) {
@@ -350,8 +355,8 @@ function buildTree(
       const owner = badges.get(stmt.name);
       if (owner !== undefined) {
         throw new SourceError(
-          `"${stmt.name}" is the child that "${owner}"'s badge: is written out as. Drop badge: from ` +
-            `"${owner}" and write the icon here yourself, or give this node another name`,
+          `"${stmt.name}" is part of the heading that "${owner}"'s badge: writes out. Drop badge: from ` +
+            `"${owner}" and write the heading yourself with heading:, or give this node another name`,
           stmt.line,
         );
       }
@@ -372,12 +377,34 @@ function buildTree(
     // exception: a picture usually is the statement, and the default would
     // caption a row of cubes a, b, db1, c, db2. `""` then says what writing
     // nothing says, which is only true here — on a box it carries information.
-    const text = body.kind === 'icon' && !stmt.statedText ? '' : stmt.text;
+    // A box with a heading has no text of its own: the heading is its title,
+    // and where it sits is said in `heading:`'s bracket.
+    const headed = stmt.attrs['heading'] !== undefined;
+    if (headed && stmt.statedText) {
+      throw new SourceError(
+        `"${stmt.name}" has a text and heading:, which is two headings — put the text in ` +
+          `"${stmt.attrs['heading']}", or drop heading:`,
+        stmt.line,
+      );
+    }
+    if (headed && Object.keys(stmt.textAttrs).length > 0) {
+      throw new SourceError(
+        `"${stmt.name}" has heading:, so it has no text of its own to bracket — where the heading sits goes ` +
+          `in heading:'s bracket, such as heading: ${stmt.attrs['heading']} (inside top, align: left)`,
+        stmt.line,
+      );
+    }
+    const text = headed || (body.kind === 'icon' && !stmt.statedText) ? '' : stmt.text;
     // A style has no string of its own, so it says what it has to say about a
     // text through `text: (…)`, which arrives here under dotted keys. What the
     // node wrote in its own brackets wins, key by key, exactly as its own
     // attributes win over the style's.
-    const textAttrs = { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    const textAttrs = headed
+      ? {
+          ...(stmt.attrs['heading.place'] !== undefined ? { place: stmt.attrs['heading.place'] } : {}),
+          ...(stmt.attrs['heading.align'] !== undefined ? { align: stmt.attrs['heading.align'] } : {}),
+        }
+      : { ...bracketOf('text', appearance), ...stmt.textAttrs };
 
     const node: LayoutNode = {
       name: stmt.name,
@@ -431,61 +458,133 @@ function buildTree(
     nodes.push(node);
     byName.set(stmt.name, node);
 
-    // `badge: X` is a shorthand, and this is its expansion:
-    //   node <self>.badge  icon: X  right of <self> text
-    // set at the parent's text size, so the picture is two of the parent's
-    // lines tall. Read from the merged appearance, so a style carrying a badge
-    // gives one to every box wearing it. Only a box has a text to be beside;
-    // the other kinds refuse the word in `checkAttrs`, and a style's is unused.
+    // `badge: X` is a shorthand for a heading of the text with the picture
+    // beside it (design.org 5.9). Read from the merged appearance, so a style
+    // or a default carrying a badge gives one to every box wearing it. Only a
+    // box has a text to be beside; the other kinds refuse the word in
+    // `checkAttrs`, and a style's is unused.
     const named = appearance['badge'];
     if (named !== undefined && body.kind === 'shape') {
-      const badge = badgeChild(node, named, icons);
-      badges.set(badge.name, node.name);
-      node.children.push(badge);
-      nodes.push(badge);
-      byName.set(badge.name, badge);
+      if (headed) {
+        throw new SourceError(
+          `"${stmt.name}" has badge: and heading:, which are two headings — badge: is a heading of the text ` +
+            'and the picture, so keep one',
+          stmt.line,
+        );
+      }
+      for (const made of writeOutBadge(node, named, icons)) {
+        badges.set(made.name, node.name);
+        nodes.push(made);
+        byName.set(made.name, made);
+      }
     }
+  }
+
+  // A heading written by hand names one of the node's own children, declared
+  // after it, which places nothing itself: it goes where the title would.
+  for (const [name, child] of headings) {
+    const node = byName.get(name)!;
+    const heading = byName.get(child);
+    if (!heading || heading.parent !== node) {
+      throw new SourceError(
+        heading
+          ? `"${name}" has heading: ${child}, which is not one of its own children — a heading is a child, such as ${name}.head`
+          : `"${name}" has heading: ${child}, which does not exist — declare it as a child, such as node ${child} "" shape: none`,
+        node.line,
+      );
+    }
+    const [placement] = heading.placements;
+    if (placement) {
+      throw new SourceError(
+        `"${child}" is "${name}"'s heading, which goes where the title would, so it places nothing itself — ` +
+          `drop "${describePlacement(placement)}", and say where the heading sits in heading:'s bracket`,
+        placement.line,
+      );
+    }
+    node.heading = heading;
   }
 
   return { nodes, byName, roots };
 }
 
-/** The child `badge:` writes out, as `buildTree` describes. */
-function badgeChild(parent: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode {
-  const icon = { icon: named };
-  const size = parent.textAttrs['size'];
-  return {
-    name: `${parent.name}.badge`,
-    kind: 'icon',
-    body: bodyFor(icon, icon, parent.line, icons),
-    text: '',
-    lines: linesFor('', {}, `"${parent.name}.badge"`, parent.line),
-    children: [],
-    parent,
-    x: 0,
-    y: 0,
-    width: 0,
-    height: 0,
-    inset: 0,
-    deckTexts: [],
-    headerHeight: 0,
-    reach: { left: 0, top: 0, right: 0, bottom: 0 },
-    banded: false,
-    textBox: { x: 0, y: 0, width: 0, height: 0 },
-    textSide: 'center',
-    textAttrs: size === undefined ? {} : { size },
-    attrs: icon,
-    appearance: icon,
-    placements: [
-      {
-        kind: 'offset',
-        direction: 'right',
-        targets: [{ name: parent.name, part: 'text' }],
-        line: parent.line,
-      },
-    ],
-    line: parent.line,
+/**
+ * What `badge:` writes out, which is this:
+ *
+ *     node <self>  heading: <self>.head
+ *     node <self>.head  ""  shape: none
+ *     node <self>.head.text  "<the text>"  shape: none
+ *     node <self>.head.badge  icon: X  1 right of <self>.head.text
+ *
+ * The node's text moves into the heading, which keeps where it was said to sit.
+ * The picture is set at the text's size, so it is two of its lines tall. With
+ * no text, the picture is the whole heading.
+ */
+function writeOutBadge(node: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode[] {
+  const { place, align, ...ownText } = node.textAttrs;
+  const synthetic = (name: string, parent: LayoutNode, attrs: Attrs, text: string, textAttrs: Attrs): LayoutNode => {
+    const body = bodyFor(attrs, attrs, node.line, icons);
+    const made: LayoutNode = {
+      name,
+      kind: KIND_OF_BODY[body.kind],
+      body,
+      text,
+      lines: linesFor(text, textAttrs, `"${node.name}"`, node.line),
+      children: [],
+      parent,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      inset: 0,
+      deckTexts: [],
+      headerHeight: 0,
+      reach: { left: 0, top: 0, right: 0, bottom: 0 },
+      banded: false,
+      textBox: { x: 0, y: 0, width: 0, height: 0 },
+      textSide: 'center',
+      textAttrs,
+      attrs,
+      appearance: attrs,
+      placements: [],
+      line: node.line,
+    };
+    parent.children.push(made);
+    return made;
   };
+
+  const head = synthetic(`${node.name}.head`, node, { shape: 'none' }, '', {});
+  const made = [head];
+  // A title's align: says both where along its side it sits and how its lines
+  // sit against each other (design.org 7.2), so the text keeps the second.
+  const lineAlign = align === 'left' || align === 'right' ? align : 'center';
+  const hasText = node.lines.some((line) => plain(line).length > 0);
+  const size = ownText['size'];
+  const picture = synthetic(`${node.name}.head.badge`, head, { icon: named }, '', size === undefined ? {} : { size });
+  if (hasText) {
+    // A text with no box is set small by default, as an aside; this one is
+    // the box's own text, so it keeps the box text's size.
+    const text = synthetic(`${node.name}.head.text`, head, { shape: 'none' }, node.text, {
+      size: 'normal',
+      ...ownText,
+      align: lineAlign,
+    });
+    // The text first: it anchors the heading, and the picture is beside it.
+    head.children.reverse();
+    picture.placements = [
+      { kind: 'offset', direction: 'right', targets: [{ name: text.name }], gap: '1', line: node.line },
+    ];
+    made.push(text);
+  }
+  made.push(picture);
+
+  node.text = '';
+  node.lines = linesFor('', {}, `"${node.name}"`, node.line);
+  node.textAttrs = {
+    ...(place !== undefined ? { place } : {}),
+    ...(align !== undefined ? { align } : {}),
+  };
+  node.heading = head;
+  return made;
 }
 
 /**
@@ -647,6 +746,12 @@ function checkStyleKeys(statements: Stmt[]): void {
   for (const stmt of statements) {
     if (stmt.kind !== 'style') continue;
     for (const [key, value] of Object.entries(stmt.attrs)) {
+      if (topKey(key) === 'heading') {
+        throw new SourceError(
+          `style "${stmt.name}" has heading:, which names one node's own child, so it is written on that node`,
+          stmt.line,
+        );
+      }
       if (ALL_ATTR_KEYS.includes(topKey(key))) continue;
       throw new SourceError(
         `style "${stmt.name}" has ${key}: ${value}, which is not an attribute. ` +

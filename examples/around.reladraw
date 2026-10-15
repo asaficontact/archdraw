@@ -6,8 +6,8 @@
 // The case that found it: level, with a node in the middle, and a text that
 // used to land on that node.
 node parser "Parser"
-node resolver "Resolver"  right of parser
-node renderer "Renderer"  right of resolver
+node resolver "Resolver"  10 right of parser
+node renderer "Renderer"  8 right of resolver
 
 edge parser -> resolver    "statements"  from: right  to: left
 edge resolver -> renderer  "layout"      from: right  to: left

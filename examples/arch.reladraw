@@ -10,28 +10,24 @@ style dump       fill: theme-secondary-subtle  border: theme-border  shape: docu
 // --- The hub and its four machines ------------------------------------------
 // The cluster is wrapped in an invisible container so things outside it can be
 // placed against the whole cluster rather than against the hub alone. Each
-// machine's picture is a child placed beside its title, and its folder hangs
-// below the title.
+// machine's title and picture are its heading, in the top-left corner, and its
+// folder sits under them.
 
 node cluster ""  shape: none
 
 node cluster.hub "Cloud sync"  badge: package  style: synced
 
-node cluster.desktop1       "Desktop 1 / Linux"    above-left of cluster.hub (gap: tight)
-node cluster.desktop1.icon  icon: desktop  1 right of cluster.desktop1 text
-node cluster.desktop1.files "shared folder / [dim]synced[/dim]"  below cluster.desktop1 text  style: synced
+node cluster.desktop1       "Desktop 1 / Linux" (inside top, align: left)    above-left of cluster.hub (gap: tight)   badge: desktop
+node cluster.desktop1.files "shared folder / [dim]synced[/dim]"  style: synced
 
-node cluster.desktop2       "Desktop 2 / Windows"  above-right of cluster.hub (gap: tight)
-node cluster.desktop2.icon  icon: desktop  1 right of cluster.desktop2 text
-node cluster.desktop2.files "shared folder / [dim]synced[/dim]"  below cluster.desktop2 text  style: synced
+node cluster.desktop2       "Desktop 2 / Windows" (inside top, align: left)  above-right of cluster.hub (gap: tight)  badge: desktop
+node cluster.desktop2.files "shared folder / [dim]synced[/dim]"  style: synced
 
-node cluster.laptop1        "Laptop 1 / macOS"     below-left of cluster.hub (gap: tight)
-node cluster.laptop1.icon   icon: laptop  1 right of cluster.laptop1 text
-node cluster.laptop1.files  "shared folder / [dim]synced[/dim]"  below cluster.laptop1 text  style: synced
+node cluster.laptop1        "Laptop 1 / macOS" (inside top, align: left)     below-left of cluster.hub (gap: tight)   badge: laptop
+node cluster.laptop1.files  "shared folder / [dim]synced[/dim]"  style: synced
 
-node cluster.laptop2        "Laptop 2 / macOS"     below-right of cluster.hub (gap: tight)
-node cluster.laptop2.icon   icon: laptop  1 right of cluster.laptop2 text
-node cluster.laptop2.files  "shared folder / [dim]synced[/dim]"  below cluster.laptop2 text  style: synced
+node cluster.laptop2        "Laptop 2 / macOS" (inside top, align: left)     below-right of cluster.hub (gap: tight)  badge: laptop
+node cluster.laptop2.files  "shared folder / [dim]synced[/dim]"  style: synced
 
 edge cluster.desktop1.files <-> cluster.hub  style: synced  from: right  to: top
 edge cluster.desktop2.files <-> cluster.hub  style: synced  from: left   to: top
@@ -52,15 +48,14 @@ node dumps_note "Written by nightly cron job." (wrap: 30)  below dumps (gap: tig
 
 // --- The server -------------------------------------------------------------
 
-node server         "Home Server"  left of dumps  even with cluster
-node server.icon    icon: desktop  1 right of server text
-node server.mirror  "shared folder / mirror"  below server text  style: backup
-node server.deploy  "deploy dir"  below server.mirror
+node server         "Home Server" (inside top, align: left)  left of dumps  even with cluster  badge: desktop  layout: column (widths: match, gap: normal)
+node server.mirror  "shared folder / mirror"  style: backup
+node server.deploy  "deploy dir"
 
 // The cubes are nodes rather than ornament: two of them are where the dump
 // arrows start. The lower pair is centered under the upper three by naming two
 // targets and nothing else.
-node server.docker  "Docker" (inside bottom)  below server.deploy
+node server.docker  "Docker" (inside bottom)
 node server.docker.a  icon: cube
 node server.docker.b  right of server.docker.a (gap: tight)  icon: cube
 node server.docker.db1  right of server.docker.b (gap: tight)  icon: cube
@@ -83,10 +78,9 @@ edge cluster.desktop1.files -> server.deploy  "deploy script"                 fr
 
 // --- The backup drive -------------------------------------------------------
 
-node drive          "External HD"  left of server  top even with server
-node drive.icon     icon: disk  1 right of drive text
-node drive.mirror   "shared folder / backup"  below drive text  style: backup
-node drive.archive  "archive"  below drive.mirror
+node drive          "External HD" (inside top, align: left)  left of server  top even with server  badge: disk  layout: column (widths: match)
+node drive.mirror   "shared folder / backup"  style: backup
+node drive.archive  "archive"
 
 edge server.mirror -> drive.mirror  style: backup  from: left  to: right
 
