@@ -4,8 +4,8 @@
 style quiet  text: (color: theme-muted, size: small)
 
 node web     "Web app"  badge: laptop
-node api     "API server"                          right of web (gap: wide)
-node cluster "Workers"                             5 below api
+node api     "API server"                          10 right of web
+node cluster "Workers" (inside top, align: left)  6 below api
 node cluster.a "worker a"
 node cluster.b "worker b"                          right of cluster.a (gap: tight)
 node db      "Records"  icon: database             10 right of api

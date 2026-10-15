@@ -1,14 +1,14 @@
 // A node with no text of its own takes its name as its text.
 
 node parser
-node resolver  10 right of parser
-node renderer  10 right of resolver
+node resolver  12 right of parser
+node renderer  12 right of resolver
 edge parser -> resolver "statements"
 edge resolver -> renderer "geometry"
 
 // A dotted name shows only its last segment. The containment is already drawn.
 
-node server  "My Server Machine"  below parser (gap: wide)
+node server  "My Server Machine" (inside top, align: left)  below parser (gap: wide)
 node server.docker
 node server.backup  right of server.docker (gap: tight)
 

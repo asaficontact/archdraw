@@ -14,13 +14,13 @@ edge parser -> renderer  "Hacker News"  from: left  to: right
 // GitHub issue #2: stacked, sides at right angles. The line came straight up
 // through the lower node.
 node p "P"  below parser  (gap: wide)
-node q "Q"  below p
+node q "Q"  below p  (gap: 7)
 edge p -> q  "issue #2"  from: bottom  to: left
 
 // GitHub issue #2: both ends on the same side, one node behind the other. The
 // line went straight through the node behind.
 node r "R"  right of p  (gap: wide)
-node s "S"  right of r
+node s "S"  right of r  (gap: 19)
 edge r -> s  "issue #2, same side"  from: left  to: left
 
 node v "V"  right of s  (gap: wide)
@@ -31,8 +31,8 @@ edge v -> w  from: bottom  to: bottom
 // with the middle one, straight through it, out past the column and back.
 node a "A"  below q  (gap: wide)
 node c "C"  right of a  (gap: wide)
-node b "B"  above c
-node d "D"  below c
+node b "B"  above c  (gap: 1)
+node d "D"  below c  (gap: 1)
 edge a -> b  "fan"  from: right  to: top
 edge a -> c  from: right  to: left
 edge a -> d  from: right  to: bottom

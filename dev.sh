@@ -40,7 +40,11 @@ Commands:
                                  This is the one to use when you want to see a
                                  diagram; it needs no dimensions from you.
                                  out.png defaults to a temp file, path printed.
-  readme-image                  Regenerate the README's tracked pictures:
+  look-svg <file.svg> [out.png] Screenshot an SVG already on disk, as look
+                                 does, for one rendered by another build (such
+                                 as compare's old/ half). ImageMagick drops
+                                 dashed lines, so this goes through the browser.
+  readme-image                 Regenerate the README's tracked pictures:
                                  docs/arch-render.png, the rendered half of the
                                  comparison, and docs/gap.png. Redraws only a
                                  picture whose SVG changed, judged by the
@@ -480,6 +484,12 @@ case "$cmd" in
     render_quietly "$in" "$svg"
     screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
     rm -f "$svg"
+    echo "$out"
+    ;;
+  look-svg)
+    svg="${1:?input .svg path required}"
+    out="${2:-$(tmp_path look png)}"
+    screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
     echo "$out"
     ;;
   readme-image)

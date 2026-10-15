@@ -23,9 +23,9 @@ node store "store" (color: #ff9d4d)  right of plain (gap: wide)  icon: database
 
 // An edge's text takes the line's color unless its own brackets say otherwise.
 node worker "Worker"  below remark (gap: wide)  style: traced
-node queue  "Queue"   15 right of worker
+node queue  "Queue"   18 right of worker
 edge worker -> queue  "inherits the line"  style: traced  from: right  to: left
 
 node reader "Reader"  below worker (gap: wide)
-node cache  "Cache"   15 right of reader
+node cache  "Cache"   18 right of reader
 edge reader -> cache  "says its own" (color: theme-text)  line: #ff9d4d  from: right  to: left

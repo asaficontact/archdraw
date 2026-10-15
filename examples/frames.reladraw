@@ -6,54 +6,54 @@
 
 style mark  fill: #cdb96f  border: #8f7a3a  text: (color: #111111)
 
-// Four children round the text, one on each diagonal, so the text sits in the
-// middle of them.
-node corners "Deployment"
-node corners.a "north-west"  above-left of corners text
-node corners.b "north-east"  above-right of corners text
-node corners.c "south-west"  below-left of corners text
-node corners.d "south-east"  below-right of corners text
+// Four children in two rows, with room left between the columns for the text,
+// which sits in the middle.
+node corners "Deployment" (center)
+node corners.a "north-west"
+node corners.b "north-east"  9 right of corners.a
+node corners.c "south-west"  below corners.a (gap: 1)
+node corners.d "south-east"  below corners.b (gap: 1)
 
-// Two of them below the text and two more below those: a heading over rows.
-node band "Deployment"  right of corners (gap: wide)
-node band.a "north-west"  below-left of band text
-node band.b "north-east"  below-right of band text
-node band.c "south-west"  below band.a
-node band.d "south-east"  below band.b
+// A title in the top-left corner over two rows, packed a unit apart.
+node band "Deployment" (inside top, align: left)  right of corners (gap: wide)
+node band.a "north-west"
+node band.b "north-east"  right of band.a (gap: 1)
+node band.c "south-west"  below band.a (gap: 1)
+node band.d "south-east"  below band.b (gap: 1)
 
 // `align:` puts the title along its side: here at the right end of the top.
 node ranged "Deployment" (inside top, align: right)  right of band (gap: wide)
 node ranged.a "north-west"
-node ranged.c "south-west"  below ranged.a
-node ranged.d "south-east"  right of ranged.c
+node ranged.c "south-west"  below ranged.a (gap: 1)
+node ranged.d "south-east"  right of ranged.c (gap: 1)
 
 // A list is a container: three marks in a column in the order written, beside
-// the ordinary contents.
-node column "Payments service"  below corners (gap: wide)
-node column.api "api"
-node column.db "database"  below column.api (gap: tight)
-node column.marks ""  right of column.api and column.db  shape: none  layout: column (gap: tight)
+// the title and the ordinary contents, its top even with the title's.
+node column "Payments service" (inside top, align: left)  below corners (gap: wide)
+node column.api "api"  below column text (gap: 1)  left even with column text
+node column.db "database"  below column.api (gap: 1)  left even with column.api
+node column.marks ""  right of column text and column.api and column.db (gap: 1)  top even with column text  shape: none  layout: column (gap: 1)
 node column.marks.one "one"      style: mark
 node column.marks.two "two"      style: mark
 node column.marks.three "three"  style: mark
 
-// A child above the title, and the contents below it.
+// A child above the title, and the contents below it, their left sides even
+// with the title's.
 node paused "Queue worker"  right of column (gap: wide)
-node paused.flag "PAUSED"  above paused text (gap: tight)  style: mark
-node paused.jobs "jobs"  below paused text
-node paused.retry "retries"  below paused.jobs (gap: tight)
+node paused.flag "PAUSED"  above paused text (gap: 1)  style: mark
+node paused.jobs "jobs"  below paused text (gap: 1)  left even with paused text
+node paused.retry "retries"  below paused.jobs (gap: 1)  left even with paused.jobs
 
 // Beside one child, even with it.
-node server "Server"  right of paused (gap: wide)
+node server "Server" (inside top, align: left)  right of paused (gap: wide)
 node server.web "web"
-node server.db "database"  below server.web (gap: tight)
-node server.cache "cache"  below server.db (gap: tight)
-node server.hot "hot"  right of server.db  style: mark
+node server.db "database"  below server.web (gap: 1)  left even with server.web
+node server.cache "cache"  below server.db (gap: 1)  left even with server.db
+node server.hot "hot"  right of server.db (gap: 1)  style: mark
 
-// Beside the text, as a thing of its own: the text stays in the middle, where
-// it was put. badge: would make the picture part of the label instead.
-node fresh "Release notes"  below column (gap: wide)
-node fresh.tag "new"  right of fresh text  style: mark
+// Beside the text, the text and the mark centered in the box together.
+node fresh "Release notes" (inside left)  below column (gap: wide)
+node fresh.tag "new"  right of fresh text (gap: 1)  style: mark
 
 // On a corner rather than inside it: centered on the point, so it straddles
 // the edge.
@@ -68,7 +68,7 @@ node switch "Switch"  right of router.note
 
 // An edge between two children. Its text takes no room of its own, so the
 // gap is stated wide enough to hold it.
-node pipe "Pipeline"  below fresh (gap: wide)
+node pipe "Pipeline" (inside top, align: left)  below fresh (gap: wide)
 node pipe.src "source"
 node pipe.out "artifact"  15 right of pipe.src
 edge pipe.src -> pipe.out  "build and test"  from: right  to: left
