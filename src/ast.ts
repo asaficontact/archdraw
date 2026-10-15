@@ -261,6 +261,9 @@ export const PLACEMENT_KEYS = ['gap'] as const;
  */
 export const CONTENTS_KEYS = ['widths', 'align'] as const;
 
+/** What `layout: column (…)` and `layout: row (…)` take in their bracket. */
+export const LAYOUT_KEYS = ['gap', 'widths', 'align', 'centers'] as const;
+
 /**
  * What `widths:` may say. `natural` is the default and is today's behavior.
  * `match` is what `align: widths` did — every child as wide as the widest.
@@ -285,7 +288,7 @@ export function describePlacement(placement: Placement): string {
   }
   if (placement.kind === 'align') {
     const side = placement.side === 'center' ? '' : `${placement.side} `;
-    return `${side}level with ${targets}`;
+    return `${side}even with ${targets}`;
   }
   const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
   // `inside` and `outside` take no `of`, and are quoted back as the author
@@ -582,9 +585,9 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
  *   an edge is not placed — it joins two things that are.
  */
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'gap', 'overlap', 'contents', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
-  icon: ['style', 'gap', 'overlap', 'icon', 'text', 'url'],
-  none: ['style', 'gap', 'overlap', 'shape', 'text', 'url'],
+  shape: ['style', 'overlap', 'layout', 'padding', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
+  icon: ['style', 'overlap', 'icon', 'text', 'url'],
+  none: ['style', 'overlap', 'layout', 'padding', 'shape', 'text', 'url'],
   edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
 };
 

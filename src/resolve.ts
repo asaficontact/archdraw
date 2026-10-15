@@ -54,6 +54,141 @@ import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
 import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, LineLook, Reach } from './model.js';
+import { gapPixels, Placer, type Layout as ChildLayout, type NodeFacts, type TitlePlace } from './place.js';
+
+/**
+ * What a node's own contents make of it, before anything is placed: a leaf's
+ * size from its text, a picture's size, and for a container its title, its
+ * padding and its layout. A container's size comes from its children, in the
+ * placing pass.
+ */
+function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeFacts {
+  const textSize = fontSizeFor(node.kind, node.textAttrs, fontSize, node.line);
+  const lineHeight = measurer.lineHeight(textSize);
+  const hasText = node.lines.some((line) => plain(line).length > 0);
+  const textWidth = hasText ? widestLine(node.lines, measurer, textSize) : 0;
+  const textHeight = hasText ? node.lines.length * lineHeight : 0;
+  const glyphSide = ICON_LINES * lineHeight;
+  const title = titlePlaceOf(node);
+  const layout = layoutOf(node);
+  const circle = isCircle(node);
+  const padding =
+    node.body.kind === 'none'
+      ? 0
+      : node.appearance['padding'] !== undefined
+        ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
+        : PAD;
+  node.textSide = 'center';
+
+  if (node.body.kind === 'icon') {
+    if (node.children.length > 0) {
+      throw new SourceError(
+        `"${node.name}" is drawn as a picture and has children. A picture is not a box, so nothing can go inside it`,
+        node.line,
+      );
+    }
+    const width = Math.max(glyphSide, textWidth);
+    return {
+      natural: { width, height: glyphSide + (hasText ? ICON_GAP + textHeight : 0) },
+      textBox: { x: (width - textWidth) / 2, y: glyphSide + ICON_GAP, width: textWidth, height: textHeight },
+      hasText,
+      padding,
+      title,
+      ...(layout ? { layout } : {}),
+      circle,
+    };
+  }
+  if (node.children.length === 0 && circle) {
+    const side = Math.hypot(textWidth, textHeight) + padding * 2;
+    return {
+      natural: { width: side, height: side },
+      textBox: { x: (side - textWidth) / 2, y: (side - textHeight) / 2, width: textWidth, height: textHeight },
+      hasText,
+      padding,
+      title,
+      circle,
+    };
+  }
+  if (layout && node.children.length === 0) {
+    throw new SourceError(`"${node.name}" has layout: but no children — a node with no children is not a container`, node.line);
+  }
+  return {
+    natural: { width: textWidth + padding * 2, height: textHeight + padding * 2 },
+    textBox: { x: padding, y: padding, width: textWidth, height: textHeight },
+    hasText,
+    padding,
+    title,
+    ...(layout ? { layout } : {}),
+    circle,
+  };
+}
+
+/**
+ * Where a container's title sits: `(inside top)` by default, `(on top)`,
+ * `(outside top)`, or `(center)`, with `align:` saying where along the side.
+ * `at:` is gone from a node's text, refused with the side form.
+ */
+function titlePlaceOf(node: LayoutNode): TitlePlace {
+  const at = node.textAttrs['at'];
+  if (at !== undefined) {
+    throw new SourceError(
+      at === 'center'
+        ? `"${node.name}": at: is gone from a node's text — a leaf's text is centered with nothing written, ` +
+            "and a container's title goes in the middle with (center)"
+        : `"${node.name}": at: is gone from a node's text — a title says which side it sits against, ` +
+            'such as (inside top, align: left), (on top) or (outside bottom)',
+      node.line,
+    );
+  }
+  const written = node.textAttrs['place'] ?? (node.attrs['badge'] !== undefined || node.appearance['badge'] !== undefined ? 'center' : 'inside top');
+  if (written === 'center') return { how: 'center', side: 'center', along: 'center' };
+  const [how, side] = written.split(' ') as [TitlePlace['how'], TitlePlace['side']];
+  const across = side === 'top' || side === 'bottom';
+  const words = across ? ['left', 'center', 'right'] : ['top', 'center', 'bottom'];
+  const align = node.textAttrs['align'] ?? 'center';
+  if (node.children.length > 0 && !words.includes(align)) {
+    throw new SourceError(
+      `"${node.name}": a title on the ${side} side takes align: ${words.join(', ')} — not ${align}`,
+      node.line,
+    );
+  }
+  const along = align === words[0] ? 'start' : align === words[2] ? 'end' : 'center';
+  return { how, side, along };
+}
+
+/** `layout: column (gap: 0, widths: match, align: center)`, read and checked. */
+function layoutOf(node: LayoutNode): ChildLayout | undefined {
+  const kind = node.appearance['layout'];
+  if (kind === undefined) return undefined;
+  if (kind !== 'column' && kind !== 'row') {
+    throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row`, node.line);
+  }
+  const bracket = bracketOf('layout', node.appearance);
+  const widths = bracket['widths'] ?? 'natural';
+  if (!(CONTENT_WIDTHS as readonly string[]).includes(widths)) {
+    throw new SourceError(`"${node.name}" has layout: (widths: ${widths}), which is not one of ${CONTENT_WIDTHS.join(', ')}`, node.line);
+  }
+  if (widths === 'fill' && kind === 'row') {
+    throw new SourceError(
+      `"${node.name}" has layout: row (widths: fill), and children side by side can't all be the full width — use widths: match`,
+      node.line,
+    );
+  }
+  const alignWord = bracket['align'] ?? 'left';
+  if (!(CONTENT_ALIGNMENTS as readonly string[]).includes(alignWord)) {
+    throw new SourceError(`"${node.name}" has layout: (align: ${alignWord}), which is not one of ${CONTENT_ALIGNMENTS.join(', ')}`, node.line);
+  }
+  const align = alignWord === 'left' ? 'start' : alignWord === 'right' ? 'end' : 'center';
+  const centers = bracket['centers'];
+  if (centers !== undefined && bracket['gap'] !== undefined) {
+    throw new SourceError(`"${node.name}": layout: says gap: and centers:, which is the spacing said twice — keep one`, node.line);
+  }
+  if (centers !== undefined) {
+    return { kind, centers: gapPixels(centers, `"${node.name}" layout: (centers: …)`, node.line), widths, align } as ChildLayout;
+  }
+  const gap = bracket['gap'] === undefined ? PAD : gapPixels(bracket['gap'], `"${node.name}" layout: (gap: …)`, node.line);
+  return { kind, gap, widths, align } as ChildLayout;
+}
 
 export interface ResolveOptions {
   measurer?: Measurer;
@@ -96,10 +231,8 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   // gaps are being worked out. Nothing here reads geometry.
   const edges = buildEdges(doc.statements, byName, styles, defaults);
 
-  const local = new Map<LayoutNode, { x: number; y: number }>();
-  for (const root of roots) sizeNode(root, edges, measurer, fontSize, local);
-
-  placeRoots(roots, byName, edges, measurer, fontSize, local);
+  const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
+  new Placer(roots, byName, facts).run();
   normalize(nodes, margin);
 
   const extent = bounds(nodes);

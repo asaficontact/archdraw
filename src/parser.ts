@@ -6,6 +6,7 @@ import type {
   DefaultStmt,
   DefaultTarget,
   DiagramStmt,
+  Direction,
   Document,
   EdgeMarks,
   EdgeStmt,
@@ -33,6 +34,7 @@ import {
   LINE_KEYS,
   LINE_VALUES,
   CONTENTS_KEYS,
+  LAYOUT_KEYS,
   PLACEMENT_KEYS,
   BOUNDARY_PARTS,
   INWARD,
@@ -402,6 +404,48 @@ function readAttr(
 ): number {
   const keyToken = tokens[at]!;
   const key = keyToken.text.slice(0, -1);
+  if (key === 'gap') {
+    throw new SourceError(
+      `${subject}: a node has no gap:, only a placement does — write it in the placement's bracket, ` +
+        `such as \`right of a (gap: ${tokens[at + 1]?.text ?? 'wide'})\``,
+      line,
+    );
+  }
+  if (key === 'contents') {
+    throw new SourceError(
+      `${subject}: contents: is gone — a container's children are arranged with layout:, and its settings ` +
+        'go in its bracket: `layout: column (widths: match, align: center)`',
+      line,
+    );
+  }
+  if (key === 'layout') {
+    // `layout: column (gap: 0, widths: match)` — a value, then its settings.
+    // `centers: 5 apart` reads its last word as part of the value.
+    const value = tokens[at + 1];
+    if (!value || value.quoted || isAttrKey(value) || value.text === '(') {
+      throw new SourceError(`${subject}: layout: names an arrangement — column or row`, line);
+    }
+    setOnce(attrs, 'layout', value.text, subject, line);
+    let next = at + 2;
+    if (follows(tokens, next, '(')) {
+      const inner = tokens.slice(next);
+      const apart = inner.findIndex((token, index) => index > 1 && token.text.replace(/,$/, '') === 'apart' && inner[index - 2]?.text === 'centers:');
+      if (apart !== -1) {
+        if (inner[apart]!.text.endsWith(',')) inner[apart - 1] = { ...inner[apart - 1]!, text: `${inner[apart - 1]!.text},` };
+        inner.splice(apart, 1);
+      }
+      const read = readBracket(inner, 0, LAYOUT_KEYS, {
+        subject,
+        what: '`layout:`',
+        kind: 'a layout',
+        example: 'gap: tight',
+        line,
+      });
+      for (const [inside, set] of Object.entries(read.values)) setOnce(attrs, `layout.${inside}`, set, subject, line);
+      next += read.next + (apart !== -1 && apart < read.next ? 1 : 0);
+    }
+    return next;
+  }
   const bracketKeys = BRACKET_KEYS[key];
   if (bracketKeys !== undefined && follows(tokens, at + 1, '(')) {
     // `text: (color: theme-muted)` — the whole bracket belongs to one part, and it is
@@ -676,7 +720,28 @@ function parseNode(head: Token[], line: number): NodeStmt {
   }
   const text = textToken ? textToken.text : name.slice(name.lastIndexOf('.') + 1);
   const subject = `node "${name}"`;
-  const bracket = readBracket(head, textToken ? 3 : 2, TEXT_KEYS, {
+  // `(inside top, align: left)`, `(on top)`, `(outside bottom)`, `(center)`:
+  // where a title sits, written first in the text's bracket. They are
+  // placements, so they take no colon.
+  let place: string | undefined;
+  const open = textToken ? 3 : 2;
+  if (follows(head, open, '(')) {
+    const first = head[open + 1];
+    const word = first && !first.quoted ? first.text.replace(/,$/, '') : undefined;
+    if (word === 'center') {
+      place = 'center';
+      head = [...head.slice(0, open + 1), ...head.slice(open + 2)];
+    } else if (word === 'inside' || word === 'on' || word === 'outside') {
+      const sideToken = head[open + 2];
+      const side = sideToken?.text.replace(/,$/, '');
+      if (!side || !['top', 'bottom', 'left', 'right'].includes(side)) {
+        throw new SourceError(`${subject}: a title sits ${word} a side — top, bottom, left or right`, line);
+      }
+      place = `${word} ${side}`;
+      head = [...head.slice(0, open + 1), ...head.slice(open + 3)];
+    }
+  }
+  const bracket = readBracket(head, open, TEXT_KEYS, {
     subject,
     what: 'the text',
     kind: 'a text',
@@ -690,7 +755,7 @@ function parseNode(head: Token[], line: number): NodeStmt {
     name,
     text,
     statedText: textToken !== undefined,
-    textAttrs: bracket.values,
+    textAttrs: place === undefined ? bracket.values : { ...bracket.values, place },
     placements: tail.placements,
     attrs: tail.attrs,
     line,
@@ -1098,6 +1163,37 @@ function readPlacement(
     throw new SourceError(`${subject}: unexpected text "${word.text}"`, line);
   }
 
+  // `2 right of x` is `right of x (gap: 2)`: a distance written in front.
+  const distance = /^-?\d+(\.\d+)?(px)?$/.exec(word.text);
+  if (distance && tokens[at + 1] && isDirection(tokens[at + 1]!.text)) {
+    if (word.text.startsWith('-')) {
+      const flipped = OPPOSITE[tokens[at + 1]!.text as Direction];
+      throw new SourceError(
+        `${subject}: a distance is never negative — write \`${word.text.slice(1)} ${flipped}${/left|right/.test(flipped) ? ' of' : ''} …\`, ` +
+          'or inside or on for a box meant to overlap',
+        line,
+      );
+    }
+    const read = readPlacement(tokens, at + 1, line, subject);
+    if (read.placement.kind !== 'offset') return read;
+    if (read.placement.gap !== undefined) {
+      throw new SourceError(
+        `${subject}: "${word.text} ${describePlacement(read.placement)}" says its distance twice, in front and in the bracket — keep one`,
+        line,
+      );
+    }
+    return { placement: { ...read.placement, gap: word.text }, next: read.next };
+  }
+
+  // `level with` was renamed: in plain English it means "at the same height",
+  // which made `left level with x` read wrong.
+  if (word.text === 'level' || (isSideWord(word.text) && follows(tokens, at + 1, 'level'))) {
+    throw new SourceError(
+      `${subject}: "level with" is now "even with" — write \`${isSideWord(word.text) ? `${word.text} ` : ''}even with …\``,
+      line,
+    );
+  }
+
   if (word.text === 'on') return readOn(tokens, at, line, subject);
   if (word.text === 'inside' || word.text === 'outside') {
     return readTucked(tokens, at, line, subject, word.text);
@@ -1106,12 +1202,12 @@ function readPlacement(
   // `top level with media` names a side rather than the center line. `left`
   // and `right` are sides as well as directions, so it is the word after them
   // that says which was meant — "left of drive" against "left level with drive".
-  const side = isSideWord(word.text) && follows(tokens, at + 1, 'level') ? word.text : undefined;
+  const side = isSideWord(word.text) && follows(tokens, at + 1, 'even') ? word.text : undefined;
   const head = side ? tokens[at + 1]! : word;
 
-  if (head.text === 'level' && !head.quoted) {
+  if (head.text === 'even' && !head.quoted) {
     const from = side ? at + 1 : at;
-    const written = side ? `${side} level with` : 'level with';
+    const written = side ? `${side} even with` : 'even with';
     if (!follows(tokens, from + 1, 'with')) {
       throw new SourceError(`${subject}: an alignment reads "${written} <node>"`, line);
     }
@@ -1161,6 +1257,14 @@ function readPlacement(
   }
   let next = at + 1;
   const of = follows(tokens, next, 'of');
+  // Each direction has one spelling, as English says it: `below a`, `left of a`.
+  const takesOf = /left|right/.test(word.text);
+  if (of && !takesOf) {
+    throw new SourceError(`${subject}: "${word.text} of" is written "${word.text}" — \`${word.text} ${tokens[next + 1]?.text ?? '…'}\``, line);
+  }
+  if (!of && takesOf) {
+    throw new SourceError(`${subject}: "${word.text}" before a name is written "${word.text} of" — \`${word.text} of ${tokens[next]?.text ?? '…'}\``, line);
+  }
   if (of) next += 1;
   const read = readTargets(tokens, next, subject, word.text, line);
   const modifiers = readModifiers(
@@ -1410,7 +1514,9 @@ function startsPlacement(token: Token): boolean {
   if (token.quoted) return false;
   return (
     isDirection(token.text) ||
+    /^-?\d+(\.\d+)?(px)?$/.test(token.text) ||
     token.text === 'level' ||
+    token.text === 'even' ||
     token.text === 'on' ||
     token.text === 'inside' ||
     token.text === 'outside' ||
@@ -1495,7 +1601,7 @@ function readTargets(
  *   been told apart.
  * - `right of hub top level with mirror` — a side followed by `level` is the
  *   alignment opening the next placement, the same lookahead `readPlacement`
- *   makes for `top level with`.
+ *   makes for `top even with`.
  *
  * The second does not hold after `inside`, `outside` or `on`, so `partFirst`
  * lifts it there: `inside server right level with server.db` is the right side
@@ -1507,6 +1613,6 @@ function partAfter(tokens: Token[], at: number, partFirst = false): Part | undef
   const token = tokens[at];
   if (!token || token.quoted || !isPart(token.text)) return undefined;
   if (follows(tokens, at + 1, 'of')) return undefined;
-  if (!partFirst && follows(tokens, at + 1, 'level')) return undefined;
+  if (!partFirst && follows(tokens, at + 1, 'even')) return undefined;
   return token.text;
 }
