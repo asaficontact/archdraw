@@ -47,7 +47,6 @@ const OFFERED = [
   ['regions', 'beside a group', 'A node placed against several others at once.'],
   ['gaps', 'gap sizes', 'Tight and wide gaps, and which one wins when both ends ask.'],
   ['snug', 'as close as allowed', 'A node sits as close to what it names as its placements allow.'],
-  ['separation', 'no overlaps', 'Nodes never overlap, even where nothing says which way to move.'],
   ['contents', 'inside a container', 'How children line up in a container wider than they are.'],
   ['shapes', 'shapes', 'The outlines a node can be drawn with, and the pictures it can be drawn as.'],
   ['icons', 'icons', 'The seven icons, and the ways to use one.'],
