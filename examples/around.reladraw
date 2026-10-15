@@ -34,7 +34,7 @@ node f "F"  right of e  (gap: wide)  below e  (gap: normal)
 edge e -> f  "through the gap"  from: left  to: right
 
 // Stepped down with too little room between them: over the top again.
-node g "G"  right of f  (gap: wide)  level with e
+node g "G"  right of f  (gap: wide)  even with e
 node h "H"  right of g  (gap: wide)  below g  (gap: tight)
 
 edge g -> h  "no room below"  from: left  to: right
@@ -52,7 +52,7 @@ edge self -> self  "itself"  from: left  to: right
 
 // Two lines out of one side, each the shorter way round. They share J's left
 // side, so the one leaving lower down has the shorter way underneath.
-node j "J"  below e  (gap: 200)
+node j "J"  below e  (gap: 16)
 node k "K"  right of j
 node l "L"  right of k
 

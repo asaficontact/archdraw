@@ -6,7 +6,7 @@ style plain  fill: theme-fill  border: theme-border
 
 // Level nodes, so the run is horizontal and the lanes fan out vertically.
 node a "A"  style: plain
-node b "B"  right of a (gap: wide)  level with a  style: plain
+node b "B"  right of a (gap: wide)  style: plain
 edge a -> b  "first"
 edge a -> b  "second"
 edge a -> b  "third"
@@ -27,12 +27,12 @@ edge near -> far  "two"
 
 // A lone edge is in no group and does not move.
 node solo  "Solo"   below near (gap: wide)  style: plain
-node alone "Alone"  right of solo (gap: wide)  level with solo  style: plain
+node alone "Alone"  right of solo (gap: wide)  style: plain
 edge solo -> alone  "by itself"
 
 // Naming a side on either end takes an edge out of the group.
 node named "Named"  below solo (gap: wide)  style: plain
-node other "Other"  right of named (gap: wide)  level with named  style: plain
+node other "Other"  right of named (gap: wide)  style: plain
 edge named -> other  "free"
 edge named -> other  "free too"
 edge named -> other  "top"  from: top  to: top
@@ -41,7 +41,7 @@ edge named -> other  "top"  from: top  to: top
 // out in the middle to make up what its ends could not give it, so the texts
 // still come apart. The middle line has no shortfall and stays straight.
 node many "Many"  below named (gap: wide)  style: plain
-node one  "One"   right of many (gap: wide)  level with many  style: plain
+node one  "One"   right of many (gap: wide)  style: plain
 edge many -> one  "first"
 edge many -> one  "second"
 edge many -> one  "third"

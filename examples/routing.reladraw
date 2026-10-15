@@ -30,9 +30,9 @@ edge v -> w  from: bottom  to: bottom
 // A fan of three, 2026-09-27. The lines to the top and bottom nodes ran level
 // with the middle one, straight through it, out past the column and back.
 node a "A"  below q  (gap: wide)
-node b "B"  right of a  (gap: wide)
 node c "C"  right of a  (gap: wide)
-node d "D"  right of a  (gap: wide)
+node b "B"  above c
+node d "D"  below c
 edge a -> b  "fan"  from: right  to: top
 edge a -> c  from: right  to: left
 edge a -> d  from: right  to: bottom
@@ -47,7 +47,7 @@ edge web -> db  "cache case"  from: bottom  to: bottom
 
 // A curve back round the side of a row, 2026-09-26: it crossed the node it
 // was going round.
-node e "E"  below a  (gap: 200)
+node e "E"  below a  (gap: 16)
 node f "F"  right of e  (gap: wide)
 node g "G"  below e and f
 edge g -> e  "round the side"  from: left  to: left

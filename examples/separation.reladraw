@@ -1,10 +1,10 @@
-// Nodes never overlap. Nothing here says the wide node has to clear "left".
+// Nothing pushes boxes apart, and a gap is exactly what was asked for.
 //
-// Which way it moves is read off the file: "middle" is right of "left", so
-// rightward is the way that contradicts nothing written. And "left" is tall, so
-// the two overlap far less horizontally than vertically.
+// "middle" is placed between "left" and "right", so it is centered in the gap
+// between them at its own size; neither of them moves to make room. Where a box
+// lands on another, it is drawn there and the overlap is reported.
 
 node left    "L/L/L/L/L/L/L/L/L/L/L/L/L/L"
 node right   "R"                             right of left
-node middle  "m"   right of left  left of right  level with left
-node wide    "a wide box that overruns both"    below middle  gap: tight
+node middle  "m"   right of left  left of right  even with left
+node wide    "a wide box that overruns both"    below middle (gap: tight)

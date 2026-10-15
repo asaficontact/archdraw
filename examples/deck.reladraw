@@ -4,13 +4,15 @@
 style plain  fill: theme-fill  border: theme-border
 
 // The usual case: a container with rows, and two more like it behind. Each
-// text is one copy, back to front.
-node drive          "Drive 1"  badge: disk  deck: "Drive 2" "Drive 3"  contents: (widths: match)
-node drive.backup   "shared folder / backup"  style: plain
-node drive.archive  "archive"                 style: plain
+// text is one copy, back to front. The picture beside the title is a child
+// placed against it, and the rows hang below it.
+node drive          "Drive 1"  deck: "Drive 2" "Drive 3"
+node drive.disk     icon: disk  1 right of drive text
+node drive.backup   "shared folder / backup"  below drive text  style: plain
+node drive.archive  "archive"                 below drive.backup (gap: tight)  style: plain
 
 // A deck of a leaf, with one copy behind it.
-node worker "worker"  right of drive (gap: wide)  level with drive  deck: "worker"  style: plain
+node worker "worker"  right of drive (gap: wide)  deck: "worker"  style: plain
 
 // The copies are part of the node, and they hang up and to the left. Something
 // placed above or left of a deck clears the whole stack, so this sits a gap
@@ -19,4 +21,4 @@ node source "source"  above drive  style: plain
 
 // An annotation may overlap the blank area of the trailing cards, as one
 // beside a row does in a drawing, by saying so.
-node rotated "swapped weekly"  left of drive.backup  gap: tight  overlap: allow  shape: none
+node rotated "swapped weekly"  left of drive.backup (gap: tight)  overlap: allow  shape: none

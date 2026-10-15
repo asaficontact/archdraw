@@ -9,10 +9,10 @@ style channel  fill: theme-page  border: theme-fill
 // They share it, so they take a lane each.
 
 node west   "West"
-node lower  "Lower"   below west     gap: tight
-node north  "North"   right of west  gap: wide   style: channel
-node south  "South"   below north    gap: wide   style: channel
-node east   "East"    right of north and south  level with west  gap: wide
+node lower  "Lower"   below west (gap: tight)
+node north  "North"   right of west (gap: wide)   style: channel
+node south  "South"   below north (gap: wide)     style: channel
+node east   "East"    right of north and south (gap: wide)  even with west
 
 edge west  -> east  "over"   between north and south  from: right  to: left
 edge lower -> east  "under"  between north and south  from: right  to: left
@@ -21,10 +21,10 @@ edge lower -> east  "under"  between north and south  from: right  to: left
 // instead. This edge names no sides: the open end aims at the channel rather
 // than at the far node, so it leaves Bow already heading for the gap.
 
-node bow        "Bow"        below lower  gap: wide
-node port       "Port"       below bow    gap: wide       style: channel
-node starboard  "Starboard"  right of port  level with port  gap: wide  style: channel
-node stern      "Stern"      below port   gap: wide
+node bow        "Bow"        below lower (gap: wide)
+node port       "Port"       below bow (gap: wide)       style: channel
+node starboard  "Starboard"  right of port (gap: wide)  style: channel
+node stern      "Stern"      below port (gap: wide)
 
 edge bow -> stern  "down"  between port and starboard
 
@@ -37,9 +37,9 @@ edge stern -> bow  between port and starboard  from: top  to: bottom
 // has to say which. `vertically` is the gap you measure with a vertical ruler —
 // under High, over Low — so a line running along it travels sideways.
 
-node far   "Far"    below stern  gap: wide
-node high  "High"   right of far  gap: wide  style: channel
-node low   "Low"    below-right of high  gap: wide  style: channel
-node near  "Near"   right of low  level with high  gap: wide
+node far   "Far"    below stern (gap: wide)
+node high  "High"   right of far (gap: wide)  style: channel
+node low   "Low"    below-right of high (gap: wide)  style: channel
+node near  "Near"   right of low (gap: wide)  even with high
 
 edge far -> near  "threaded"  between high and low vertically

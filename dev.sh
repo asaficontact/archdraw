@@ -128,6 +128,15 @@ Commands:
                                  was not meant to touch is a regression. It
                                  compares SVG bytes, so a `url:` shows as moved
                                  with no visible change; compare the PNGs.
+  compare [ref]                 One page with every example as <ref> (default
+                                 v0.16.0) drew it, its own source with its own
+                                 build, beside the working tree's render, each
+                                 source under its picture, with line counts and
+                                 whatever the tool reported. For judging a change
+                                 that moves every picture, such as a rewrite of
+                                 the examples. Writes examples/out/compare/
+                                 index.html; the old renders are kept there and
+                                 reused while <ref> is the same.
   regress [ref]                 Like `pictures`, but renders the working tree's
                                  example files with both builds, to isolate a
                                  code change. Only for when no example file
@@ -861,6 +870,36 @@ PY
       fi
     done
     echo "$moved of $(ls examples/*.reladraw | wc -l | tr -d ' ') pictures differ from $ref"
+    ;;
+  compare)
+    ref="${1:-v0.16.0}"
+    page=examples/out/compare
+    mkdir -p "$page/new"
+    if [ "$(cat "$page/old/.ref" 2>/dev/null)" != "$(git rev-parse "$ref")" ]; then
+      rm -rf "$page/old"
+      mkdir -p "$page/old"
+      work="$(mktemp -d -t reladraw-compare-XXXXXX)"
+      trap 'rm -rf "$work"' EXIT
+      git archive "$ref" | tar -x -C "$work"
+      ln -s "$PWD/node_modules" "$work/node_modules"
+      (cd "$work" && npx tsc >/dev/null)
+      for in in "$work"/examples/*.reladraw; do
+        name="$(basename "$in" .reladraw)"
+        cp "$in" "$page/old/"
+        # An old build printed the output path to stderr; keep only what it said.
+        cli "$work/dist/cli.js" "$in" -o "$PWD/$page/old/$name.svg" 2>&1 >/dev/null |
+          grep -vF "$PWD/$page/old/$name.svg" | sed "s|^$work/||" > "$page/old/$name.said" || true
+      done
+      git rev-parse "$ref" > "$page/old/.ref"
+    fi
+    compile
+    rm -f "$page"/new/*
+    for in in examples/*.reladraw; do
+      name="$(basename "$in" .reladraw)"
+      cp "$in" "$page/new/"
+      cli dist/cli.js "$in" -o "$page/new/$name.svg" 2>"$page/new/$name.said" >/dev/null || rm -f "$page/new/$name.svg"
+    done
+    node tools/compare.mjs "$page" "$ref"
     ;;
   before)
     # One example as a git ref renders it, beside the working tree's own render.

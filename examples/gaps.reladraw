@@ -1,16 +1,16 @@
-// Gaps: on a placement, on a node, and what happens when both ends ask.
+// Gaps belong to placements. Each says exactly how far, and a node has none of
+// its own.
 
 style plain  fill: theme-fill  border: theme-border
 
 node left_wall  "Left wall"   style: plain
-node right_wall "Right wall"  right of left_wall  style: plain
 
-// Both sides bind and they want different distances, so each placement carries
-// its own gap.
-node wedge "Wedged tight left, wide right"  right of left_wall (gap: tight)  left of right_wall (gap: wide)  level with left_wall  style: plain
+// Different distances on each side, each on its own placement.
+node wedge "Tight left, wide right"  right of left_wall (gap: tight)  style: plain
+node right_wall "Right wall"  right of wedge (gap: wide)  style: plain
 
-// `gap:` on the node is the default for whatever the placements do not say.
-node stack "Node default is wide"  below wedge  right of left_wall (gap: tight)  gap: wide  style: plain
+// Two placements, two gaps: wide below, tight from the wall.
+node stack "Wide below the wedge"  below wedge (gap: wide)  right of left_wall (gap: tight)  style: plain
 
 // `none` is contact, and the other placement still keeps its distance.
 node shelf "Flat on the stack"  below stack (gap: none)  right of left_wall (gap: tight)  style: plain
@@ -18,9 +18,8 @@ node shelf "Flat on the stack"  below stack (gap: none)  right of left_wall (gap
 edge left_wall -> wedge  from: right  to: left
 edge wedge -> right_wall  from: right  to: left
 
-// A node's gap also reaches placements written against it. `island` names nobody
-// and asks for wide, so both neighbors are held off at that distance. `west`
-// asks for tight and gets wide: a gap is a minimum, so the larger one holds.
-node island "States wide, names nobody"  below shelf  gap: wide  style: plain
-node east   "Takes the island's wide"    right of island  level with island  style: plain
-node west   "Asks tight, gets wide"      left of island   level with island  gap: tight  style: plain
+// A gap is written where the relationship is: each neighbor says how far it
+// sits from the island, and the island says nothing about them.
+node island "Says nothing about its neighbors"  below shelf  style: plain
+node east   "Wide from the island"    right of island (gap: wide)  style: plain
+node west   "Tight from the island"   left of island (gap: tight)  style: plain

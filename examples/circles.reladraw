@@ -16,14 +16,14 @@ edge 3 -> 4  from: bottom  to: right
 
 // A circle sizes from its text like any box, so a longer text makes a bigger
 // circle rather than an oval.
-node idle     "idle"                   right of 3  gap: wide  style: state
-node working  "working on it / slowly" below idle  gap: wide  style: state
+node idle     "idle"                   right of 3 (gap: wide)  style: state
+node working  "working on it / slowly" below idle (gap: wide)  style: state
 
 // Several edges on one side of a circle fan out round its quarter, each
 // meeting it square on.
-node a "a"  right of working  gap: wide  style: step
-node b "b"  below a  gap: normal  style: step
-node c "c"  below b  gap: normal  style: step
+node a "a"  right of working (gap: wide)  style: step
+node b "b"  below a  style: step
+node c "c"  below b  style: step
 edge a -> working  from: left  to: right
 edge b -> working  from: left  to: right
 edge c -> working  from: left  to: right

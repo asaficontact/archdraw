@@ -5,28 +5,33 @@ style synced     fill: theme-primary-subtle  border: theme-primary  line: theme-
 style dim        text: (color: theme-muted)
 style backup     border: #d2904e  line: #d2904e
 style dump       fill: theme-secondary-subtle  border: theme-border  shape: document
-style invisible  fill: none  border: none
 
 
 // --- The hub and its four machines ------------------------------------------
 // The cluster is wrapped in an invisible container so things outside it can be
-// placed against the whole cluster rather than against the hub alone.
+// placed against the whole cluster rather than against the hub alone. Each
+// machine's picture is a child placed beside its title, and its folder hangs
+// below the title.
 
-node cluster ""  style: invisible
+node cluster ""  shape: none
 
 node cluster.hub "Cloud sync"  badge: package  style: synced
 
-node cluster.desktop1       "Desktop 1 / Linux"    above-left of cluster.hub   gap: tight  badge: desktop
-node cluster.desktop1.files "shared folder / [dim]synced[/dim]"  style: synced
+node cluster.desktop1       "Desktop 1 / Linux"    above-left of cluster.hub (gap: tight)
+node cluster.desktop1.icon  icon: desktop  1 right of cluster.desktop1 text
+node cluster.desktop1.files "shared folder / [dim]synced[/dim]"  below cluster.desktop1 text  style: synced
 
-node cluster.desktop2       "Desktop 2 / Windows"  above-right of cluster.hub  gap: tight  badge: desktop
-node cluster.desktop2.files "shared folder / [dim]synced[/dim]"  style: synced
+node cluster.desktop2       "Desktop 2 / Windows"  above-right of cluster.hub (gap: tight)
+node cluster.desktop2.icon  icon: desktop  1 right of cluster.desktop2 text
+node cluster.desktop2.files "shared folder / [dim]synced[/dim]"  below cluster.desktop2 text  style: synced
 
-node cluster.laptop1        "Laptop 1 / macOS"     below-left of cluster.hub   gap: tight  badge: laptop
-node cluster.laptop1.files  "shared folder / [dim]synced[/dim]"  style: synced
+node cluster.laptop1        "Laptop 1 / macOS"     below-left of cluster.hub (gap: tight)
+node cluster.laptop1.icon   icon: laptop  1 right of cluster.laptop1 text
+node cluster.laptop1.files  "shared folder / [dim]synced[/dim]"  below cluster.laptop1 text  style: synced
 
-node cluster.laptop2        "Laptop 2 / macOS"     below-right of cluster.hub  gap: tight  badge: laptop
-node cluster.laptop2.files  "shared folder / [dim]synced[/dim]"  style: synced
+node cluster.laptop2        "Laptop 2 / macOS"     below-right of cluster.hub (gap: tight)
+node cluster.laptop2.icon   icon: laptop  1 right of cluster.laptop2 text
+node cluster.laptop2.files  "shared folder / [dim]synced[/dim]"  below cluster.laptop2 text  style: synced
 
 edge cluster.desktop1.files <-> cluster.hub  style: synced  from: right  to: top
 edge cluster.desktop2.files <-> cluster.hub  style: synced  from: left   to: top
@@ -35,31 +40,32 @@ edge cluster.laptop2.files  <-> cluster.hub  style: synced  from: left   to: bot
 
 
 // --- The database dumps -----------------------------------------------------
-// Nothing says how wide the corridor between the server and the machines is.
-// Putting the dumps in between is what pushes those two apart.
+// The dumps sit a wide gap left of the machines, level with the Docker cubes,
+// and the server a gap left of the dumps.
 
-node dumps ""  right of server.docker  left of cluster (gap: wide)  level with server.docker  style: invisible
+node dumps ""  left of cluster (gap: wide)  even with server.docker  shape: none  layout: column
 node dumps.db1 "db dump / (app 1)"  style: dump
 node dumps.db2 "db dump / (app 2)"  style: dump
 
-node dumps_note "Written by nightly cron job." (wrap: 30)  below dumps  gap: tight  shape: none
+node dumps_note "Written by nightly cron job." (wrap: 30)  below dumps (gap: tight)  shape: none
 
 
 // --- The server -------------------------------------------------------------
 
-node server         "Home Server"  left of cluster  badge: desktop  contents: (widths: match)
-node server.mirror  "shared folder / mirror"  style: backup
-node server.deploy  "deploy dir"  below server.mirror  gap: normal
+node server         "Home Server"  left of dumps  even with cluster
+node server.icon    icon: desktop  1 right of server text
+node server.mirror  "shared folder / mirror"  below server text  style: backup
+node server.deploy  "deploy dir"  below server.mirror
 
 // The cubes are nodes rather than ornament: two of them are where the dump
 // arrows start. The lower pair is centered under the upper three by naming two
 // targets and nothing else.
-node server.docker  "Docker" (at: bottom-center, align: center)  below server.deploy  gap: normal
+node server.docker  "Docker" (inside bottom)  below server.deploy
 node server.docker.a  icon: cube
-node server.docker.b  right of server.docker.a  gap: tight  icon: cube
-node server.docker.db1  right of server.docker.b  gap: tight  icon: cube
-node server.docker.c  below server.docker.a and server.docker.b    gap: tight  icon: cube
-node server.docker.db2  below server.docker.b and server.docker.db1  gap: tight  icon: cube
+node server.docker.b  right of server.docker.a (gap: tight)  icon: cube
+node server.docker.db1  right of server.docker.b (gap: tight)  icon: cube
+node server.docker.c  below server.docker.a and server.docker.b (gap: tight)  icon: cube
+node server.docker.db2  below server.docker.b and server.docker.db1 (gap: tight)  icon: cube
 
 edge server.deploy -> server.docker  "compose up"
 
@@ -77,10 +83,11 @@ edge cluster.desktop1.files -> server.deploy  "deploy script"                 fr
 
 // --- The backup drive -------------------------------------------------------
 
-node drive          "External HD"  left of server  top level with server  badge: disk  contents: (widths: match)
-node drive.mirror   "shared folder / backup"  style: backup
-node drive.archive  "archive"
+node drive          "External HD"  left of server  top even with server
+node drive.icon     icon: disk  1 right of drive text
+node drive.mirror   "shared folder / backup"  below drive text  style: backup
+node drive.archive  "archive"  below drive.mirror
 
 edge server.mirror -> drive.mirror  style: backup  from: left  to: right
 
-node drive_note "Swapped with a second drive weekly." (wrap: 22)  left of drive.mirror  gap: tight  shape: none
+node drive_note "Swapped with a second drive weekly." (wrap: 22)  left of drive.mirror (gap: tight)  shape: none
