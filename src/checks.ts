@@ -18,6 +18,7 @@ import { UNIT } from './constants.js';
  */
 export const CHECK_DEFAULTS = {
   'text-overlap': true,
+  'text-overflow': true,
   'edge-node-overlap': true,
   'crowded-edge-ends': true,
   'node-overlap': true,
@@ -102,7 +103,52 @@ export function setCheck(checks: Checks, kind: string, value: string, fail: (mes
 export function findings(layout: Layout, checks: Checks): Finding[] {
   const found: Finding[] = [];
   if (checks['node-overlap']) found.push(...nodeOverlaps(layout));
+  if (checks['text-overflow']) found.push(...textOverflows(layout));
   return found.sort((a, b) => a.line - b.line);
+}
+
+/**
+ * A text that runs out of the box it belongs inside: a leaf's text, or a
+ * title placed inside the border or in the middle. A stated size is kept even
+ * when the text needs more, so the text is drawn spilling and this says so.
+ */
+function textOverflows(layout: Layout): Finding[] {
+  const found: Finding[] = [];
+  for (const node of layout.nodes) {
+    if (node.body.kind !== 'shape') continue;
+    const text = node.textBox;
+    if (text.width <= 0 || text.height <= 0) continue;
+    const place = node.textAttrs['place'];
+    if (node.children.length > 0 && place !== undefined && place !== 'center' && !place.startsWith('inside')) continue;
+    const spill = {
+      left: Math.max(0, -text.x),
+      right: Math.max(0, text.x + text.width - node.width),
+      top: Math.max(0, -text.y),
+      bottom: Math.max(0, text.y + text.height - node.height),
+    };
+    const sides = (Object.keys(spill) as (keyof typeof spill)[]).filter((side) => spill[side] > EPSILON);
+    if (sides.length === 0) continue;
+    const wider = spill.left + spill.right;
+    const taller = spill.top + spill.bottom;
+    const needs = [
+      wider > EPSILON ? `${units(wider)} more width` : '',
+      taller > EPSILON ? `${units(taller)} more height` : '',
+    ].filter((part) => part.length > 0);
+    const named =
+      sides.length === 4
+        ? 'every side'
+        : sides.length === 1
+          ? `the ${sides[0]} side`
+          : `the ${sides.slice(0, -1).join(', ')} and ${sides[sides.length - 1]} sides`;
+    found.push(
+      new Finding(
+        'text-overflow',
+        `the text of node ${node.name} runs past ${named} of its box; it needs ${needs.join(' and ')}`,
+        node.line,
+      ),
+    );
+  }
+  return found;
 }
 
 /**

@@ -584,10 +584,13 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
  * - An edge takes no `gap:` or `overlap:`. Those are about where a box sits, and
  *   an edge is not placed — it joins two things that are.
  */
+/** The keys that state a size; `size.ts` reads their values. */
+const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
+
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'padding', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
+  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
   icon: ['style', 'overlap', 'icon', 'text', 'url'],
-  none: ['style', 'overlap', 'layout', 'padding', 'shape', 'text', 'url'],
+  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'shape', 'text', 'url'],
   edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
 };
 

@@ -282,9 +282,12 @@ function nodeSvg(
   const blockWidth = widestLine(node.lines, measurer, size);
   const ink = (run: Run, own: string) => runInk(run, own, markup, theme);
 
+  // No outline and no fill: only the text, and the children of an invisible
+  // container, are drawn.
   if (node.body.kind === 'none') {
     const style = textStyleFor(node.textAttrs, node.line, 'start', 'center');
-    return { kids: [], own: [sized(
+    const kids = node.children.map((child) => drawNode(child, theme, measurer, fontSize, markup, url));
+    return { kids, own: [sized(
       textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
         color: textColorOf(node.textAttrs, theme, theme.text),
         align: style.align,
@@ -358,9 +361,28 @@ function nodeSvg(
     }
   }
 
-  parts.push(
-    `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="${fill}" stroke="${border}"/>`,
-  );
+  // A title on the border breaks it: the stroke is masked where the title sits,
+  // and the fill, drawn without a stroke, still shows behind the title's inner
+  // half.
+  const onBorder = node.lines.length > 0 && node.textAttrs['place']?.startsWith('on ') === true;
+  if (onBorder) {
+    const id = `title-${node.name.replace(/[^\w.-]/g, '_')}`;
+    const room = PAD / 2;
+    const hole = node.textBox;
+    const grown = { x: face.x - PAD, y: face.y - PAD, w: face.width + PAD * 2, h: face.height + PAD * 2 };
+    parts.push(
+      `  <mask id="${id}" maskUnits="userSpaceOnUse" x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}">`,
+      `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`,
+      `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`,
+      '  </mask>',
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="${fill}" stroke="none"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="none" stroke="${border}" mask="url(#${id})"/>`,
+    );
+  } else {
+    parts.push(
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="${fill}" stroke="${border}"/>`,
+    );
+  }
   for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height)) {
     parts.push(`  <path d="${extra}" fill="none" stroke="${border}"/>`);
   }

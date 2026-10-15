@@ -20,9 +20,10 @@
  */
 import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget, Side } from './ast.js';
 import { describePlacement, nameTarget, PART_SIDES } from './ast.js';
-import { CHILD_GAP, DECK_STEP, GAPS, HEADER_GAP, PAD, UNIT } from './constants.js';
+import { CHILD_GAP, DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
-import type { LayoutNode, Reach } from './model.js';
+import type { LayoutNode } from './model.js';
+import { type Dimension, SIZE_KEYS, type SizeExpr, type SpanSide, storedSize } from './size.js';
 
 /** A stretch of one axis. */
 interface Extent {
@@ -59,6 +60,9 @@ export interface NodeFacts {
   /** Whether the node has any text. An empty text takes no room. */
   hasText: boolean;
   padding: number;
+  /** One line of the node's text, and one character, for sizes in `lines` and `chars`. */
+  lineHeight: number;
+  charWidth: number;
   title: TitlePlace;
   layout?: Layout;
   circle: boolean;
@@ -114,9 +118,12 @@ export class Placer {
   private readonly starts = new Map<string, number>();
   private readonly sizes = new Map<string, number>();
   private readonly frames = new Map<string, FrameAxis>();
+  private readonly outlines = new Map<string, FrameAxis>();
   private readonly working = new Set<string>();
   /** What is being worked out, innermost last, for reporting a circle. */
-  private readonly trail: Array<{ node: LayoutNode; axis: Axis; placement?: Placement }> = [];
+  private readonly trail: Array<{ node: LayoutNode; axis: Axis; placement?: Placement; size?: string }> = [];
+  /** A node's size on its own, from what it states or holds, within its limits. */
+  private readonly owns = new Map<string, number>();
   /** A layout's child's position and size on each axis, worked out for the whole layout at once. */
   private readonly laid = new Map<string, { start: number; size?: number }>();
 
@@ -162,12 +169,23 @@ export class Placer {
     return this.remember(this.sizes, node, axis, () => this.workOutSize(node, axis));
   }
 
+  /** A container's box and title in its own frame, at the size it ends up. */
   private frame(node: LayoutNode, axis: Axis): FrameAxis {
     const key = `${node.name}\n${axis}`;
     const known = this.frames.get(key);
     if (known) return known;
-    const worked = this.guard(`frame\n${key}`, node, axis, undefined, () => this.workOutFrame(node, axis));
+    const worked = this.guard(`frame\n${key}`, node, axis, undefined, () => this.fit(node, axis));
     this.frames.set(key, worked);
+    return worked;
+  }
+
+  /** A container's outline around what it holds, before anything states its size. */
+  private outline(node: LayoutNode, axis: Axis): FrameAxis {
+    const key = `${node.name}\n${axis}`;
+    const known = this.outlines.get(key);
+    if (known) return known;
+    const worked = this.guard(`outline\n${key}`, node, axis, undefined, () => this.workOutFrame(node, axis));
+    this.outlines.set(key, worked);
     return worked;
   }
 
@@ -175,7 +193,8 @@ export class Placer {
     const key = `${node.name}\n${axis}`;
     const known = memo.get(key);
     if (known !== undefined) return known;
-    const worked = this.guard(`${memo === this.starts ? 'start' : 'size'}\n${key}`, node, axis, undefined, work);
+    const kind = memo === this.starts ? 'start' : memo === this.owns ? 'own' : 'size';
+    const worked = this.guard(`${kind}\n${key}`, node, axis, undefined, work);
     memo.set(key, worked);
     return worked;
   }
@@ -184,10 +203,17 @@ export class Placer {
    * Work something out, refusing a circle. The trail holds what was being
    * worked out on the way here, and the placements that asked for each.
    */
-  private guard<T>(key: string, node: LayoutNode, axis: Axis, placement: Placement | undefined, work: () => T): T {
+  private guard<T>(
+    key: string,
+    node: LayoutNode,
+    axis: Axis,
+    placement: Placement | undefined,
+    work: () => T,
+    size?: string,
+  ): T {
     if (this.working.has(key)) throw this.circle(node);
     this.working.add(key);
-    this.trail.push({ node, axis, ...(placement ? { placement } : {}) });
+    this.trail.push({ node, axis, ...(placement ? { placement } : {}), ...(size ? { size } : {}) });
     try {
       return work();
     } finally {
@@ -198,11 +224,23 @@ export class Placer {
 
   private circle(node: LayoutNode): SourceError {
     const from = this.trail.findIndex((step) => step.node === node);
-    const loop = this.trail.slice(from === -1 ? 0 : from).filter((step) => step.placement);
-    const said = [...new Map(loop.map((step) => [step.placement!, step.node])).entries()].map(
-      ([placement, owner]) => `"${owner.name} ${describePlacement(placement)}"`,
-    );
+    const loop = this.trail.slice(from === -1 ? 0 : from).filter((step) => step.placement || step.size);
+    const said = [
+      ...new Set(
+        loop.map((step) =>
+          step.placement ? `"${step.node.name} ${describePlacement(step.placement)}"` : `"${step.node.name} ${step.size}"`,
+        ),
+      ),
+    ];
     const last = loop[loop.length - 1];
+    if (loop.some((step) => step.size)) {
+      return new SourceError(
+        said.length === 1
+          ? `"${node.name}" is sized from itself: ${said[0]} — measure it from something worked out without it`
+          : `these depend on each other in a circle: ${said.join(', ')} — one of them has to be stated without the others`,
+        last?.placement?.line ?? last?.node.line ?? node.line,
+      );
+    }
     if (said.length < 2) {
       return new SourceError(
         `"${node.name}" is placed against something that depends on where "${node.name}" goes` +
@@ -487,22 +525,165 @@ export class Placer {
 
   // --- sizes ---------------------------------------------------------------
 
+  /**
+   * A node's size: from two pinned edges, from its layout's stretching, or from
+   * what it states or holds. Each axis's size is stated once, so a size key
+   * beside pins or a stretching layout is refused.
+   */
   private workOutSize(node: LayoutNode, axis: Axis): number {
     const pinned = this.pins(node, axis);
-    if (pinned) return pinned.size;
+    if (pinned) {
+      const keys = sizeKeysOn(node, axis);
+      if (keys.length > 0) {
+        const pins = this.statements(node, axis).map((statement) => `"${describePlacement(statement.placement)}"`);
+        throw new SourceError(
+          `"${node.name}" is pinned on both sides (${pins.join(' and ')}), which gives it its ${DIMENSION[axis]}, ` +
+            `and also states ${keys.join(' ')} — keep one`,
+          node.line,
+        );
+      }
+      return pinned.size;
+    }
     const parent = node.parent;
-    if (parent && this.facts.get(parent)!.layout) {
+    if (parent && this.stretches(parent, axis)) {
       const laid = this.inLayout(node, axis);
       if (laid.size !== undefined) return laid.size;
     }
-    return this.naturalSize(node, axis);
+    return this.ownSize(node, axis);
+  }
+
+  /** Whether a laid-out container sets its children's size on this axis. */
+  private stretches(parent: LayoutNode, axis: Axis): boolean {
+    const layout = this.facts.get(parent)!.layout;
+    return layout !== undefined && axis === 'x' && layout.widths !== 'natural';
+  }
+
+  /** A node's size from what it states, or else what it holds, within its limits. */
+  private ownSize(node: LayoutNode, axis: Axis): number {
+    return this.remember(this.owns, node, axis, () => {
+      const dimension = DIMENSION[axis];
+      const stated = node.appearance[dimension];
+      const value = stated === undefined ? this.naturalSize(node, axis) : this.measure(node, dimension, stated);
+      const least = node.appearance[`min-${dimension}`];
+      const most = node.appearance[`max-${dimension}`];
+      const low = least === undefined ? 0 : this.measure(node, `min-${dimension}`, least);
+      const high = most === undefined ? Infinity : this.measure(node, `max-${dimension}`, most);
+      if (low > high) {
+        throw new SourceError(
+          `"${node.name}" has min-${dimension}: ${least} larger than its max-${dimension}: ${most}, which leaves no ${dimension} it may be`,
+          node.line,
+        );
+      }
+      return Math.min(Math.max(value, low), high);
+    });
   }
 
   /** What a node's own contents make it, before anything stretches it. */
   private naturalSize(node: LayoutNode, axis: Axis): number {
     const facts = this.facts.get(node)!;
     if (node.children.length === 0) return axis === 'x' ? facts.natural.width : facts.natural.height;
-    return this.frame(node, axis).natural;
+    return this.outline(node, axis).natural;
+  }
+
+  /** Work out one size key's value, in pixels. */
+  private measure(node: LayoutNode, key: string, written: string): number {
+    const dimension = SIZE_KEYS[key]!;
+    const axis: Axis = dimension === 'width' ? 'x' : 'y';
+    const size = storedSize(written, key, `"${node.name}"`, node.line);
+    return this.guard(`measure\n${node.name}\n${key}`, node, axis, undefined, () => this.evaluate(node, key, size), `${key}: ${written}`);
+  }
+
+  private evaluate(node: LayoutNode, key: string, size: SizeExpr): number {
+    const dimension = SIZE_KEYS[key]!;
+    const facts = this.facts.get(node)!;
+    switch (size.kind) {
+      case 'number':
+        if (size.unit === 'px') return size.value;
+        if (size.unit === 'unit') return size.value * UNIT;
+        // Room for this much text: the lines or characters, and the padding round them.
+        return size.value * (size.unit === 'lines' ? facts.lineHeight : facts.charWidth) + facts.padding * 2;
+      case 'own':
+        if (size.dimension === dimension) {
+          throw new SourceError(`"${node.name}" ${key}: ${size.dimension} measures itself — measure it from something else`, node.line);
+        }
+        return this.size(node, size.dimension === 'width' ? 'x' : 'y');
+      case 'measure': {
+        const named = this.sized(node, key, size.name);
+        const measured = size.dimension ?? dimension;
+        return this.size(named, measured === 'width' ? 'x' : 'y');
+      }
+      case 'span':
+        return this.span(node, key, size);
+      case 'scale':
+        return size.by * this.evaluate(node, key, size.of);
+      case 'sum':
+        return size.terms.reduce((total, term) => total + this.evaluate(node, key, term), 0);
+      case 'pick': {
+        const first = this.evaluate(node, key, size.first);
+        const second = this.evaluate(node, key, size.second);
+        return size.which === 'larger' ? Math.max(first, second) : Math.min(first, second);
+      }
+    }
+  }
+
+  /** The box a size names. */
+  private sized(node: LayoutNode, key: string, name: string): LayoutNode {
+    const named = this.byName.get(name);
+    if (named) return named;
+    const dot = name.lastIndexOf('.');
+    const last = name.slice(dot + 1);
+    if (dot !== -1 && (last === 'width' || last === 'height')) {
+      throw new SourceError(
+        `"${node.name}" ${key}: ${name} — a dot names a child, so write the measurement after a space: ${name.slice(0, dot)} ${last}`,
+        node.line,
+      );
+    }
+    throw new SourceError(`"${node.name}" ${key}: measures "${name}", which does not exist`, node.line);
+  }
+
+  /**
+   * `a top to c bottom`: the distance between two edges. Both are found in the
+   * frame of the innermost container holding them both, so a span between two
+   * children never waits on their container's box.
+   */
+  private span(node: LayoutNode, key: string, size: Extract<SizeExpr, { kind: 'span' }>): number {
+    const axisOf = (side: SpanSide): Axis | undefined =>
+      side === 'top' || side === 'bottom' ? 'y' : side === 'left' || side === 'right' ? 'x' : undefined;
+    const fromAxis = axisOf(size.from.side);
+    const toAxis = axisOf(size.to.side);
+    if (fromAxis && toAxis && fromAxis !== toAxis) {
+      throw new SourceError(
+        `"${node.name}" ${key}: ${size.from.name} ${size.from.side} to ${size.to.name} ${size.to.side} — a span runs between ` +
+          'two edges on one axis, such as top to bottom or left to right',
+        node.line,
+      );
+    }
+    const axis = fromAxis ?? toAxis ?? (SIZE_KEYS[key] === 'width' ? 'x' : 'y');
+    const from = this.sized(node, key, size.from.name);
+    const to = this.sized(node, key, size.to.name);
+    const common = commonFrame(from, to);
+    const edge = (named: LayoutNode, side: SpanSide): number => {
+      const start = this.within(named, common, axis);
+      const length = named === common ? this.frame(named, axis).boxSize : this.size(named, axis);
+      return start + (side === 'center' ? length / 2 : side === 'bottom' || side === 'right' ? length : 0);
+    };
+    const length = edge(to, size.to.side) - edge(from, size.from.side);
+    if (length < 0) {
+      throw new SourceError(
+        `"${node.name}" ${key}: ${size.from.name} ${size.from.side} to ${size.to.name} ${size.to.side} runs backward — ` +
+          `${size.to.name} ${size.to.side} comes before ${size.from.name} ${size.from.side}, so name them the other way round`,
+        node.line,
+      );
+    }
+    return length;
+  }
+
+  /** Where a node starts in the frame of `frame`, one of its containers, or on the page when that is undefined. */
+  private within(node: LayoutNode, frame: LayoutNode | undefined, axis: Axis): number {
+    if (node === frame) return this.frame(node, axis).boxStart;
+    const parent = node.parent;
+    if (parent === frame) return this.start(node, axis);
+    return this.within(parent!, frame, axis) - this.frame(parent!, axis).boxStart + this.start(node, axis);
   }
 
   // --- containers ----------------------------------------------------------
@@ -524,9 +705,9 @@ export class Placer {
     let high = -Infinity;
     for (const child of content) {
       const start = this.start(child, axis);
-      const reach = child.reach;
-      low = Math.min(low, start - (axis === 'x' ? reach.left : reach.top));
-      high = Math.max(high, start + this.size(child, axis) + (axis === 'x' ? reach.right : reach.bottom));
+      const reach = this.reachOf(child, axis);
+      low = Math.min(low, start - reach.low);
+      high = Math.max(high, start + this.size(child, axis) + reach.high);
     }
     const empty = low > high;
     if (empty) {
@@ -622,6 +803,32 @@ export class Placer {
     return { boxStart: boxLow, boxSize: natural, natural, titleStart, titleSize };
   }
 
+  /**
+   * A container's box at the size it ends up, when something states one: its
+   * outline grown or shrunk evenly about its middle, so what it holds stays
+   * centered, and its title moved with the side it keeps to. A title something
+   * is placed against is part of what it holds, and stays.
+   */
+  private fit(node: LayoutNode, axis: Axis): FrameAxis {
+    const outline = this.outline(node, axis);
+    const extra = this.size(node, axis) - outline.boxSize;
+    if (extra === 0) return outline;
+    const title = this.facts.get(node)!.title;
+    const across: Axis = title.side === 'top' || title.side === 'bottom' ? 'x' : 'y';
+    const anchored = node.children.some((child) => !this.framed(child) && this.onTitle(child));
+    let shift = 0;
+    if (!anchored && title.how !== 'center' && title.side !== 'center') {
+      const toward = axis === across ? title.along : title.side === 'top' || title.side === 'left' ? 'start' : 'end';
+      shift = toward === 'start' ? -extra / 2 : toward === 'end' ? extra / 2 : 0;
+    }
+    return {
+      ...outline,
+      boxStart: outline.boxStart - extra / 2,
+      boxSize: outline.boxSize + extra,
+      titleStart: outline.titleStart + shift,
+    };
+  }
+
   /** The padded-in block of a circle on the other axis, which its diameter depends on as well. */
   private innerOther(node: LayoutNode, axis: Axis): number {
     const facts = this.facts.get(node)!;
@@ -653,7 +860,19 @@ export class Placer {
     const layout = this.facts.get(parent)!.layout!;
     const main: Axis = layout.kind === 'column' ? 'y' : 'x';
     const children = parent.children;
-    const natural = (child: LayoutNode, on: Axis) => this.naturalSize(child, on);
+    const natural = (child: LayoutNode, on: Axis) => this.ownSize(child, on);
+    if (axis !== main && this.stretches(parent, axis)) {
+      for (const child of children) {
+        const keys = sizeKeysOn(child, axis);
+        if (keys.length > 0) {
+          throw new SourceError(
+            `"${child.name}" states ${keys.join(' ')}, but "${parent.name}" has layout: ${layout.kind} ` +
+              `(widths: ${layout.widths}), which sets every child's width — drop one`,
+            child.line,
+          );
+        }
+      }
+    }
     if (axis === main) {
       let cursor = 0;
       children.forEach((child, index) => {
@@ -752,25 +971,34 @@ export class Placer {
       : { x: 0, y: 0, width: 0, height: 0 };
     node.banded = true;
     node.inset = node.deckTexts.length * DECK_STEP;
-    const reach: Reach = { left: 0, top: 0, right: 0, bottom: 0 };
-    const stretch = (low: number, high: number, width: number, height: number, lowX: number, lowY: number) => {
-      reach.left = Math.max(reach.left, -lowX);
-      reach.top = Math.max(reach.top, -lowY);
-      reach.right = Math.max(reach.right, lowX + width - node.width);
-      reach.bottom = Math.max(reach.bottom, lowY + height - node.height);
-      void low;
-      void high;
-    };
-    if (facts.hasText) stretch(0, 0, node.textBox.width, node.textBox.height, node.textBox.x, node.textBox.y);
-    for (const child of node.children) {
-      const cx = child.x - node.x;
-      const cy = child.y - node.y;
-      reach.left = Math.max(reach.left, child.reach.left - cx);
-      reach.top = Math.max(reach.top, child.reach.top - cy);
-      reach.right = Math.max(reach.right, cx + child.width + child.reach.right - node.width);
-      reach.bottom = Math.max(reach.bottom, cy + child.height + child.reach.bottom - node.height);
+    const x2 = this.reachOf(node, 'x');
+    const y2 = this.reachOf(node, 'y');
+    node.reach = { left: x2.low, top: y2.low, right: x2.high, bottom: y2.high };
+  }
+
+  /**
+   * How far a node reaches past its own box on one axis: its title outside the
+   * border, and its children, with whatever they reach in turn. A container's
+   * outline holds what its children reach, so it is worked out as soon as a
+   * container asks, not after everything is placed.
+   */
+  private reachOf(node: LayoutNode, axis: Axis): { low: number; high: number } {
+    if (node.children.length === 0) return { low: 0, high: 0 };
+    const frame = this.frame(node, axis);
+    const end = frame.boxStart + frame.boxSize;
+    let low = 0;
+    let high = 0;
+    if (this.facts.get(node)!.hasText) {
+      low = Math.max(low, frame.boxStart - frame.titleStart);
+      high = Math.max(high, frame.titleStart + frame.titleSize - end);
     }
-    node.reach = reach;
+    for (const child of node.children) {
+      const start = this.start(child, axis);
+      const reach = this.reachOf(child, axis);
+      low = Math.max(low, frame.boxStart - (start - reach.low));
+      high = Math.max(high, start + this.size(child, axis) + reach.high - end);
+    }
+    return { low, high };
   }
 }
 
@@ -788,6 +1016,29 @@ function sideAlong(side: Side): 'start' | 'center' | 'end' {
   if (side === 'top' || side === 'left') return 'start';
   if (side === 'bottom' || side === 'right') return 'end';
   return 'center';
+}
+
+/** The width or height a size key on an axis states. */
+const DIMENSION: Record<Axis, Dimension> = { x: 'width', y: 'height' };
+
+/** The size keys a node states on one axis, as written, for quoting back. */
+function sizeKeysOn(node: LayoutNode, axis: Axis): string[] {
+  const dimension = DIMENSION[axis];
+  return [dimension, `min-${dimension}`, `max-${dimension}`]
+    .filter((key) => node.appearance[key] !== undefined)
+    .map((key) => `${key}: ${node.appearance[key]}`);
+}
+
+/**
+ * The container whose frame holds both ends of a span: one of them when it
+ * holds the other, else the innermost container of both, or the page.
+ */
+function commonFrame(a: LayoutNode, b: LayoutNode): LayoutNode | undefined {
+  if (a === b) return a.parent;
+  if (isWithin(b, a)) return a;
+  if (isWithin(a, b)) return b;
+  for (let at = a.parent; at; at = at.parent) if (isWithin(b, at)) return at;
+  return undefined;
 }
 
 function isWithin(node: LayoutNode, ancestor: LayoutNode): boolean {

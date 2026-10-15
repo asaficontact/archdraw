@@ -88,31 +88,6 @@ export function arrowLength(thickness: number): number {
 }
 
 /**
- * Line left showing behind the head of an edge with no text, so a gap an arrow
- * crosses is at least this plus its heads. Stacked children sit `CHILD_GAP`
- * apart, which is less than one head, and an arrow between them drew as a head
- * with no line. This is what the tightest named gap already leaves behind a
- * normal head, so any gap an author could have asked for holds it unchanged.
- */
-export const BARE_EDGE_RUN = GAPS['tight']! - ARROW_LENGTH;
-
-/**
- * Line left showing between an edge's text and the box at that end of the
- * corridor it crosses.
- *
- * Unlike `SEPARATION_GAP` and `ATTACH_MARGIN` this is not "small on purpose".
- * Those two keep two things from touching, and the least distance that reads as
- * "not touching" is the right one. This one has something to show: a text sits
- * in a knockout that erases the line behind it, so whatever is left either side
- * is the entire evidence that the text belongs to an edge at all. At ten pixels
- * it did not read as a line — the seed diagram in the playground drew as a word
- * with a dash beside it — so it is the length of a run of line, not a margin.
- *
- * Say `gap:` if you want the corridor wider than its contents.
- */
-export const TEXT_CLEARANCE = 20;
-
-/**
  * How much room an edge's text takes along one axis.
  *
  * The knockout rectangle drawn behind a text is the text plus five either side,
@@ -301,20 +276,4 @@ export function textStyleFor(
     side: parts.includes('left') ? 'left' : parts.includes('right') ? 'right' : 'center',
     align: align === undefined ? fallbackAlign : TEXT_ALIGNMENTS[align]!,
   };
-}
-
-/**
- * Where a leaf's text or badge starts vertically, given which end it sits at.
- * Shared, because the resolver works out the text's box and the renderer draws
- * it, and the two must not be able to disagree.
- */
-export function leafTop(
-  end: 'top' | 'center' | 'bottom',
-  y: number,
-  height: number,
-  own: number,
-): number {
-  if (end === 'top') return y + PAD;
-  if (end === 'bottom') return y + height - PAD - own;
-  return y + (height - own) / 2;
 }

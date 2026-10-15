@@ -26,7 +26,6 @@ import {
   DIAGRAM_KEYS,
   DIRECTIONS,
   describePlacement,
-  POSITIONS,
   SIDE_AXIS,
   SIDES,
   PASSAGE_AXES,
@@ -51,6 +50,7 @@ import { CHECK_DEFAULTS, CHECK_KINDS, setCheck } from './checks.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
 import { isAttrKey, nameMark, OpenString, tokenizeLine, type Token } from './lexer.js';
+import { readSize, SIZE_KEYS, writeSize } from './size.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
 /**
@@ -551,6 +551,13 @@ function readAttr(
       line,
     );
   }
+  if (SIZE_KEYS[key] !== undefined) {
+    // `height: 0.5 group height`: read and checked here, stored spaced out for
+    // the placing pass to work out. It ends where a placement or a key starts.
+    const read = readSize(tokens, at + 1, key, subject, line, startsPlacement);
+    setOnce(attrs, key, writeSize(read.size), subject, line);
+    return read.next;
+  }
   const valueToken = tokens[at + 1];
   if (!valueToken || isAttrKey(valueToken) || valueToken.text === ')') {
     throw new SourceError(`attribute "${key}" has no value`, line);
@@ -563,13 +570,6 @@ function readAttr(
     // to write, not silently drawn without its colors.
     throw new SourceError(
       '`stroke:` has been replaced by the part it colors — `border:` on a node, `text: (color: …)` on the text of anything, `line:` on an edge. A style shared between nodes and edges writes both, as in `border: #d2904e  line: #d2904e`',
-      line,
-    );
-  }
-  if (key === 'width') {
-    // Renamed 2026-09-09, and moved into the text's bracket in 0.3.0.
-    throw new SourceError(
-      '`width:` is now `wrap:` and belongs to the text — it folds the text every n characters and says nothing about how wide anything is, so write it as `"…" (wrap: 30)`',
       line,
     );
   }
