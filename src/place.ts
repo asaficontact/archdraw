@@ -126,6 +126,8 @@ export class Placer {
   private readonly owns = new Map<string, number>();
   /** A layout's child's position and size on each axis, worked out for the whole layout at once. */
   private readonly laid = new Map<string, { start: number; size?: number }>();
+  /** The band a laid-out container's children are aligned in, across its layout. */
+  private readonly bands = new Map<string, number>();
 
   constructor(
     private readonly roots: LayoutNode[],
@@ -715,6 +717,17 @@ export class Placer {
       low = 0;
       high = 0;
     }
+    // A laid-out container's content spans the whole band its children are
+    // aligned in, so a title wider than they are is centered over the band and
+    // `align:` decides where in it they sit.
+    if (!empty && facts.layout) {
+      this.inLayout(content[0]!, axis);
+      const band = this.bands.get(`${node.name}\n${axis}`);
+      if (band !== undefined) {
+        low = Math.min(low, 0);
+        high = Math.max(high, band);
+      }
+    }
 
     // Where the title sits in the frame. When something is placed against it,
     // it is the frame's anchor and sits at the origin; otherwise it is placed
@@ -886,16 +899,21 @@ export class Placer {
         }
       });
     } else {
+      // The band is the room the children are aligned in: as wide as the
+      // widest of them, or the title along the top or bottom if that is wider.
       let widest = Math.max(...children.map((child) => natural(child, axis)));
-      if (layout.widths === 'fill') {
-        const facts = this.facts.get(parent)!;
-        const along = facts.title.side === 'top' || facts.title.side === 'bottom';
-        if (along && facts.hasText && facts.title.how !== 'outside') widest = Math.max(widest, facts.textBox.width);
-      }
+      const facts = this.facts.get(parent)!;
+      const titleAlong = facts.title.side === 'top' || facts.title.side === 'bottom';
+      const band =
+        axis === 'x' && titleAlong && facts.hasText && facts.title.how !== 'outside' && facts.title.how !== 'center'
+          ? Math.max(widest, facts.textBox.width)
+          : widest;
+      if (layout.widths === 'fill') widest = band;
+      this.bands.set(`${parent.name}\n${axis}`, band);
       const stretch = axis === 'x' && layout.widths !== 'natural';
       for (const child of children) {
         const size = stretch ? widest : natural(child, axis);
-        const start = layout.align === 'start' ? 0 : layout.align === 'end' ? widest - size : (widest - size) / 2;
+        const start = layout.align === 'start' ? 0 : layout.align === 'end' ? band - size : (band - size) / 2;
         this.laid.set(`${child.name}\n${axis}`, stretch ? { start, size } : { start });
       }
     }
