@@ -18,8 +18,8 @@
  * landed, and the container's box is found around them; a child's place on the
  * page is its container's plus its offset in that frame.
  */
-import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget, Side } from './ast.js';
-import { describePlacement, nameTarget, PART_SIDES } from './ast.js';
+import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget, PointExpr, PointStmt, RegionStmt, Side } from './ast.js';
+import { describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES } from './ast.js';
 import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
 import { joinedToText, type LayoutNode } from './model.js';
@@ -133,11 +133,39 @@ export class Placer {
   /** The stretch a container's text and what is joined to it cover, measured from the text's start. */
   private readonly units = new Map<string, Extent>();
 
+  /** Named points and regions being worked out, innermost last, to refuse one defined through itself. */
+  private readonly expanding: string[] = [];
+
   constructor(
     private readonly roots: LayoutNode[],
     private readonly byName: Map<string, LayoutNode>,
     private readonly facts: Map<LayoutNode, NodeFacts>,
+    /** Named points and regions (design.org 4.5), worked out wherever they are used. */
+    private readonly named: Map<string, PointStmt | RegionStmt> = new Map(),
   ) {}
+
+  /**
+   * Where each named point and region is on the page. A point names one spot,
+   * so one that works out to a stretch (a side, a whole box) is refused.
+   */
+  placeNamed(): Map<string, { x: number; y: number; width: number; height: number }> {
+    const placed = new Map<string, { x: number; y: number; width: number; height: number }>();
+    for (const [name, stmt] of this.named) {
+      const page = { name: `${stmt.kind} ${name}`, parent: undefined, children: [], placements: [], line: stmt.line } as unknown as LayoutNode;
+      const at = { name } as PlacementTarget;
+      const x = this.extentOf(page, at, 'x', { kind: 'on', targets: [at], line: stmt.line });
+      const y = this.extentOf(page, at, 'y', { kind: 'on', targets: [at], line: stmt.line });
+      if (stmt.kind === 'point' && (x.size > 0.01 || y.size > 0.01)) {
+        throw new SourceError(
+          `point "${name}" is "${nameTarget(stmt.point)}", which is a stretch rather than one point — ` +
+            'name a point, such as a corner or a side\'s -center, or a fraction along a side',
+          stmt.line,
+        );
+      }
+      placed.set(name, { x: x.start, y: y.start, width: x.size, height: y.size });
+    }
+    return placed;
+  }
 
   /** Work out everything, and write it onto the nodes. */
   run(): void {
@@ -319,7 +347,9 @@ export class Placer {
   private apply(node: LayoutNode, axis: Axis, statement: Statement): number {
     return this.guard(`apply\n${node.name}\n${axis}`, node, axis, statement.placement, () => {
       if (statement.kind !== 'align') {
-        return statement.kind === 'after' ? statement.edge() : statement.edge() - this.size(node, axis);
+        // Measured from a part of this box (`center 12 right of a center`), or from its facing side.
+        const own = this.ownPart(node, statement.placement, axis);
+        return statement.kind === 'after' ? statement.edge() - own.start : statement.edge() - own.start - own.size;
       }
       const at = statement.at();
       if (statement.side === 'start') return at.start;
@@ -350,8 +380,25 @@ export class Placer {
     const [offset] = offsets;
     return this.guard(`lone\n${node.name}\n${axis}`, node, axis, offset, () => {
       const at = this.region(node, offset!, axis);
-      return at.start + at.size / 2 - this.size(node, axis) / 2;
+      const own = this.ownPart(node, offset!, axis);
+      return at.start + at.size / 2 - own.start - own.size / 2;
     });
+  }
+
+  /**
+   * The stretch of this box a placement measures from, from the box's start:
+   * the part it names, or the whole box.
+   */
+  private ownPart(node: LayoutNode, placement: Placement, axis: Axis): Extent {
+    const whole = { start: 0, size: this.size(node, axis) };
+    if (placement.kind !== 'offset' || placement.own === undefined) return whole;
+    if (placement.own === 'text') {
+      if (!this.hasTitle(node)) {
+        throw new SourceError(`"${node.name}" measures "${describePlacement(placement)}" from its text, and it has none`, placement.line);
+      }
+      return this.textOf(node, axis, 0);
+    }
+    return narrow(whole, placement.own, axis, this.facts.get(node)!.circle, this.size(node, 'x'));
   }
 
   private overStated(node: LayoutNode, axis: Axis, statements: Statement[]): SourceError {
@@ -377,7 +424,7 @@ export class Placer {
           placement,
           edge: () => {
             const at = this.region(node, placement, axis);
-            const gap = this.gapOf(node, placement);
+            const gap = this.gapOf(node, placement, axis);
             return way === 'after' ? at.start + at.size + gap : at.start - gap;
           },
         });
@@ -426,7 +473,9 @@ export class Placer {
   }
 
   /** The gap a placement leaves, in pixels. */
-  private gapOf(node: LayoutNode, placement: OffsetPlacement): number {
+  private gapOf(node: LayoutNode, placement: OffsetPlacement, axis: Axis): number {
+    const each = placement.gaps?.[axis];
+    if (each !== undefined) return gapPixels(each, `"${node.name}"`, placement.line);
     if (placement.gap !== undefined) return gapPixels(placement.gap, `"${node.name}"`, placement.line);
     const parent = node.parent;
     const own = parent !== undefined && placement.targets.some((target) => target.name === parent.name);
@@ -453,8 +502,206 @@ export class Placer {
     return { start, size: end - start };
   }
 
-  /** One target's extent on one axis, in the frame `node` is placed in. */
+  /**
+   * One target's extent on one axis, in the frame `node` is placed in: a
+   * point written out, a named point or region, a fraction of the way across
+   * a box, or a box and its part.
+   */
   private extentOf(node: LayoutNode, target: PlacementTarget, axis: Axis, placement: Placement): Extent {
+    if (target.point) return this.pointExtent(node, target.point, axis, placement);
+    const defined = this.byName.has(target.name) ? undefined : this.named.get(target.name);
+    if (defined) {
+      const whole = this.namedExtent(node, defined, axis, placement);
+      if (target.part === 'text') {
+        throw new SourceError(`"${node.name}" is placed against "${nameTarget(target)}", and a ${defined.kind} has no text`, placement.line);
+      }
+      return this.alongFraction(whole, target, axis, () => narrow(whole, target.part, axis, false, 0));
+    }
+    if (target.fraction) {
+      const whole = this.extentOf(node, { name: target.name }, axis, placement);
+      return this.alongFraction(whole, target, axis, () =>
+        target.part === undefined ? whole : this.extentOf(node, { name: target.name, part: target.part }, axis, placement),
+      );
+    }
+    return this.nodeExtent(node, target, axis, placement);
+  }
+
+  /**
+   * A fraction of the way across `whole` on its own axis (`3/4 down`, `1/3
+   * across from right`). On the other axis it is the side it runs along, or
+   * the whole box when it was written first.
+   */
+  private alongFraction(whole: Extent, target: PlacementTarget, axis: Axis, otherwise: () => Extent): Extent {
+    const fraction = target.fraction;
+    if (!fraction || fractionAxis(fraction) !== axis) return otherwise();
+    const fromEnd = fraction.along === 'up' || fraction.from === 'right';
+    const at = fromEnd ? whole.start + whole.size * (1 - fraction.value) : whole.start + whole.size * fraction.value;
+    return { start: at, size: 0 };
+  }
+
+  /** A named point or region, worked out in the frame `node` is placed in, with a region's padding. */
+  private namedExtent(node: LayoutNode, stmt: PointStmt | RegionStmt, axis: Axis, placement: Placement): Extent {
+    if (this.expanding.includes(stmt.name)) {
+      const loop = [...this.expanding.slice(this.expanding.indexOf(stmt.name)), stmt.name];
+      throw new SourceError(
+        loop.length === 2
+          ? `${stmt.kind} "${stmt.name}" is worked out from itself — name things worked out without it`
+          : `these are worked out from each other in a circle: ${loop.join(' → ')} — one of them has to name something else`,
+        stmt.line,
+      );
+    }
+    this.expanding.push(stmt.name);
+    try {
+      if (stmt.kind === 'point') return this.extentOf(node, stmt.point, axis, placement);
+      let extent: Extent;
+      const [first, second] = stmt.corners;
+      if (second === undefined) {
+        extent = this.betweenOf(node, first.point as Extract<PointExpr, { kind: 'between' }>, axis, placement, stmt.name);
+      } else {
+        const a = this.extentOf(node, first, axis, placement);
+        const b = this.extentOf(node, second, axis, placement);
+        const start = Math.min(a.start, b.start);
+        extent = { start, size: Math.max(a.start + a.size, b.start + b.size) - start };
+      }
+      const padding = stmt.attrs['padding'];
+      if (padding === undefined) return extent;
+      const by = gapPixels(padding, `region "${stmt.name}" padding:`, stmt.line);
+      return { start: extent.start - by, size: extent.size + by * 2 };
+    } finally {
+      this.expanding.pop();
+    }
+  }
+
+  /** A point written out, on one axis. */
+  private pointExtent(node: LayoutNode, point: PointExpr, axis: Axis, placement: Placement): Extent {
+    if (point.kind === 'between') return this.betweenOf(node, point, axis, placement);
+    if (point.kind === 'from') return this.crossingOf(node, point, axis, placement);
+    const from = point.from;
+    const namedPoint = !this.byName.has(from.name) && this.named.get(from.name)?.kind === 'point';
+    if (from.part === undefined && from.point === undefined && from.fraction === undefined && !namedPoint) {
+      throw new SourceError(
+        `"${describePoint(point)}" moves a point, and "${from.name}" is a whole ${this.named.has(from.name) ? 'region' : 'box'} — ` +
+          `say which point, such as \`${point.distance} ${point.direction}${/left|right/.test(point.direction) ? ' of' : ''} ${from.name} ${point.direction.startsWith('above') ? 'top' : point.direction.startsWith('below') ? 'bottom' : point.direction}\``,
+        placement.line,
+      );
+    }
+    const at = this.extentOf(node, from, axis, placement);
+    const way = component(point.direction, axis);
+    if (way === undefined) return at;
+    const by = gapPixels(point.distance, `"${describePoint(point)}"`, placement.line);
+    return { start: at.start + (way === 'after' ? by : -by), size: at.size };
+  }
+
+  /**
+   * `between a and b`: the space between two things. On an axis where they are
+   * apart it is the gap, from `a`'s facing side to `b`'s; where they overlap,
+   * the stretch they share. As a point it is the middle of that, or `at` the
+   * fraction of the gap from `a`. As a region (`region` given) it is the whole
+   * of it, and `(span: both)` stretches it over both boxes where they overlap
+   * (design.org 4.2).
+   */
+  private betweenOf(
+    node: LayoutNode,
+    point: Extract<PointExpr, { kind: 'between' }>,
+    axis: Axis,
+    placement: Placement,
+    region?: string,
+  ): Extent {
+    const pair = (on: Axis) => [this.extentOf(node, point.a, on, placement), this.extentOf(node, point.b, on, placement)] as const;
+    const apart = (on: Axis) => {
+      const [a, b] = pair(on);
+      return a.start + a.size <= b.start + 0.01 || b.start + b.size <= a.start + 0.01;
+    };
+    const other: Axis = axis === 'x' ? 'y' : 'x';
+    const written = describePoint(point);
+    if (region !== undefined && point.span && apart('x') && apart('y')) {
+      const [ax, bx] = pair('x');
+      const [ay, by] = pair('y');
+      const aLeft = ax.start < bx.start;
+      const aAbove = ay.start < by.start;
+      const a = nameTarget(point.a);
+      const b = nameTarget(point.b);
+      throw new SourceError(
+        `region "${region}": ${a} and ${b} are apart both ways, so there are two gaps to stretch — write the one meant by its corners: ` +
+          `\`region ${region}  ${point.a.name} ${aAbove ? 'top' : 'bottom'}-${aLeft ? 'right' : 'left'} to ${point.b.name} ${aAbove ? 'bottom' : 'top'}-${aLeft ? 'left' : 'right'}\` (the gap across) or ` +
+          `\`region ${region}  ${point.a.name} ${aAbove ? 'bottom' : 'top'}-${aLeft ? 'left' : 'right'} to ${point.b.name} ${aAbove ? 'top' : 'bottom'}-${aLeft ? 'right' : 'left'}\` (the gap up and down)`,
+        placement.line,
+      );
+    }
+    const [a, b] = pair(axis);
+    if (apart(axis)) {
+      const aFirst = a.start + a.size <= b.start + 0.01;
+      const from = aFirst ? a.start + a.size : a.start;
+      const to = aFirst ? b.start : b.start + b.size;
+      if (region !== undefined) return { start: Math.min(from, to), size: Math.abs(to - from) };
+      return { start: from + (to - from) * (point.at ?? 0.5), size: 0 };
+    }
+    if (region === undefined && point.at !== undefined && !apart(other)) {
+      throw new SourceError(
+        `"${written}": ${nameTarget(point.a)} and ${nameTarget(point.b)} overlap, so there is no gap to go ${point.atWritten} of the way across`,
+        placement.line,
+      );
+    }
+    const start = Math.max(a.start, b.start);
+    const end = Math.min(a.start + a.size, b.start + b.size);
+    if (region !== undefined && point.span) {
+      const outer = Math.min(a.start, b.start);
+      return { start: outer, size: Math.max(a.start + a.size, b.start + b.size) - outer };
+    }
+    if (region !== undefined) return { start, size: end - start };
+    return { start: (start + end) / 2, size: 0 };
+  }
+
+  /**
+   * `down from a and left from b`: where a line straight down from `a` meets
+   * one straight left from `b`. The words also say which way the point lies
+   * from each, and that is checked (design.org 4.3).
+   */
+  private crossingOf(node: LayoutNode, point: Extract<PointExpr, { kind: 'from' }>, axis: Axis, placement: Placement): Extent {
+    const upright = point.lines.find((line) => line.way === 'up' || line.way === 'down')!;
+    const level = point.lines.find((line) => line.way === 'left' || line.way === 'right')!;
+    const written = describePoint(point);
+    /** Where a line from this thing runs, on the axis it holds still. */
+    const runs = (line: typeof upright, on: Axis) => {
+      const at = this.extentOf(node, line.target, on, placement);
+      if (line.target.part !== undefined && at.size > 0.01) {
+        const sides = on === 'x' ? 'left or right, or a corner' : 'top or bottom, or a corner';
+        throw new SourceError(
+          `"${written}": ${nameTarget(line.target)} is a whole side, with no one place for a line ${line.way} from it to start — name ${sides}`,
+          placement.line,
+        );
+      }
+      return at.start + at.size / 2;
+    };
+    const x = runs(upright, 'x');
+    const y = runs(level, 'y');
+    // Each line starts at its thing and goes the way it says; the meeting has to be on both.
+    const fromUpright = (() => {
+      const at = this.extentOf(node, upright.target, 'y', placement);
+      return at.start + at.size / 2;
+    })();
+    const fromLevel = (() => {
+      const at = this.extentOf(node, level.target, 'x', placement);
+      return at.start + at.size / 2;
+    })();
+    const wrong =
+      (upright.way === 'down' && y <= fromUpright) || (upright.way === 'up' && y >= fromUpright)
+        ? `${upright.way} from ${nameTarget(upright.target)}`
+        : (level.way === 'right' && x <= fromLevel) || (level.way === 'left' && x >= fromLevel)
+          ? `${level.way} from ${nameTarget(level.target)}`
+          : undefined;
+    if (wrong !== undefined) {
+      throw new SourceError(
+        `"${written}": the two lines never meet — the point where they would cross isn't ${wrong}. ` +
+          'The words say which way the point lies from each, so one of them is the wrong way round',
+        placement.line,
+      );
+    }
+    return { start: axis === 'x' ? x : y, size: 0 };
+  }
+
+  /** A box, or a part of one, on one axis, in the frame `node` is placed in. */
+  private nodeExtent(node: LayoutNode, target: PlacementTarget, axis: Axis, placement: Placement): Extent {
     const named = this.byName.get(target.name);
     if (!named) {
       throw new SourceError(`"${node.name}" is placed against "${target.name}", which does not exist`, placement.line);

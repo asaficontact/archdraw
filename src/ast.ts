@@ -160,6 +160,79 @@ export const BOUNDARY_PARTS: readonly string[] = Object.keys(INWARD);
 export interface PlacementTarget {
   name: string;
   part?: Part;
+  /**
+   * How far along a side, or across the whole box: `server 3/4 down`,
+   * `3/4 down server` (design.org 4.7, 5.2). With a side, it is one point on
+   * that side; without, a line through the box on the fraction's axis.
+   */
+  fraction?: Fraction;
+  /** A point written out rather than named: `between a and b`, `down from a and left from b`, `2 below c bottom`. */
+  point?: PointExpr;
+}
+
+/**
+ * A fraction of the way along: `3/4 down` and `1/4 up` run along a left or
+ * right side, `1/3 across` along a top or bottom one, counted from the left
+ * unless it says `from right`.
+ */
+export interface Fraction {
+  value: number;
+  along: 'down' | 'up' | 'across';
+  from?: 'left' | 'right';
+  /** As written, to quote back: `3/4 down`, `1/3 across from right`. */
+  written: string;
+  /** Written before the name (`3/4 down x`) rather than after it (`x 3/4 down`). */
+  first?: boolean;
+}
+
+/** The axis a fraction measures along. */
+export function fractionAxis(fraction: Fraction): Axis {
+  return fraction.along === 'across' ? 'x' : 'y';
+}
+
+/** The words that start a line from a thing, in `down from a and left from b`. */
+export const WAYS = ['up', 'down', 'left', 'right'] as const;
+export type Way = (typeof WAYS)[number];
+
+/**
+ * A point said in words (design.org 4.2–4.4). Every one is worked out from
+ * named things, so moving them moves it.
+ */
+export type PointExpr =
+  | {
+      kind: 'between';
+      a: PlacementTarget;
+      b: PlacementTarget;
+      /** `at 1/3`: that far across the gap, measured from `a`. Absent is halfway. */
+      at?: number;
+      atWritten?: string;
+      /** `(span: both)`: as a region, the gap stretched over both boxes on the other axis. */
+      span?: 'both';
+    }
+  | {
+      kind: 'from';
+      /** The line giving the point its place across or up and down, in the order written. */
+      lines: [{ way: Way; target: PlacementTarget }, { way: Way; target: PlacementTarget }];
+    }
+  | {
+      kind: 'moved';
+      distance: string;
+      direction: Direction;
+      from: PlacementTarget;
+    };
+
+/** A point written out, as the author would write it. */
+export function describePoint(point: PointExpr): string {
+  if (point.kind === 'between') {
+    const at = point.atWritten === undefined ? '' : ` at ${point.atWritten}`;
+    const span = point.span ? ' (span: both)' : '';
+    return `between ${nameTarget(point.a)} and ${nameTarget(point.b)}${at}${span}`;
+  }
+  if (point.kind === 'from') {
+    return point.lines.map((line) => `${line.way} from ${nameTarget(line.target)}`).join(' and ');
+  }
+  const of = /left|right/.test(point.direction) ? ' of' : '';
+  return `${point.distance} ${point.direction}${of} ${nameTarget(point.from)}`;
 }
 
 /**
@@ -195,6 +268,16 @@ export interface OffsetPlacement {
    * that does not say. Absent means take the node's.
    */
   gap?: string;
+  /**
+   * `3 below and 2 right of a`: a different distance on each axis, which
+   * stands in for `gap` (design.org 5.2).
+   */
+  gaps?: Partial<Record<Axis, string>>;
+  /**
+   * `center 12 right of a center`: the part of this box the distance is
+   * measured from, rather than its facing side (design.org 5.2).
+   */
+  own?: Part;
   line: number;
 }
 
@@ -290,13 +373,26 @@ export function describePlacement(placement: Placement): string {
     const side = placement.side === 'center' ? '' : `${placement.side} `;
     return `${side}even with ${targets}`;
   }
-  const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
   // `inside` and `outside` take no `of`, and are quoted back as the author
   // wrote them — the derived direction is what they *mean*, not what they say.
-  if (placement.written) return `${placement.written} ${targets}${gap}`;
+  if (placement.written) {
+    const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
+    return `${placement.written} ${targets}${gap}`;
+  }
   // "left of X" and "above X" are both good English; "above of X" is not.
   const joiner =
     placement.direction === 'above' || placement.direction === 'below' ? '' : 'of ';
+  const own = placement.own === undefined ? '' : `${placement.own} `;
+  if (placement.gaps) {
+    const y = placement.direction.startsWith('above') ? 'above' : 'below';
+    const x = placement.direction.endsWith('left') ? 'left' : 'right';
+    return `${own}${placement.gaps.y} ${y} and ${placement.gaps.x} ${x} of ${targets}`;
+  }
+  // A distance in front, and one in brackets, are the same thing; quoted in front when the part form needs it.
+  if (placement.own !== undefined && placement.gap !== undefined) {
+    return `${own}${placement.gap} ${placement.direction} ${joiner}${targets}`;
+  }
+  const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
   return `${placement.direction} ${joiner}${targets}${gap}`;
 }
 
@@ -309,7 +405,10 @@ export function listTargets(targets: Targets): string {
 
 /** One target in the author's words: the node's name, and its part if it named one. */
 export function nameTarget(target: PlacementTarget): string {
-  return target.part === undefined ? target.name : `${target.name} ${target.part}`;
+  if (target.point) return describePoint(target.point);
+  if (target.fraction?.first) return `${target.fraction.written} ${target.name}`;
+  const named = target.part === undefined ? target.name : `${target.name} ${target.part}`;
+  return target.fraction ? `${named} ${target.fraction.written}` : named;
 }
 
 /**
@@ -402,6 +501,8 @@ export interface NodeStmt {
   /** Everything the author said about where this goes. Empty for the anchor. */
   placements: Placement[];
   attrs: Attrs;
+  /** `guide node frame ""`: does everything a node does except draw (design.org 8.1). */
+  guide?: boolean;
   line: number;
 }
 
@@ -453,8 +554,42 @@ export interface EdgeStmt {
    */
   passes?: OffsetPlacement[];
   attrs: Attrs;
+  /** `guide edge a -> b`: shapes nothing differently, and is drawn only when guides are shown. */
+  guide?: boolean;
   line: number;
 }
+
+/**
+ * `point funnel  between c2 and api at 2/3` — a point with a name, so several
+ * things can use it and moving it is one edit (design.org 4.5). Drawn as a dot.
+ */
+export interface PointStmt {
+  kind: 'point';
+  name: string;
+  point: PlacementTarget;
+  attrs: Attrs;
+  guide?: boolean;
+  line: number;
+}
+
+/**
+ * `region r  c bottom-left to d top-right`, or `region r  between a and b` —
+ * a rectangle with a name and every part a box has (design.org 4.5). It
+ * bounds things without owning them, and is drawn as a tint (8.3).
+ */
+export interface RegionStmt {
+  kind: 'region';
+  name: string;
+  /** The two corners, in either order; or one `between`, which is a region of its own. */
+  corners: [PlacementTarget, PlacementTarget] | [PlacementTarget];
+  attrs: Attrs;
+  guide?: boolean;
+  line: number;
+}
+
+/** What a point and a region may say. A region's padding pushes every edge out. */
+export const POINT_KEYS = ['style', 'fill', 'depth'] as const;
+export const REGION_KEYS = ['style', 'fill', 'border', 'padding', 'depth'] as const;
 
 /**
  * `diagram background: #111111` — settings that belong to the drawing as a
@@ -474,7 +609,7 @@ export interface DiagramStmt {
  * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
  * of finding on or off by name.
  */
-export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks'] as const;
+export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides'] as const;
 
 /**
  * `default leaf  fill: #2e5d3a` — a style that applies to every thing of one
@@ -489,7 +624,16 @@ export interface DefaultStmt {
   line: number;
 }
 
-export const DEFAULT_TARGETS = ['node', 'leaf', 'container', 'edge'] as const;
+export const DEFAULT_TARGETS = [
+  'node',
+  'leaf',
+  'container',
+  'edge',
+  'guide node',
+  'guide edge',
+  'guide point',
+  'guide region',
+] as const;
 export type DefaultTarget = (typeof DEFAULT_TARGETS)[number];
 
 /**
@@ -510,6 +654,11 @@ export const DEFAULT_KEYS: Record<DefaultTarget, readonly string[]> = {
   leaf: ['style', 'shape', 'icon', 'badge', 'fill', 'border', 'text'],
   container: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
   edge: ['style', 'line', 'text'],
+  // A shown guide's look, one line per kind (design.org 8.2).
+  'guide node': ['style', 'fill', 'border', 'text'],
+  'guide edge': ['style', 'line', 'text'],
+  'guide point': ['style', 'fill'],
+  'guide region': ['style', 'fill', 'border'],
 };
 
 /**
@@ -592,10 +741,10 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
-  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url'],
-  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url'],
-  edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
+  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url', 'depth'],
+  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
+  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
+  edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
 };
 
 /**
@@ -636,7 +785,7 @@ export interface IconStmt {
   line: number;
 }
 
-export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt;
+export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt | PointStmt | RegionStmt;
 
 export interface Document {
   statements: Stmt[];

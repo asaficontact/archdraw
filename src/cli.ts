@@ -21,6 +21,8 @@ const USAGE = `reladraw — draw a diagram from stated placement
               its extension replaced by .svg. Use - for standard output.
   --theme     render in this theme, whatever the file's \`diagram theme:\`
               says. One of ${THEME_NAMES.join(', ')}.
+  --guides    draw the guides: everything written with \`guide\` in front,
+              dashed, to see how the picture is built.
   --checks    turn kinds of finding on or off, over what the file says:
               --checks "edge-crossings: on, node-overlap: off"
   --no-checks print no findings. Errors still print.
@@ -58,6 +60,7 @@ async function main(argv: string[]): Promise<number> {
   let theme: string | undefined;
   let checks: string | undefined;
   let noChecks = false;
+  let guides = false;
 
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -93,6 +96,8 @@ async function main(argv: string[]): Promise<number> {
       i += 1;
     } else if (arg === '--no-checks') {
       noChecks = true;
+    } else if (arg === '--guides') {
+      guides = true;
     } else if (arg.startsWith('-') && arg !== '-') {
       process.stderr.write(`reladraw: unknown option ${arg}\n`);
       return 1;
@@ -136,6 +141,7 @@ async function main(argv: string[]): Promise<number> {
   try {
     drawn = draw(source, {
       ...(theme === undefined ? {} : { theme: THEMES[theme]! }),
+      ...(guides ? { guides: true } : {}),
       // An icon's file is found from the diagram, not from wherever the tool
       // happens to be run.
       readIconFile: (path) => readFileSync(resolvePath(dirname(input), path), 'utf8'),

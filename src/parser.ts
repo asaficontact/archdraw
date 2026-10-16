@@ -16,11 +16,21 @@ import type {
   Part,
   Passage,
   PlacementTarget,
+  PointExpr,
+  PointStmt,
+  Fraction,
+  RegionStmt,
   Stmt,
   StyleStmt,
+  Way,
 } from './ast.js';
 import {
   COLOR_KEYS,
+  POINT_KEYS,
+  REGION_KEYS,
+  WAYS,
+  describePoint,
+  fractionAxis,
   DEFAULT_KEYS,
   DEFAULT_TARGETS,
   DIAGRAM_KEYS,
@@ -218,6 +228,12 @@ function parseStatement(tokens: Token[], line: number): Stmt {
       return parseDiagram(tokens, line);
     case 'default':
       return parseDefault(tokens, line);
+    case 'point':
+      return parsePoint(tokens, line);
+    case 'region':
+      return parseRegion(tokens, line);
+    case 'guide':
+      return parseGuide(tokens, line);
     default:
       throw new SourceError(substitution(keyword.text, tokens), line);
   }
@@ -439,6 +455,55 @@ function readAttr(
     // Taking the place words out shortened the tokens; count from the original.
     const removed = tokens.length - taken.tokens.length;
     return read.next + removed;
+  }
+  if (key === 'depth') {
+    // `depth: behind b`, `depth: in front of a, b and c`, or both, separated
+    // by a comma: `depth: behind a, in front of a.api`. Stored as clauses
+    // joined on `;`, which no name can hold.
+    const clauses: string[] = [];
+    let next = at + 1;
+    for (;;) {
+      let way: string;
+      if (follows(tokens, next, 'behind')) {
+        way = 'behind';
+        next += 1;
+      } else if (follows(tokens, next, 'in') && follows(tokens, next + 1, 'front') && follows(tokens, next + 2, 'of')) {
+        way = 'in front of';
+        next += 3;
+      } else {
+        const given = tokens[next];
+        throw new SourceError(
+          `${subject}: depth: says what this is drawn behind or in front of — \`depth: behind b\` or \`depth: in front of b\`` +
+            (given && !isAttrKey(given) ? `, not "${given.text}"` : ''),
+          line,
+        );
+      }
+      const names: string[] = [];
+      let more = false;
+      for (;;) {
+        const token = tokens[next];
+        if (!token || token.quoted || isAttrKey(token) || token.text === '(' || token.text === ')') {
+          throw new SourceError(`${subject}: "depth: ${way}" names nothing${names.length > 0 ? ' after its comma' : ''}`, line);
+        }
+        const listed = token.text.endsWith(',') && token.text.length > 1;
+        names.push(listed ? token.text.slice(0, -1) : token.text);
+        next += 1;
+        if (follows(tokens, next, 'and')) {
+          next += 1;
+          continue;
+        }
+        if (!listed) break;
+        // A comma before `behind` or `in front of` starts the next clause.
+        if (follows(tokens, next, 'behind') || (follows(tokens, next, 'in') && follows(tokens, next + 1, 'front'))) {
+          more = true;
+          break;
+        }
+      }
+      clauses.push(`${way} ${names.join(', ')}`);
+      if (!more) break;
+    }
+    setOnce(attrs, 'depth', clauses.join('; '), subject, line, { key, value: (v) => v.split('; ').join(', ') });
+    return next;
   }
   if (key === 'join-with') {
     // `join-with: hub text` or `join-with: hub.icon` — what the node moves with.
@@ -1082,6 +1147,87 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
   };
 }
 
+/**
+ * `guide point funnel …`, `guide edge a -> b`, `guide region r …`, `guide
+ * node frame ""`: the statement as it would be, reference only (design.org
+ * 8.1). The word applies to its own statement and nothing inside it.
+ */
+function parseGuide(head: Token[], line: number): Stmt {
+  const kind = head[1];
+  const kinds = ['node', 'edge', 'point', 'region'];
+  if (!kind || kind.quoted || !kinds.includes(kind.text)) {
+    throw new SourceError(
+      `guide goes before the statement it makes reference only — guide node, guide edge, guide point or guide region` +
+        (kind && !kind.quoted ? `, not "guide ${kind.text}"` : ''),
+      line,
+    );
+  }
+  const stmt = parseStatement(head.slice(1), line);
+  if (stmt.kind !== 'node' && stmt.kind !== 'edge' && stmt.kind !== 'point' && stmt.kind !== 'region') {
+    throw new SourceError('guide goes before a node, an edge, a point or a region', line);
+  }
+  return { ...stmt, guide: true };
+}
+
+/** `point funnel  between c2 and api at 2/3` */
+function parsePoint(head: Token[], line: number): PointStmt {
+  const name = requireName(head[1], 'point', line);
+  const subject = `point "${name}"`;
+  if (!head[2] || isAttrKey(head[2])) {
+    throw new SourceError(`${subject} says where it is, such as \`point ${name}  between a and b\``, line);
+  }
+  const read = readOneTarget(head, 2, subject, line, true);
+  if (read.listed) throw new SourceError(`${subject} is one point, so it takes no list`, line);
+  refuseSpan(read.target, subject, line);
+  const attrs = attrsOnly(head, read.next, line, subject);
+  refuseKeys(attrs, POINT_KEYS, subject, 'a point', line);
+  return { kind: 'point', name, point: read.target, attrs, line };
+}
+
+/** `region r  c bottom-left to d top-right`, or `region r  between a and b (span: both)` */
+function parseRegion(head: Token[], line: number): RegionStmt {
+  const name = requireName(head[1], 'region', line);
+  const subject = `region "${name}"`;
+  if (!head[2] || isAttrKey(head[2])) {
+    throw new SourceError(
+      `${subject} says what it covers: two corners, \`region ${name}  a top-left to b bottom-right\`, or \`region ${name}  between a and b\``,
+      line,
+    );
+  }
+  const first = readOneTarget(head, 2, subject, line, true);
+  if (first.listed) throw new SourceError(`${subject}: a region runs from one point to another, written with "to", not a list`, line);
+  let corners: RegionStmt['corners'];
+  let next = first.next;
+  if (follows(head, next, 'to')) {
+    if (!head[next + 1] || isAttrKey(head[next + 1]!)) throw new SourceError(`${subject}: "to" names no point`, line);
+    const second = readOneTarget(head, next + 1, subject, line, true);
+    for (const corner of [first.target, second.target]) refuseSpan(corner, subject, line);
+    corners = [first.target, second.target];
+    next = second.next;
+  } else {
+    if (first.target.point?.kind !== 'between') {
+      throw new SourceError(
+        `${subject}: a region is the rectangle between two points — \`region ${name}  ${nameTarget(first.target)} to …\`, ` +
+          `or a region between two things, \`region ${name}  between a and b\``,
+        line,
+      );
+    }
+    corners = [first.target];
+  }
+  const attrs = attrsOnly(head, next, line, subject);
+  refuseKeys(attrs, REGION_KEYS, subject, 'a region', line);
+  return { kind: 'region', name, corners, attrs, line };
+}
+
+/** Refuse what a point or a region has no use for, by name. */
+function refuseKeys(attrs: Attrs, keys: readonly string[], subject: string, what: string, line: number): void {
+  for (const key of Object.keys(attrs)) {
+    const top = key.split('.')[0]!;
+    if (keys.includes(top)) continue;
+    throw new SourceError(`${subject}: ${what} has no ${top}: — it takes ${keys.map((k) => `${k}:`).join(', ')}`, line);
+  }
+}
+
 /** `style <name> <attributes>` */
 function parseStyle(head: Token[], line: number): StyleStmt {
   const name = requireName(head[1], 'style', line);
@@ -1166,6 +1312,10 @@ function parseDiagram(head: Token[], line: number): DiagramStmt {
   if (attrs['checks'] !== undefined) {
     throw new SourceError('diagram checks: takes a bracket — `checks: (edge-crossings: on)`', line);
   }
+  const guides = attrs['guides'];
+  if (guides !== undefined && guides !== 'show' && guides !== 'hide') {
+    throw new SourceError(`diagram guides: is show or hide, not "${guides}"`, line);
+  }
   const theme = attrs['theme'];
   if (theme !== undefined && THEMES[theme] === undefined) {
     throw new SourceError(
@@ -1183,7 +1333,21 @@ function parseDiagram(head: Token[], line: number): DiagramStmt {
  * use for can only be a mistake.
  */
 function parseDefault(head: Token[], line: number): DefaultStmt {
-  const target = head[1];
+  let target = head[1];
+  // `default guide node`: a shown guide's look, one line per kind.
+  const guide = target !== undefined && !target.quoted && target.text === 'guide';
+  if (guide) {
+    const kind = head[2];
+    const kinds = ['node', 'edge', 'point', 'region'];
+    if (!kind || kind.quoted || !kinds.includes(kind.text)) {
+      throw new SourceError(
+        'there is no bare `default guide`, since the kinds share almost no keys — write default guide node, ' +
+          'default guide edge, default guide point or default guide region',
+        line,
+      );
+    }
+    target = { ...kind, text: `guide ${kind.text}` };
+  }
   if (!target || target.quoted || !(DEFAULT_TARGETS as readonly string[]).includes(target.text)) {
     throw new SourceError(
       `default needs the kind it is for — ${DEFAULT_TARGETS.join(', ')}` +
@@ -1193,12 +1357,13 @@ function parseDefault(head: Token[], line: number): DefaultStmt {
   }
   const kind = target.text as DefaultTarget;
   const subject = `default ${kind}`;
+  const start = guide ? 3 : 2;
   // `default leaf node` reads naturally and says nothing `default leaf` does not.
-  const extra = head[2];
-  if (extra && !extra.quoted && !isAttrKey(extra) && extra.text === 'node' && kind !== 'node') {
+  const extra = head[start];
+  if (!guide && extra && !extra.quoted && !isAttrKey(extra) && extra.text === 'node' && kind !== 'node') {
     throw new SourceError(`write \`default ${kind}\` — a ${kind} is already a node`, line);
   }
-  const attrs = attrsOnly(head, 2, line, subject);
+  const attrs = attrsOnly(head, start, line, subject);
   if (Object.keys(attrs).length === 0) {
     throw new SourceError(`${subject} sets nothing`, line);
   }
@@ -1276,6 +1441,28 @@ function readPlacement(
     throw new SourceError(`${subject}: unexpected text "${word.text}"`, line);
   }
 
+  // `center 12 right of a center`: a part of this box measured from a part of
+  // another (design.org 5.2). Nothing sensible defaults between centers, so
+  // the distance is required.
+  if (!word.quoted && isPart(word.text) && !follows(tokens, at + 1, 'of') && !follows(tokens, at + 1, 'even')) {
+    if (opensPartPlacement(tokens, at)) {
+      const read = readPlacement(tokens, at + 1, line, subject);
+      if (read.placement.kind !== 'offset') return read;
+      return { placement: { ...read.placement, own: word.text }, next: read.next };
+    }
+    const direction = tokens[at + 1];
+    if (direction && !direction.quoted && isDirection(direction.text)) {
+      const of = /left|right/.test(direction.text) ? ' of' : '';
+      const rest = tokens.slice(at + 2 + (follows(tokens, at + 2, 'of') ? 1 : 0), at + 4 + (follows(tokens, at + 2, 'of') ? 1 : 0));
+      const target = rest.map((token) => token.text).join(' ') || '…';
+      throw new SourceError(
+        `${subject}: "${word.text} ${direction.text}${of} …" names a part, so say how far: ` +
+          `\`${word.text} 12 ${direction.text}${of} ${target}\``,
+        line,
+      );
+    }
+  }
+
   // `2 right of x` is `right of x (gap: 2)`: a distance written in front.
   const distance = /^-?\d*\.?\d+(px)?$/.exec(word.text);
   if (distance && tokens[at + 1] && isDirection(tokens[at + 1]!.text)) {
@@ -1286,6 +1473,31 @@ function readPlacement(
           'or inside or on for a box meant to overlap',
         line,
       );
+    }
+    // `3 below and 2 right of a`: a different distance on each axis.
+    const other = tokens[at + 3];
+    if (follows(tokens, at + 2, 'and') && other && !other.quoted && /^\d*\.?\d+(px)?$/.test(other.text) && tokens[at + 4] && isDirection(tokens[at + 4]!.text)) {
+      const first = tokens[at + 1]!.text as Direction;
+      const second = tokens[at + 4]!.text as Direction;
+      const vertical = (d: Direction) => d === 'above' || d === 'below';
+      const horizontal = (d: Direction) => d === 'left' || d === 'right';
+      if (!((vertical(first) && horizontal(second)) || (horizontal(first) && vertical(second)))) {
+        throw new SourceError(
+          `${subject}: "${word.text} ${first} and ${other.text} ${second}" gives two distances, one for each axis, ` +
+            'so one direction is above or below and the other left or right',
+          line,
+        );
+      }
+      const read = readPlacement(tokens, at + 3, line, subject);
+      if (read.placement.kind !== 'offset') return read;
+      const y = vertical(first) ? first : second;
+      const x = vertical(first) ? second : first;
+      const gaps = { y: vertical(first) ? word.text : other.text, x: vertical(first) ? other.text : word.text };
+      const { gap: _gap, ...rest } = read.placement;
+      return {
+        placement: { ...rest, direction: `${y}-${x}` as Direction, gaps },
+        next: read.next,
+      };
     }
     const read = readPlacement(tokens, at + 1, line, subject);
     if (read.placement.kind !== 'offset') return read;
@@ -1326,6 +1538,17 @@ function readPlacement(
     }
     const read = readTargets(tokens, from + 2, subject, written, line);
     const axis = SIDE_AXIS[side ?? 'center'];
+    // `left even with 3/4 down x`: three quarters down names a height, which
+    // has no place across to meet.
+    for (const target of read.targets) {
+      if (!target.fraction || fractionAxis(target.fraction) === axis) continue;
+      throw new SourceError(
+        `${subject}: "${nameTarget(target)}" names a ${axis === 'x' ? 'height' : 'place across'}, so "${written}" has nothing to meet there — ` +
+          (axis === 'x' ? `write a fraction across, such as \`${written} 1/3 across ${target.name}\`` : `write a fraction down, such as \`${written} 3/4 down ${target.name}\``),
+        line,
+      );
+    }
+    for (const target of read.targets) refuseSpan(target, subject, line);
     // `top even with server left`: the left side runs server's whole height, so
     // it has no one height to meet, and drawing it as `server`'s top would make
     // a second spelling of `top even with server`.
@@ -1394,6 +1617,10 @@ function readPlacement(
   }
   if (of) next += 1;
   const read = readTargets(tokens, next, subject, word.text, line);
+  for (const target of read.targets) {
+    refuseSpan(target, subject, line);
+    facedSide(target, word.text, subject, line);
+  }
   const modifiers = readModifiers(
     tokens,
     read.next,
@@ -1413,6 +1640,43 @@ function readPlacement(
   };
 }
 
+/** `(span: both)` stretches a region; a point has nothing to stretch. */
+function refuseSpan(target: PlacementTarget, subject: string, line: number): void {
+  if (target.point?.kind !== 'between' || !target.point.span) return;
+  throw new SourceError(
+    `${subject}: "(span: both)" makes a region, and a placement is against a point or a thing — name the region, ` +
+      `\`region r  ${describePoint(target.point)}\`, and place against r`,
+    line,
+  );
+}
+
+/**
+ * `right of server 3/4 down`: the direction already says which side is meant,
+ * so the fraction needs no side of its own (design.org 5.2).
+ */
+function facedSide(target: PlacementTarget, direction: Direction, subject: string, line: number): void {
+  const fraction = target.fraction;
+  if (!fraction || fraction.first || target.part !== undefined) return;
+  const faced: Partial<Record<Direction, Part>> = { right: 'right', left: 'left', above: 'top', below: 'bottom' };
+  const side = faced[direction];
+  if (side === undefined) {
+    throw new SourceError(
+      `${subject}: "${direction} of ${nameTarget(target)}" faces a corner of ${target.name}, which has no side to go ` +
+        `${fraction.along} — name the side: \`${direction} of ${target.name} ${fraction.along === 'across' ? 'bottom' : 'right'} ${fraction.written}\``,
+      line,
+    );
+  }
+  const words = side === 'left' || side === 'right' ? '3/4 down or 1/4 up' : '1/3 across or 1/3 across from right';
+  if ((fraction.along === 'across') !== (side === 'top' || side === 'bottom')) {
+    throw new SourceError(
+      `${subject}: "${direction}${/left|right/.test(direction) ? ' of' : ''} ${nameTarget(target)}" faces ${target.name}'s ${side} side, ` +
+        `which ${fraction.along} doesn't run along — it takes ${words}`,
+      line,
+    );
+  }
+  target.part = side;
+}
+
 /**
  * `on hub top-right` — the node's center at the part's center, straddling it.
  *
@@ -1430,6 +1694,7 @@ function readOn(
 ): { placement: Placement; next: number } {
   const read = readTargets(tokens, at + 1, subject, 'on', line, true);
   const target = read.targets[0]!;
+  refuseSpan(target, subject, line);
   if (read.targets.length > 1) {
     throw new SourceError(
       `${subject}: "on ${listTargets(read.targets)}" names ${read.targets.length} nodes, and a ` +
@@ -1483,6 +1748,7 @@ function readTucked(
 ): { placement: Placement; next: number } {
   const read = readTargets(tokens, at + 1, subject, written, line, true);
   const target = read.targets[0]!;
+  refuseSpan(target, subject, line);
   if (read.targets.length > 1) {
     throw new SourceError(
       `${subject}: "${written} ${listTargets(read.targets)}" names ${read.targets.length} nodes, ` +
@@ -1647,7 +1913,8 @@ function startsPlacement(token: Token): boolean {
     token.text === 'on' ||
     token.text === 'inside' ||
     token.text === 'outside' ||
-    (SIDES as readonly string[]).includes(token.text)
+    (SIDES as readonly string[]).includes(token.text) ||
+    isPart(token.text)
   );
 }
 
@@ -1696,34 +1963,300 @@ function readTargets(
     if (!token || token.quoted || token.text === '(' || token.text === ')' || (isAttrKey(token) && !token.joined)) {
       throw new SourceError(`${subject}: "${placement}" names no node`, line);
     }
-    refuseNameMark(token, `${subject}: "${token.joined ?? token.text}"`, line);
-    let listed = token.text.endsWith(',') && token.text.length > 1;
-    const name = listed ? token.text.slice(0, -1) : token.text;
-    i += 1;
-
-    // A part can only follow a name the author did not already close with a
-    // comma — `a, b` is two targets and the comma says so. The part may carry
-    // the comma itself: `right of a text, b`.
-    let part = listed ? undefined : partAfter(tokens, i, partFirst);
-    if (part) {
-      i += 1;
-    } else if (!listed) {
-      part = partBeforeComma(tokens[i]);
-      if (part) {
-        i += 1;
-        listed = true;
-      }
-    }
-    targets.push(part === undefined ? { name } : { name, part });
+    const read = readOneTarget(tokens, i, subject, line, partFirst);
+    targets.push(read.target);
+    i = read.next;
 
     if (follows(tokens, i, 'and')) {
       i += 1;
       continue;
     }
-    comma = listed ? (part === undefined ? name : `${name} ${part}`) : undefined;
-    if (listed) continue;
+    comma = read.listed ? nameTarget(read.target) : undefined;
+    if (read.listed) continue;
     return { targets, next: i };
   }
+}
+
+/**
+ * One target: a name with its part and how far along, or a point written out
+ * (design.org 4.2–4.4). `listed` says it ended on a comma, which promises
+ * another.
+ */
+function readOneTarget(
+  tokens: Token[],
+  at: number,
+  subject: string,
+  line: number,
+  partFirst = false,
+): { target: PlacementTarget; next: number; listed: boolean } {
+  const token = tokens[at]!;
+  const word = token.quoted ? '' : token.text;
+
+  if (word === 'between') return readBetween(tokens, at, subject, line);
+
+  // `3/4 down x`: a fraction of the way across one box, written first.
+  const first = readFraction(tokens, at);
+  if (first) {
+    const nameToken = tokens[first.next];
+    if (!nameToken || nameToken.quoted || isAttrKey(nameToken) || nameToken.text === '(' || nameToken.text === ')') {
+      throw new SourceError(`${subject}: "${first.fraction.written}" names no box — write \`${first.fraction.written} <name>\``, line);
+    }
+    let listed = nameToken.text.endsWith(',') && nameToken.text.length > 1;
+    const name = listed ? nameToken.text.slice(0, -1) : nameToken.text;
+    let next = first.next + 1;
+    const fraction: Fraction = { ...first.fraction, first: true };
+    // `1/3 across x from right`: which end it counts from comes after the name.
+    if (!listed && fraction.along === 'across' && follows(tokens, next, 'from')) {
+      const end = tokens[next + 1];
+      const side = end?.text.replace(/,$/, '');
+      if (side !== 'left' && side !== 'right') {
+        throw new SourceError(`${subject}: "${fraction.written} ${name} from" counts from left or from right`, line);
+      }
+      fraction.from = side;
+      fraction.written += ` from ${side}`;
+      listed = end!.text.endsWith(',');
+      next += 2;
+    }
+    refuseFractionPart(tokens, next, fraction, name, subject, line);
+    return { target: { name, fraction }, next, listed };
+  }
+
+  // `down from a and left from b`: where two straight lines meet.
+  if ((WAYS as readonly string[]).includes(word) && follows(tokens, at + 1, 'from')) {
+    return readCrossing(tokens, at, subject, line);
+  }
+
+  // `2 below c bottom`: a point moved by a distance.
+  if (/^-?\d*\.?\d+(px)?$/.test(word) && tokens[at + 1] && isDirection(tokens[at + 1]!.text)) {
+    const direction = tokens[at + 1]!.text as Direction;
+    if (word.startsWith('-')) {
+      const flipped = OPPOSITE[direction];
+      throw new SourceError(
+        `${subject}: a distance is never negative — write \`${word.slice(1)} ${flipped}${/left|right/.test(flipped) ? ' of' : ''} …\``,
+        line,
+      );
+    }
+    let next = at + 2;
+    const takesOf = /left|right/.test(direction);
+    const of = follows(tokens, next, 'of');
+    if (of !== takesOf) {
+      throw new SourceError(
+        `${subject}: "${word} ${direction}${of ? ' of' : ''}" is written "${word} ${direction}${takesOf ? ' of' : ''}" — \`${word} ${direction}${takesOf ? ' of' : ''} ${tokens[next + (of ? 1 : 0)]?.text ?? '…'}\``,
+        line,
+      );
+    }
+    if (of) next += 1;
+    const inner = readOneTarget(tokens, next, subject, line, true);
+    if (inner.target.point?.kind === 'moved') {
+      throw new SourceError(`${subject}: a point is moved once — add the distances, as in \`${word} ${direction} …\``, line);
+    }
+    const point: PointExpr = { kind: 'moved', distance: word, direction, from: inner.target };
+    return { target: { name: describePoint(point), point }, next: inner.next, listed: inner.listed };
+  }
+
+  refuseNameMark(token, `${subject}: "${token.joined ?? token.text}"`, line);
+  let listed = token.text.endsWith(',') && token.text.length > 1;
+  const name = listed ? token.text.slice(0, -1) : token.text;
+  let i = at + 1;
+
+  // A part can only follow a name the author did not already close with a
+  // comma — `a, b` is two targets and the comma says so. The part may carry
+  // the comma itself: `right of a text, b`.
+  let part = listed ? undefined : partAfter(tokens, i, partFirst);
+  if (part) {
+    i += 1;
+  } else if (!listed) {
+    part = partBeforeComma(tokens[i]);
+    if (part) {
+      i += 1;
+      listed = true;
+    }
+  }
+  const target: PlacementTarget = part === undefined ? { name } : { name, part };
+  if (listed) return { target, next: i, listed };
+
+  // `server 3/4 down`, `server right 3/4 down`: how far along the side.
+  const after = readFraction(tokens, i);
+  if (after) {
+    const fraction = after.fraction;
+    i = after.next;
+    listed = fraction.written.endsWith(',');
+    if (listed) fraction.written = fraction.written.slice(0, -1);
+    if (part !== undefined) checkFractionOnPart(fraction, name, part, subject, line);
+    return { target: { ...target, fraction }, next: i, listed };
+  }
+  // `c bottom + 2` adds a length to a point, which doesn't say which way.
+  if (follows(tokens, i, '+')) {
+    const amount = tokens[i + 1]?.text ?? '2';
+    throw new SourceError(
+      `${subject}: "+" adds lengths, never points — "${nameTarget(target)} + ${amount}" doesn't say up or down. ` +
+        `Move the point with a direction: \`${amount} below ${nameTarget(target)}\``,
+      line,
+    );
+  }
+  return { target, next: i, listed };
+}
+
+/**
+ * `3/4 down`, `1/4 up`, `1/3 across`, `1/3 across from right`, if one starts
+ * here. `from` after `across` is taken only when the fraction follows a name;
+ * written first, it comes after the name instead.
+ */
+function readFraction(tokens: Token[], at: number): { fraction: Fraction; next: number } | undefined {
+  const token = tokens[at];
+  const along = tokens[at + 1];
+  if (!token || token.quoted || !along || along.quoted) return undefined;
+  const value = fractionValue(token.text);
+  const word = along.text.replace(/,$/, '');
+  if (value === undefined || (word !== 'down' && word !== 'up' && word !== 'across')) return undefined;
+  if (value < 0 || value > 1) return undefined;
+  const fraction: Fraction = { value, along: word, written: `${token.text} ${along.text}` };
+  let next = at + 2;
+  if (word === 'across' && !along.text.endsWith(',') && follows(tokens, next, 'from')) {
+    const side = tokens[next + 1]?.text;
+    const clean = side?.replace(/,$/, '');
+    if (clean === 'left' || clean === 'right') {
+      fraction.from = clean;
+      fraction.written = `${token.text} across from ${side}`;
+      next += 2;
+    }
+  }
+  return { fraction, next };
+}
+
+/** `3/4`, `0.75`, `.75`, `1`: a fraction of the way, or undefined. */
+function fractionValue(written: string): number | undefined {
+  const ratio = /^(\d+)\/(\d+)$/.exec(written);
+  if (ratio) return Number(ratio[2]) === 0 ? undefined : Number(ratio[1]) / Number(ratio[2]);
+  if (/^\d*\.?\d+$/.test(written)) return Number(written);
+  return undefined;
+}
+
+/** A fraction runs along one side: `down` and `up` a left or right one, `across` a top or bottom one. */
+function checkFractionOnPart(fraction: Fraction, name: string, part: Part, subject: string, line: number): void {
+  const along = fraction.along === 'across' ? ['top', 'bottom'] : ['left', 'right'];
+  if (along.includes(part)) return;
+  const words = part === 'left' || part === 'right' ? 'down or up' : part === 'top' || part === 'bottom' ? 'across' : undefined;
+  throw new SourceError(
+    words
+      ? `${subject}: "${name} ${part} ${fraction.written}" names nothing — ${fraction.along} doesn't run along a ${part} side; it takes ${words}`
+      : `${subject}: "${name} ${part} ${fraction.written}" names nothing — ${part} is a point, not a side to go along. Name a side: ${name} left, right, top or bottom`,
+    line,
+  );
+}
+
+/** `3/4 down x top`: a fraction written first names a line through the whole box, so a part after it says nothing. */
+function refuseFractionPart(tokens: Token[], at: number, fraction: Fraction, name: string, subject: string, line: number): void {
+  const token = tokens[at];
+  if (!token || token.quoted || !isPart(token.text.replace(/,$/, ''))) return;
+  if (follows(tokens, at + 1, 'of') || follows(tokens, at + 1, 'even') || opensPartPlacement(tokens, at)) return;
+  const part = token.text.replace(/,$/, '');
+  throw new SourceError(
+    `${subject}: "${fraction.written} ${name} ${part}" — a fraction written first is a line across the whole of ${name}. ` +
+      `For a spot on one side, write the side first: \`${name} ${isSideWord(part) ? part : 'right'} ${fraction.written}\``,
+    line,
+  );
+}
+
+/**
+ * `between a and b`, `between a and b at 1/3`, and as a region
+ * `between a and b (span: both)`. Always two things, joined by `and`.
+ */
+function readBetween(tokens: Token[], at: number, subject: string, line: number): { target: PlacementTarget; next: number; listed: boolean } {
+  const first = tokens[at + 1];
+  if (!first || first.quoted || isAttrKey(first) || first.text === '(') {
+    throw new SourceError(`${subject}: "between" names two things — \`between a and b\``, line);
+  }
+  if (first.text.endsWith(',')) {
+    const second = tokens[at + 2]?.text ?? 'b';
+    throw new SourceError(
+      `${subject}: "between" joins its two things with "and" — write \`between ${first.text.slice(0, -1)} and ${second.replace(/,$/, '')}\``,
+      line,
+    );
+  }
+  const a = readOneTarget(tokens, at + 1, subject, line, true);
+  if (a.listed) {
+    throw new SourceError(
+      `${subject}: "between" joins its two things with "and" — write \`between ${nameTarget(a.target)} and …\``,
+      line,
+    );
+  }
+  if (a.target.point) throw new SourceError(`${subject}: "between" joins two named things, not "${nameTarget(a.target)}"`, line);
+  if (!follows(tokens, a.next, 'and') || !tokens[a.next + 1]) {
+    throw new SourceError(`${subject}: "between ${nameTarget(a.target)}" names one thing — \`between ${nameTarget(a.target)} and …\``, line);
+  }
+  const b = readOneTarget(tokens, a.next + 1, subject, line, true);
+  if (b.target.point) throw new SourceError(`${subject}: "between" joins two named things, not "${nameTarget(b.target)}"`, line);
+  // An `and` after the pair starts the next target of the placement, as after any other.
+  let next = b.next;
+  let listed = b.listed;
+  const point: PointExpr = { kind: 'between', a: a.target, b: b.target };
+  if (!listed && follows(tokens, next, 'at')) {
+    const written = tokens[next + 1]?.text.replace(/,$/, '') ?? '';
+    const value = fractionValue(written);
+    if (value === undefined || value < 0 || value > 1) {
+      throw new SourceError(`${subject}: "between … at" takes a fraction of the way from the first, such as at 1/3 — not "${written}"`, line);
+    }
+    point.at = value;
+    point.atWritten = written;
+    listed = tokens[next + 1]!.text.endsWith(',');
+    next += 2;
+  }
+  if (!listed && follows(tokens, next, '(') && tokens[next + 1]?.text === 'span:') {
+    const value = tokens[next + 2]?.text;
+    if (value !== 'both' || !follows(tokens, next + 3, ')')) {
+      throw new SourceError(`${subject}: a region between two things takes (span: both) — not (span: ${value ?? ''})`, line);
+    }
+    point.span = 'both';
+    next += 4;
+  }
+  return { target: { name: describePoint(point), point }, next, listed };
+}
+
+/** `down from a and left from b`, each line from a thing or one of its sides. */
+function readCrossing(tokens: Token[], at: number, subject: string, line: number): { target: PlacementTarget; next: number; listed: boolean } {
+  const first = readWay(tokens, at, subject, line);
+  if (!follows(tokens, first.next, 'and') || !tokens[first.next + 1] || !follows(tokens, first.next + 2, 'from')) {
+    throw new SourceError(
+      `${subject}: "${first.way} from ${nameTarget(first.target)}" is one line, and a point is where two meet — ` +
+        `add the other, as in \`${first.way} from ${nameTarget(first.target)} and ${first.way === 'up' || first.way === 'down' ? 'left' : 'down'} from …\``,
+      line,
+    );
+  }
+  const second = readWay(tokens, first.next + 1, subject, line);
+  const vertical = (way: Way) => way === 'up' || way === 'down';
+  if (vertical(first.way) === vertical(second.way)) {
+    throw new SourceError(
+      `${subject}: "${first.way} from ${nameTarget(first.target)} and ${second.way} from ${nameTarget(second.target)}" are two ` +
+        `${vertical(first.way) ? 'up-and-down' : 'level'} lines, which never meet at one point — make one of them ` +
+        `${vertical(first.way) ? 'left or right' : 'up or down'}`,
+      line,
+    );
+  }
+  const point: PointExpr = {
+    kind: 'from',
+    lines: [
+      { way: first.way, target: first.target },
+      { way: second.way, target: second.target },
+    ],
+  };
+  return { target: { name: describePoint(point), point }, next: second.next, listed: second.listed };
+}
+
+function readWay(tokens: Token[], at: number, subject: string, line: number): { way: Way; target: PlacementTarget; next: number; listed: boolean } {
+  const way = tokens[at]!.text as Way;
+  if (!(WAYS as readonly string[]).includes(way) || !follows(tokens, at + 1, 'from')) {
+    throw new SourceError(`${subject}: a point from two things reads \`down from a and left from b\``, line);
+  }
+  const target = tokens[at + 2];
+  if (!target || target.quoted || isAttrKey(target)) {
+    throw new SourceError(`${subject}: "${way} from" names no thing`, line);
+  }
+  const read = readOneTarget(tokens, at + 2, subject, line, true);
+  if (read.target.point || read.target.fraction) {
+    throw new SourceError(`${subject}: "${way} from" starts from a thing or one of its parts, not "${nameTarget(read.target)}"`, line);
+  }
+  return { way, target: read.target, next: read.next, listed: read.listed };
 }
 
 /**
@@ -1757,5 +2290,22 @@ function partAfter(tokens: Token[], at: number, partFirst = false): Part | undef
   if (!token || token.quoted || !isPart(token.text)) return undefined;
   if (follows(tokens, at + 1, 'of')) return undefined;
   if (!partFirst && follows(tokens, at + 1, 'even')) return undefined;
+  // `right of a  center 12 right of b center`: a part followed by a distance
+  // and a direction opens the next placement, one measured from this box's part.
+  if (opensPartPlacement(tokens, at)) return undefined;
   return token.text;
+}
+
+/** Whether a part word here opens `center 12 right of …` rather than naming the part of a target before it. */
+function opensPartPlacement(tokens: Token[], at: number): boolean {
+  const distance = tokens[at + 1];
+  const direction = tokens[at + 2];
+  return (
+    distance !== undefined &&
+    !distance.quoted &&
+    /^-?\d*\.?\d+(px)?$/.test(distance.text) &&
+    direction !== undefined &&
+    !direction.quoted &&
+    isDirection(direction.text)
+  );
 }

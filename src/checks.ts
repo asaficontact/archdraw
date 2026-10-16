@@ -115,7 +115,7 @@ export function findings(layout: Layout, checks: Checks): Finding[] {
 function textOverflows(layout: Layout): Finding[] {
   const found: Finding[] = [];
   for (const node of layout.nodes) {
-    if (node.body.kind !== 'shape') continue;
+    if (node.body.kind !== 'shape' || node.guide) continue;
     const text = node.textBox;
     if (text.width <= 0 || text.height <= 0) continue;
     const place = node.textAttrs['place'];
@@ -192,7 +192,8 @@ function nodeOverlaps(layout: Layout): Finding[] {
   };
 
   const pairs: Array<{ earlier: LayoutNode; later: LayoutNode; width: number; height: number }> = [];
-  const sorted = [...layout.nodes].sort((a, b) => a.x - b.x);
+  // A guide box draws nothing, so nothing drawn can cover it or be covered by it.
+  const sorted = layout.nodes.filter((node) => !node.guide).sort((a, b) => a.x - b.x);
   let active: LayoutNode[] = [];
   for (const node of sorted) {
     active = active.filter((other) => other.x + other.width > node.x + EPSILON);

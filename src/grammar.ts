@@ -69,10 +69,10 @@ export interface Span {
  * it. A word missing here is a word that draws in the plain color, which is a
  * dull page rather than a wrong one.
  */
-export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram', 'default', 'icon'] as const;
+export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram', 'default', 'icon', 'point', 'region', 'guide'] as const;
 
 /** Statements whose second word declares a name. `diagram` has none. */
-const DECLARES_NAME = ['node', 'style', 'icon'];
+const DECLARES_NAME = ['node', 'style', 'icon', 'point', 'region'];
 
 /**
  * Every word that says something about where a thing goes. Assembled from the
@@ -96,6 +96,13 @@ export const RELATION_WORDS: string[] = [
   'even',
   'with',
   'between',
+  // Points (design.org 4): a fraction of the way, a point from two things,
+  // a region's corners.
+  'down',
+  'up',
+  'across',
+  'from',
+  'to',
 ];
 
 /** Longest first, so `above-left` is not read as `above` followed by `-left`. */

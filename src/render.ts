@@ -20,7 +20,7 @@ import { describeAxis } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
-import { joinedToText, type Layout, type LayoutEdge, type LayoutNode, type LayoutPass, type LineLook } from './model.js';
+import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LayoutPass, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
 import { searchRoute, type SearchEnd, type SearchGate, type SearchWall } from './search.js';
 import { plain, type Line, type Run } from './text.js';
@@ -29,6 +29,8 @@ export interface RenderOptions {
   measurer?: Measurer;
   fontSize?: number;
   theme?: Theme;
+  /** Draw the guides (`--guides`). Absent: what the file's `diagram guides:` says. */
+  guides?: boolean;
 }
 
 
@@ -61,19 +63,39 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     ...(words !== undefined && { text: themeColor(words, base) }),
   };
 
-  const body: string[] = [];
-  for (const root of layout.roots) {
-    body.push(drawNode(root, theme, measurer, fontSize, layout.markup));
-  }
+  // Guides are shown by the viewer (`--guides`), or by a file that explains
+  // its own construction (`diagram guides: show`).
+  const guides: Guides = {
+    shown: options.guides ?? layout.diagram['guides'] === 'show',
+    color: theme.secondary.color,
+    looks: layout.guideLooks,
+  };
+  // A shown guide line is dashed in the guide color, unless `default guide
+  // edge` or its own words say otherwise. Nothing about where it goes changes.
+  const edges = layout.edges.map((edge) => {
+    if (!edge.guide || !guides.shown) return edge;
+    const look = guides.looks.edge;
+    const pattern = edge.attrs['line.pattern'] ?? look['line.pattern'] ?? 'dashed';
+    return {
+      ...edge,
+      look: { ...edge.look, pattern: pattern as LineLook['pattern'] },
+      appearance: { ...edge.appearance, line: edge.attrs['line'] ?? look['line'] ?? guides.color },
+    };
+  });
+  const hidden = (edge: LayoutEdge) => edge.guide === true && !guides.shown;
+
+  const boxes = layout.roots.flatMap((root) => drawNode(root, theme, measurer, fontSize, layout.markup, guides));
+  const marks = layout.marks.map((mark) => ({ mark, item: { key: mark.name, svg: markSvg(mark, theme, guides) } }));
+  const lines: Drawn[] = [];
   // Everything the boxes cover. Edges are added to it as they are drawn.
   let ink: Extent = { minX: 0, minY: 0, maxX: layout.width, maxY: layout.height };
   // Endpoints are planned for every edge at once, because where an edge meets a
   // side depends on what else meets that same side. Corridors come after, for
   // the same reason in the other direction: which lane of a gap an edge takes
   // is ordered by where its ends turned out to be.
-  const ends = planEndpoints(layout.edges, measurer, fontSize);
-  const corridors = planCorridors(layout.edges, ends);
-  const routes = planWays(layout.edges, layout.nodes, ends, corridors, measurer, fontSize);
+  const ends = planEndpoints(edges, measurer, fontSize);
+  const corridors = planCorridors(edges, ends);
+  const routes = planWays(edges, layout.nodes, ends, corridors, measurer, fontSize);
   // A curved line sweeps along its way, kept off every other line: off the
   // sweeps already drawn, and off the ways of those still to come. Routes are
   // in the order they were placed, inside lanes first, so a line outside
@@ -95,7 +117,7 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     sweeps.set(edge, d);
     swept.push(traceOf(`d="${d}"`));
   }
-  const drawn = layout.edges.map((edge) =>
+  const drawnAll = edges.map((edge) =>
     drawEdge(
       edge,
       ends.get(edge)!,
@@ -108,6 +130,8 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
       layout.markup,
     ),
   );
+  // A hidden guide line is routed, and shapes the others as any line does, but draws nothing.
+  const drawn = drawnAll.filter((one) => !hidden(one.edge));
   placeTexts(drawn, layout.nodes);
   // A line with a `crossing:` style is cut where it crosses an earlier one, and
   // the jump drawn over the cut. The cut is a mask rather than a break in the
@@ -131,9 +155,12 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
         edge.ink = union(edge.ink, grow(extentOfPoints([crossing.at]), crossing.reach + edge.edge.look.thickness));
       }
     }
-    body.push(linked(parts.join('\n'), edge.edge.attrs['url']));
+    lines.push({ key: `edge ${edges.indexOf(edge.edge)}`, svg: linked(parts.join('\n'), edge.edge.attrs['url']) });
     ink = union(ink, grow(edge.ink, layout.margin));
   }
+  const body = order(boxes, marks, lines, layout.depths)
+    .map((item) => item.svg)
+    .filter((svg) => svg.length > 0);
 
   // An edge's geometry is measured rather than solved for, so the resolver sized
   // the canvas from the boxes alone. A curve out of a `top` side, or a text
@@ -148,7 +175,8 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
 
   // One marker for each mark in each line color the drawing actually uses.
   const markers = new Map<string, [Mark, string]>();
-  for (const edge of layout.edges) {
+  for (const edge of edges) {
+    if (hidden(edge)) continue;
     const color = lineOf(edge.appearance, theme, theme.edge);
     for (const mark of [edge.marks.from, edge.marks.to]) {
       if (mark !== 'none') markers.set(markerId(mark, color), [mark, color]);
@@ -251,34 +279,74 @@ function holdsContents(node: LayoutNode): boolean {
   return node.children.some((child) => child !== node.heading && !joinedToText(child));
 }
 
+/**
+ * One thing in the drawing sequence: a node's own ink, a line, a point or a
+ * region. `depth:` moves these (design.org 8.4).
+ */
+interface Drawn {
+  /** A node's, point's or region's name, or `edge <n>` for the nth edge. */
+  key: string;
+  svg: string;
+  node?: LayoutNode;
+}
+
+/** What shown guides need to know: whether they are shown, their color, and each kind's look. */
+interface Guides {
+  shown: boolean;
+  color: string;
+  looks: Layout['guideLooks'];
+}
+
+/** The dash a shown guide is drawn with, so construction is told apart from the picture. */
+const GUIDE_DASH = '4 3';
+
+/**
+ * A node and everything inside it, in drawing order: the node's own ink, then
+ * each child's. Each node's ink is its own item, wrapped in its own `<a>`, so
+ * a destination never encloses a child's.
+ */
 function drawNode(
   node: LayoutNode,
   theme: Theme,
   measurer: Measurer,
   fontSize: number,
   markup: Record<string, string>,
+  guides: Guides,
   inherited?: string,
-): string {
+): Drawn[] {
   const url = node.attrs['url'] ?? inherited;
-  const { own, kids } = nodeSvg(node, theme, measurer, fontSize, markup, url);
-  return [linked(own.join('\n'), url), ...kids]
-    .filter((part) => part.length > 0)
-    .join('\n');
+  let own: string[] = [];
+  if (!node.guide) {
+    own = nodeSvg(node, theme, measurer, fontSize, markup);
+  } else if (guides.shown) {
+    // A shown guide: its outline dashed in the guide color, unfilled, and its
+    // text in the same color, unless `default guide node` or its own words say otherwise.
+    const look = guides.looks.node;
+    const said = (key: string) => node.attrs[key] ?? look[key];
+    const shown: LayoutNode = {
+      ...node,
+      appearance: { ...node.appearance, fill: said('fill') ?? 'none', border: said('border') ?? guides.color },
+      textAttrs: { ...node.textAttrs, color: node.textAttrs['color'] ?? look['text.color'] ?? guides.color },
+    };
+    own = nodeSvg(shown, theme, measurer, fontSize, markup).map((part) =>
+      part.replace(/ stroke="([^"]*)"/g, (all, color: string) => (color === 'none' ? all : `${all} stroke-dasharray="${GUIDE_DASH}"`)),
+    );
+    if (node.body.kind === 'icon') own = [`  <g opacity="0.5">`, ...own, '  </g>'];
+  }
+  return [
+    { key: node.name, node, svg: linked(own.join('\n'), url) },
+    ...node.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
+  ];
 }
 
-/**
- * What a node draws, in two pieces: its own ink and its children's. They are
- * kept apart so the node's `<a>` can wrap what is the node's without
- * swallowing what is a child's.
- */
+/** What a node draws of its own, without its children, which are drawn as items of their own. */
 function nodeSvg(
   node: LayoutNode,
   theme: Theme,
   measurer: Measurer,
   fontSize: number,
   markup: Record<string, string>,
-  url: string | undefined,
-): { own: string[]; kids: string[] } {
+): string[] {
   // A note is set smaller than a box text by default, and `size:` overrides
   // that on anything. Only this node's own text takes the size — children are
   // drawn by their own call and carry whatever they say themselves.
@@ -291,13 +359,12 @@ function nodeSvg(
   // container, are drawn.
   if (node.body.kind === 'none') {
     const style = textStyleFor(node.textAttrs, node.line, 'start', 'center');
-    const kids = node.children.map((child) => drawNode(child, theme, measurer, fontSize, markup, url));
     // With no fill of its own, its text reads on whatever box it sits in:
     // a badge's heading text on a box filled theme-primary is that box's text.
     let behind = node.parent;
     while (behind && behind.body.kind === 'none') behind = behind.parent;
     const onFill = behind ? textOnFill(behind.appearance['fill'] ?? '', theme) : undefined;
-    return { kids, own: [sized(
+    return [sized(
       textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
         color: textColorOf(node.textAttrs, theme, onFill ?? theme.text),
         align: style.align,
@@ -305,7 +372,7 @@ function nodeSvg(
       }),
       size,
       fontSize,
-    )] };
+    )];
   }
 
   const glyphSide = ICON_LINES * textHeight;
@@ -330,12 +397,11 @@ function nodeSvg(
         ),
       );
     }
-    return { own: drawn, kids: [] };
+    return drawn;
   }
 
   const outline = node.body.outline;
   const parts: string[] = [];
-  const kids: string[] = [];
   const face = faceOf(node);
   // A node with children is colored as a backdrop however they are placed,
   // except its heading, which is its title: a badged box with nothing else in
@@ -423,11 +489,119 @@ function nodeSvg(
       fontSize,
     ),
   );
-  for (const child of node.children) {
-    kids.push(drawNode(child, theme, measurer, fontSize, markup, url));
-  }
+  return parts;
+}
 
-  return { own: parts, kids };
+/**
+ * A named point or region (design.org 8.1, 8.3). A region is a light tint
+ * with a quiet border, thin, at about half strength, solid, in the theme's
+ * primary color; a point is a dot. A guide is drawn only when guides are
+ * shown, dashed and unfilled in the guide color.
+ */
+function markSvg(mark: LayoutMark, theme: Theme, guides: Guides): string {
+  const said = (key: string) => mark.appearance[key] ?? (mark.guide ? guides.looks[mark.kind][key] : undefined);
+  if (mark.guide && !guides.shown) return '';
+  const color = (value: string | undefined) => (value === undefined ? undefined : themeColor(value, theme));
+  if (mark.kind === 'point') {
+    const fill = color(said('fill')) ?? (mark.guide ? guides.color : theme.edge);
+    return `  <circle cx="${round(mark.x)}" cy="${round(mark.y)}" r="3" fill="${fill}"/>`;
+  }
+  // A region with no height or no width, such as one between two corners on
+  // a line, is drawn as that line: a rectangle of no size draws nothing.
+  const flat = mark.width < 0.5 || mark.height < 0.5;
+  const box = flat
+    ? `d="M${round(mark.x)} ${round(mark.y)}L${round(mark.x + mark.width)} ${round(mark.y + mark.height)}"`
+    : `x="${round(mark.x)}" y="${round(mark.y)}" width="${round(mark.width)}" height="${round(mark.height)}" rx="4"`;
+  const shape = flat ? 'path' : 'rect';
+  if (mark.guide) {
+    const fill = color(said('fill')) ?? 'none';
+    const border = color(said('border')) ?? guides.color;
+    return `  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"/>`;
+  }
+  const fill = color(said('fill'));
+  const border = color(said('border'));
+  return (
+    `  <${shape} ${box} fill="${fill ?? theme.primary.color}"${fill === undefined ? ' fill-opacity="0.12"' : ''}` +
+    ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"/>`
+  );
+}
+
+/**
+ * The drawing sequence (design.org 8.3, 8.4). By default a container comes
+ * before its own children, boxes before regions, regions before lines, and
+ * points last. A region goes in front of every box it doesn't name and behind
+ * what it does: the boxes it names, with what is inside them, are drawn after
+ * it. Then each `depth:` moves one thing, with what is inside it, to just
+ * before or just after another, and moves nothing else.
+ */
+function order(boxes: Drawn[], marks: { mark: LayoutMark; item: Drawn }[], lines: Drawn[], depths: DepthStatement[]): Drawn[] {
+  const inside = (item: Drawn, names: Set<string>) => {
+    for (let at = item.node; at; at = at.parent) if (names.has(at.name)) return true;
+    return names.has(item.key);
+  };
+  let sequence = [...boxes];
+  for (const { mark, item } of marks) {
+    if (mark.kind !== 'region') continue;
+    const names = new Set(mark.names);
+    const named = sequence.filter((drawn) => inside(drawn, names));
+    sequence = [...sequence.filter((drawn) => !inside(drawn, names)), item, ...named];
+  }
+  sequence.push(...lines, ...marks.filter(({ mark }) => mark.kind === 'point').map(({ item }) => item));
+
+  const position = (key: string) => sequence.findIndex((drawn) => drawn.key === key);
+  /** A thing and what is inside it, which move together. */
+  const group = (key: string) => {
+    const head = sequence.find((drawn) => drawn.key === key)!;
+    return sequence.filter((drawn) => drawn === head || (head.node !== undefined && drawn.node !== undefined && drawn.node !== head.node && inside(drawn, new Set([key]))));
+  };
+  const holds = (outer: string, inner: string) => group(outer).some((drawn) => drawn.key === inner && drawn.key !== outer);
+
+  for (const depth of depths) {
+    for (const clause of depth.clauses) {
+      for (const name of clause.names) {
+        if (holds(depth.subject, name) && clause.way === 'in front of') {
+          throw new SourceError(
+            `${depth.written}: depth: in front of "${name}", which is inside it — a container is drawn before its own children`,
+            depth.line,
+          );
+        }
+        if (holds(name, depth.subject) && clause.way === 'behind') {
+          throw new SourceError(
+            `${depth.written}: depth: behind "${name}", which holds it — a container is drawn before its own children`,
+            depth.line,
+          );
+        }
+      }
+      const targets = clause.names.filter((name) => !holds(depth.subject, name) && !holds(name, depth.subject));
+      if (targets.length === 0) continue;
+      const moving = group(depth.subject);
+      sequence = sequence.filter((drawn) => !moving.includes(drawn));
+      const at =
+        clause.way === 'behind'
+          ? Math.min(...targets.map(position))
+          : Math.max(...targets.map((name) => position(name))) + 1;
+      sequence.splice(at, 0, ...moving);
+    }
+  }
+  // A later move can undo an earlier one only where the file asks for a cycle.
+  for (const depth of depths) {
+    for (const clause of depth.clauses) {
+      for (const name of clause.names) {
+        if (holds(depth.subject, name) || holds(name, depth.subject)) continue;
+        const holdsNow = clause.way === 'behind' ? position(depth.subject) < position(name) : position(depth.subject) > position(name);
+        if (holdsNow) continue;
+        const others = depths
+          .filter((other) => other !== depth && (other.subject === name || other.clauses.some((c) => c.names.includes(depth.subject))))
+          .map((other) => `${other.written}'s depth: ${other.clauses.map((c) => `${c.way} ${c.names.join(', ')}`).join(', ')} (line ${other.line})`);
+        throw new SourceError(
+          `${depth.written}: depth: ${clause.way} "${name}" can't hold together with ${others.length > 0 ? others.join(' and ') : 'the other depth: statements'} — ` +
+            'they ask for a circle in the drawing order, so one of them has to go',
+          depth.line,
+        );
+      }
+    }
+  }
+  return sequence;
 }
 
 /**

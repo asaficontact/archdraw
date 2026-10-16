@@ -138,6 +138,36 @@ export interface LayoutNode {
 
   /** What the author said about where it goes, kept so diagnostics can quote the source back. */
   placements: Placement[];
+  /** `guide node`: placed, holding and placed against as any node, drawn only when guides are shown. */
+  guide?: boolean;
+  line: number;
+}
+
+/**
+ * A named point or region, worked out on the page (design.org 4.5, 8.3). A
+ * point is a dot; a region a tinted rectangle, drawn behind what it names.
+ */
+export interface LayoutMark {
+  kind: 'point' | 'region';
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The things its definition names, directly or through other points and regions. */
+  names: string[];
+  appearance: Attrs;
+  guide: boolean;
+  line: number;
+}
+
+/** `depth: behind b, in front of c` on one thing, read into its clauses (design.org 8.4). */
+export interface DepthStatement {
+  /** What moves: a node's or a mark's name, or `edge <n>` for the nth edge. */
+  subject: string;
+  /** The subject as written, for quoting back. */
+  written: string;
+  clauses: { way: 'behind' | 'in front of'; names: string[] }[];
   line: number;
 }
 
@@ -163,6 +193,8 @@ export interface LayoutEdge {
   look: LineLook;
   attrs: Attrs;
   appearance: Attrs;
+  /** `guide edge`: drawn only when guides are shown. */
+  guide?: boolean;
   line: number;
 }
 
@@ -205,6 +237,12 @@ export interface Layout {
    * a `top` side does exactly that, and the canvas has to grow to hold it.
    */
   margin: number;
+  /** Named points and regions, in the order written. */
+  marks: LayoutMark[];
+  /** Every `depth:`, in the order written. */
+  depths: DepthStatement[];
+  /** How a shown guide of each kind looks: `default guide node` and the rest. */
+  guideLooks: Record<'node' | 'edge' | 'point' | 'region', Attrs>;
 }
 
 /**

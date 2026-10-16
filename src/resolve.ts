@@ -1,5 +1,7 @@
-import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, Stmt } from './ast.js';
+import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, PlacementTarget, PointStmt, RegionStmt, Stmt } from './ast.js';
 import {
+  POINT_KEYS,
+  REGION_KEYS,
   ALL_ATTR_KEYS,
   ATTR_KEYS,
   MARKS,
@@ -25,7 +27,7 @@ import { SourceError } from './errors.js';
 import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import { joinedToText, type Layout, type LayoutEdge, type LayoutNode, type LayoutPass, type LayoutPassage, type LineLook } from './model.js';
+import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LayoutPass, type LayoutPassage, type LineLook } from './model.js';
 import { gapPixels, Placer, type Layout as ChildLayout, type NodeFacts, type TitlePlace } from './place.js';
 
 /**
@@ -207,11 +209,15 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   // gaps are being worked out. Nothing here reads geometry.
   const edges = buildEdges(doc.statements, byName, styles, defaults);
 
+  const named = collectNamed(doc.statements, byName);
   const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
-  new Placer(roots, byName, facts).run();
-  normalize(nodes, margin);
+  const placer = new Placer(roots, byName, facts, named);
+  placer.run();
+  const marks = buildMarks(named, placer.placeNamed(), styles);
+  normalize(nodes, marks, margin);
 
-  const extent = bounds(nodes);
+  const extent = bounds(nodes, marks);
+  const look = (kind: 'node' | 'edge' | 'point' | 'region') => defaults.get(`guide ${kind}`) ?? {};
 
   return {
     nodes,
@@ -222,7 +228,103 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
     width: Math.ceil(extent.maxX + margin),
     height: Math.ceil(extent.maxY + margin),
     margin,
+    marks,
+    depths: collectDepths(doc.statements, byName, named),
+    guideLooks: { node: look('node'), edge: look('edge'), point: look('point'), region: look('region') },
   };
+}
+
+// --- named points and regions ------------------------------------------------
+
+/** Every `point` and `region`, by name. A name is one thing's: a node's, a point's or a region's. */
+function collectNamed(statements: Stmt[], byName: Map<string, LayoutNode>): Map<string, PointStmt | RegionStmt> {
+  const named = new Map<string, PointStmt | RegionStmt>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'point' && stmt.kind !== 'region') continue;
+    const node = byName.get(stmt.name);
+    if (node) throw new SourceError(`${stmt.kind} "${stmt.name}" has the name of a node, declared on line ${node.line} — give it another`, stmt.line);
+    const earlier = named.get(stmt.name);
+    if (earlier) throw new SourceError(`"${stmt.name}" is declared twice, here and as a ${earlier.kind} on line ${earlier.line}`, stmt.line);
+    named.set(stmt.name, stmt);
+  }
+  return named;
+}
+
+/** The names a point or region is worked out from, following named points and regions through. */
+function namesIn(target: PlacementTarget, named: Map<string, PointStmt | RegionStmt>, seen = new Set<string>()): string[] {
+  const point = target.point;
+  const direct = !point
+    ? [target.name]
+    : point.kind === 'between'
+      ? [point.a.name, point.b.name]
+      : point.kind === 'from'
+        ? point.lines.map((line) => line.target.name)
+        : namesIn(point.from, named, seen);
+  const found: string[] = [];
+  for (const name of direct) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    found.push(name);
+    const stmt = named.get(name);
+    if (!stmt) continue;
+    const parts = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
+    for (const part of parts) found.push(...namesIn(part, named, seen));
+  }
+  return found;
+}
+
+function buildMarks(
+  named: Map<string, PointStmt | RegionStmt>,
+  placed: Map<string, { x: number; y: number; width: number; height: number }>,
+  styles: Map<string, Attrs>,
+): LayoutMark[] {
+  const marks: LayoutMark[] = [];
+  for (const [name, stmt] of named) {
+    const at = placed.get(name)!;
+    const appearance = appearanceOf(stmt.attrs, styles, stmt.line);
+    const allowed: readonly string[] = stmt.kind === 'point' ? POINT_KEYS : REGION_KEYS;
+    for (const key of Object.keys(appearance)) {
+      if (!allowed.includes(topKey(key))) {
+        throw new SourceError(
+          `${stmt.kind} "${name}" wears a style with ${topKey(key)}:, which a ${stmt.kind} doesn't have — it takes ${allowed.map((k) => `${k}:`).join(', ')}`,
+          stmt.line,
+        );
+      }
+    }
+    const targets = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
+    const names = [...new Set(targets.flatMap((target) => namesIn(target, named)))];
+    marks.push({ kind: stmt.kind, name, ...at, names, appearance, guide: stmt.guide === true, line: stmt.line });
+  }
+  return marks;
+}
+
+/** Every `depth:`, read into its clauses, each name checked to be something drawn. */
+function collectDepths(
+  statements: Stmt[],
+  byName: Map<string, LayoutNode>,
+  named: Map<string, PointStmt | RegionStmt>,
+): DepthStatement[] {
+  const depths: DepthStatement[] = [];
+  let edge = 0;
+  for (const stmt of statements) {
+    if (stmt.kind === 'edge') edge += 1;
+    if (stmt.kind !== 'node' && stmt.kind !== 'edge' && stmt.kind !== 'point' && stmt.kind !== 'region') continue;
+    const written = stmt.attrs['depth'];
+    if (written === undefined) continue;
+    const subject = stmt.kind === 'edge' ? `edge ${edge - 1}` : stmt.name;
+    const said = stmt.kind === 'edge' ? `edge ${stmt.from} ${stmt.arrow} ${stmt.to}` : `"${stmt.name}"`;
+    const clauses = written.split('; ').map((clause) => {
+      const way = clause.startsWith('behind ') ? 'behind' : 'in front of';
+      const names = clause.slice(way.length + 1).split(', ');
+      for (const name of names) {
+        if (byName.has(name) || named.has(name)) continue;
+        throw new SourceError(`${said}: depth: ${way} "${name}", which does not exist`, stmt.line);
+      }
+      return { way, names } as DepthStatement['clauses'][number];
+    });
+    depths.push({ subject, written: said, clauses, line: stmt.line });
+  }
+  return depths;
 }
 
 // --- pass one: the containment tree -----------------------------------------
@@ -434,6 +536,7 @@ function buildTree(
       attrs: stmt.attrs,
       appearance,
       placements: stmt.placements,
+      ...(stmt.guide ? { guide: true } : {}),
       line: stmt.line,
     };
 
@@ -830,6 +933,12 @@ function checkStyleKeys(statements: Stmt[]): void {
           stmt.line,
         );
       }
+      if (topKey(key) === 'depth') {
+        throw new SourceError(
+          `style "${stmt.name}" has depth:, which moves one thing in the drawing order, so it is written on that thing`,
+          stmt.line,
+        );
+      }
       if (ALL_ATTR_KEYS.includes(topKey(key))) continue;
       throw new SourceError(
         `style "${stmt.name}" has ${key}: ${value}, which is not an attribute. ` +
@@ -1005,6 +1114,7 @@ function buildEdges(
       look: lineLook(stmt.attrs, appearance, what, stmt.line),
       attrs: stmt.attrs,
       appearance,
+      ...(stmt.guide ? { guide: true } : {}),
       line: stmt.line,
     });
   }
@@ -1155,27 +1265,27 @@ function linesFor(text: string, textAttrs: Attrs, subject: string, line: number)
   return lines.flatMap((part) => wrapLine(part, columns));
 }
 
-function bounds(nodes: LayoutNode[]) {
+function bounds(nodes: LayoutNode[], marks: LayoutMark[]) {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const node of nodes) {
-    minX = Math.min(minX, node.x);
-    minY = Math.min(minY, node.y);
-    maxX = Math.max(maxX, node.x + node.width);
-    maxY = Math.max(maxY, node.y + node.height);
+  for (const box of [...nodes, ...marks]) {
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
   }
   return { minX, minY, maxX, maxY };
 }
 
 /** Shift everything so the diagram starts at the margin rather than wherever the anchor fell. */
-function normalize(nodes: LayoutNode[], margin: number): void {
-  const { minX, minY } = bounds(nodes);
+function normalize(nodes: LayoutNode[], marks: LayoutMark[], margin: number): void {
+  const { minX, minY } = bounds(nodes, marks);
   const dx = margin - minX;
   const dy = margin - minY;
-  for (const node of nodes) {
-    node.x += dx;
-    node.y += dy;
+  for (const box of [...nodes, ...marks]) {
+    box.x += dx;
+    box.y += dy;
   }
 }
