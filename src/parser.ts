@@ -1325,6 +1325,20 @@ function readPlacement(
       throw new SourceError(`${subject}: an alignment reads "${written} <node>"`, line);
     }
     const read = readTargets(tokens, from + 2, subject, written, line);
+    const axis = SIDE_AXIS[side ?? 'center'];
+    // `top even with server left`: the left side runs server's whole height, so
+    // it has no one height to meet, and drawing it as `server`'s top would make
+    // a second spelling of `top even with server`.
+    for (const target of read.targets) {
+      if (!target.part || !isSideWord(target.part) || SIDE_AXIS[target.part] === axis) continue;
+      const [near, far] = axis === 'y' ? ['top', 'bottom'] : ['left', 'right'];
+      throw new SourceError(
+        `${subject}: "${target.name} ${target.part}" is the whole of ${target.name}'s ${target.part} side, ` +
+          `so "${written}" has no one ${axis === 'y' ? 'height' : 'place across'} to meet there — ` +
+          `name ${target.name} ${near}, center or ${far}, or a corner such as ${target.name} ${axis === 'y' ? `${near}-${target.part}` : `${target.part}-${near}`}`,
+        line,
+      );
+    }
     const modifiers = readModifiers(tokens, read.next, subject, `${written} ${listTargets(read.targets)}`, line);
     // An alignment shares a line outright, so there is no distance in it for
     // a gap to set. Refusing rather than dropping it, for the reason unknown
@@ -1339,7 +1353,7 @@ function readPlacement(
     return {
       placement: {
         kind: 'align',
-        axis: SIDE_AXIS[side ?? 'center'],
+        axis,
         side: side ?? 'center',
         targets: read.targets,
         line,
