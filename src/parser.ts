@@ -440,6 +440,25 @@ function readAttr(
     const removed = tokens.length - taken.tokens.length;
     return read.next + removed;
   }
+  if (key === 'join-with') {
+    // `join-with: hub text` or `join-with: hub.icon` — what the node moves with.
+    const value = tokens[at + 1];
+    const own = subject.replace(/^node "|"$/g, '');
+    const parent = own.includes('.') ? own.slice(0, own.lastIndexOf('.')) : 'hub';
+    if (!value || value.quoted || isAttrKey(value) || value.text === '(') {
+      throw new SourceError(
+        `${subject}: join-with: names what it moves with — its container's text, such as join-with: ${parent} text, or a sibling`,
+        line,
+      );
+    }
+    const part = tokens[at + 2];
+    if (part && !part.quoted && part.text === 'text') {
+      setOnce(attrs, 'join-with', `${value.text} text`, subject, line);
+      return at + 3;
+    }
+    setOnce(attrs, 'join-with', value.text, subject, line);
+    return at + 2;
+  }
   if (key === 'layout') {
     // `layout: column (gap: 0, widths: match)` — a value, then its settings.
     // `centers: 5 apart` reads its last word as part of the value.
@@ -714,21 +733,83 @@ function refuseTextKey(attrs: Attrs, subject: string, where: string, line: numbe
  * placements, so they take no colon. Returns the tokens with those words taken
  * out, leaving the bracket's keyed settings for `readBracket`.
  */
-function takeTitlePlace(tokens: Token[], open: number, subject: string, line: number): { tokens: Token[]; place?: string } {
-  if (!follows(tokens, open, '(')) return { tokens };
+function takeTitlePlace(
+  tokens: Token[],
+  open: number,
+  subject: string,
+  line: number,
+): { tokens: Token[]; place?: string; placements: Placement[] } {
+  if (!follows(tokens, open, '(')) return { tokens, placements: [] };
   const first = tokens[open + 1];
   const word = first && !first.quoted ? first.text.replace(/,$/, '') : undefined;
   if (word === 'center') {
-    return { tokens: [...tokens.slice(0, open + 1), ...tokens.slice(open + 2)], place: 'center' };
+    return { ...takeTitlePlacements([...tokens.slice(0, open + 1), ...tokens.slice(open + 2)], open, subject, line), place: 'center' };
   }
   if (word === 'inside' || word === 'on' || word === 'outside') {
     const side = tokens[open + 2]?.text.replace(/,$/, '');
     if (!side || !['top', 'bottom', 'left', 'right'].includes(side)) {
       throw new SourceError(`${subject}: a title sits ${word} a side — top, bottom, left or right`, line);
     }
-    return { tokens: [...tokens.slice(0, open + 1), ...tokens.slice(open + 3)], place: `${word} ${side}` };
+    return {
+      ...takeTitlePlacements([...tokens.slice(0, open + 1), ...tokens.slice(open + 3)], open, subject, line),
+      place: `${word} ${side}`,
+    };
   }
-  return { tokens };
+  return takeTitlePlacements(tokens, open, subject, line);
+}
+
+/**
+ * The placements in a title's bracket, against the box's own children:
+ * `(right even with ranged.d, top even with ranged.a)` (design.org 7.2). Each
+ * comma-separated item that opens a placement is read as one and taken out;
+ * the rest stay for the bracket's keys.
+ */
+function takeTitlePlacements(tokens: Token[], open: number, subject: string, line: number): { tokens: Token[]; placements: Placement[] } {
+  let close = open + 1;
+  let depth = 0;
+  for (; close < tokens.length; close += 1) {
+    const text = tokens[close]!.quoted ? '' : tokens[close]!.text;
+    if (text === '(') depth += 1;
+    if (text === ')') {
+      if (depth === 0) break;
+      depth -= 1;
+    }
+  }
+  const inner = tokens.slice(open + 1, close);
+  const items: Token[][] = [];
+  let item: Token[] = [];
+  for (const token of inner) {
+    const comma = !token.quoted && token.text.endsWith(',') && token.text.length > 1;
+    item.push(comma ? { ...token, text: token.text.slice(0, -1) } : token);
+    if (comma || (!token.quoted && token.text === ',')) {
+      if (!token.quoted && token.text === ',') item.pop();
+      items.push(item);
+      item = [];
+    }
+  }
+  if (item.length > 0) items.push(item);
+
+  const placements: Placement[] = [];
+  const kept: Token[][] = [];
+  for (const each of items) {
+    const head = each[0];
+    if (head && !isAttrKey(head) && startsPlacement(head)) {
+      for (let at = 0; at < each.length; ) {
+        const read = readPlacement(each, at, line, subject);
+        placements.push(read.placement);
+        at = read.next;
+      }
+    } else {
+      kept.push(each);
+    }
+  }
+  if (placements.length === 0) return { tokens, placements };
+  const rejoined = kept.flatMap((each, index) =>
+    index < kept.length - 1 && each.length > 0
+      ? [...each.slice(0, -1), { ...each[each.length - 1]!, text: `${each[each.length - 1]!.text},` }]
+      : each,
+  );
+  return { tokens: [...tokens.slice(0, open + 1), ...rejoined, ...tokens.slice(close)], placements };
 }
 
 /**
@@ -769,6 +850,7 @@ function parseNode(head: Token[], line: number): NodeStmt {
   const taken = takeTitlePlace(head, open, subject, line);
   head = taken.tokens;
   const place = taken.place;
+  const titlePlacements = taken.placements;
   const bracket = readBracket(head, open, TEXT_KEYS, {
     subject,
     what: 'the text',
@@ -784,6 +866,7 @@ function parseNode(head: Token[], line: number): NodeStmt {
     text,
     statedText: textToken !== undefined,
     textAttrs: place === undefined ? bracket.values : { ...bracket.values, place },
+    ...(titlePlacements.length > 0 ? { titlePlacements } : {}),
     placements: tail.placements,
     attrs: tail.attrs,
     line,
@@ -1133,6 +1216,9 @@ function defaultRefusal(kind: DefaultTarget, key: string): string {
   if (key === 'url') return `and a destination belongs to one thing rather than to every one of a kind`;
   if (key === 'heading') {
     return "and a heading names one node's own child, so it is written on that node";
+  }
+  if (key === 'join-with') {
+    return 'and a join names the one thing a node moves with, so it is written on that node';
   }
   if (key === 'icon') {
     return 'and a picture cannot hold children, so an icon is a leaf\'s word — write `default leaf  icon:`';
@@ -1597,21 +1683,30 @@ function readTargets(
       throw new SourceError(`${subject}: "${placement}" names no node`, line);
     }
     refuseNameMark(token, `${subject}: "${token.joined ?? token.text}"`, line);
-    const listed = token.text.endsWith(',') && token.text.length > 1;
+    let listed = token.text.endsWith(',') && token.text.length > 1;
     const name = listed ? token.text.slice(0, -1) : token.text;
     i += 1;
 
     // A part can only follow a name the author did not already close with a
-    // comma — `a, b` is two targets and the comma says so.
-    const part = listed ? undefined : partAfter(tokens, i, partFirst);
-    if (part) i += 1;
+    // comma — `a, b` is two targets and the comma says so. The part may carry
+    // the comma itself: `right of a text, b`.
+    let part = listed ? undefined : partAfter(tokens, i, partFirst);
+    if (part) {
+      i += 1;
+    } else if (!listed) {
+      part = partBeforeComma(tokens[i]);
+      if (part) {
+        i += 1;
+        listed = true;
+      }
+    }
     targets.push(part === undefined ? { name } : { name, part });
 
     if (follows(tokens, i, 'and')) {
       i += 1;
       continue;
     }
-    comma = listed ? name : undefined;
+    comma = listed ? (part === undefined ? name : `${name} ${part}`) : undefined;
     if (listed) continue;
     return { targets, next: i };
   }
@@ -1636,6 +1731,13 @@ function readTargets(
  * reading is an error anyway; and `on` already fixes both axes, so an edge
  * alignment after a partless `on hub` would contradict it.
  */
+/** A part word closed with a comma, `text,`, which ends this target and promises another. */
+function partBeforeComma(token: Token | undefined): Part | undefined {
+  if (!token || token.quoted || !token.text.endsWith(',')) return undefined;
+  const word = token.text.slice(0, -1);
+  return isPart(word) ? word : undefined;
+}
+
 function partAfter(tokens: Token[], at: number, partFirst = false): Part | undefined {
   const token = tokens[at];
   if (!token || token.quoted || !isPart(token.text)) return undefined;

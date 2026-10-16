@@ -47,11 +47,12 @@ node shelf.two "second"  below shelf.one (gap: tight)  style: plain
 
 // A box is usually the size of its own text. A picture beside the text is two
 // lines tall, and lining the picture's top or bottom up with the text's puts
-// the text at the top or bottom of the box.
+// the text at the top or bottom of the box. Joined to the text, the picture and
+// the text are centered in the box together.
 node tall "Top"     right of shelf (gap: wide)  style: plain
-node tall.disk  icon: disk  1 right of tall text  top even with tall text
+node tall.disk  icon: disk  1 right of tall text  top even with tall text  join-with: tall text
 node deep "Bottom"  below tall (gap: tight)  style: plain
-node deep.disk  icon: disk  1 right of deep text  bottom even with deep text
+node deep.disk  icon: disk  1 right of deep text  bottom even with deep text  join-with: deep text
 
 // `size` and `wrap` are properties of the text too. The wrap is a count of
 // characters, not a distance: it says how much fits on a line and nothing

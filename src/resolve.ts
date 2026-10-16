@@ -9,6 +9,7 @@ import {
   CONTENT_WIDTHS,
   LINE_VALUES,
   describePlacement,
+  nameTarget,
 } from './ast.js';
 import {
   DEFAULT_FONT_SIZE,
@@ -24,7 +25,7 @@ import { SourceError } from './errors.js';
 import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, LineLook } from './model.js';
+import { joinedToText, type Layout, type LayoutEdge, type LayoutNode, type LayoutPass, type LayoutPassage, type LineLook } from './model.js';
 import { gapPixels, Placer, type Layout as ChildLayout, type NodeFacts, type TitlePlace } from './place.js';
 
 /**
@@ -332,12 +333,16 @@ function buildTree(
 
   // Which nodes will hold children has to be known before any node is built,
   // because it decides which default a node wears, and its children are
-  // declared after it. A child is a dotted name; the heading doesn't count
-  // (design.org 9.3), so a badged box with nothing else in it is a leaf, and
-  // neither `badge:` nor anything a default says can change the answer.
+  // declared after it. A child is a dotted name; the heading and what is
+  // joined to the text don't count (design.org 5.6, 9.3), so a badged box with
+  // nothing else in it is a leaf, and neither `badge:` nor anything a default
+  // says can change the answer.
   const headings = new Map<string, string>();
+  const joins = new Map<string, string>();
   for (const stmt of statements) {
-    if (stmt.kind === 'node' && stmt.attrs['heading'] !== undefined) headings.set(stmt.name, stmt.attrs['heading']);
+    if (stmt.kind !== 'node') continue;
+    if (stmt.attrs['heading'] !== undefined) headings.set(stmt.name, stmt.attrs['heading']);
+    if (stmt.attrs['join-with'] !== undefined) joins.set(stmt.name, stmt.attrs['join-with']);
   }
   const parents = new Set<string>();
   for (const stmt of statements) {
@@ -345,7 +350,7 @@ function buildTree(
     const cut = stmt.name.lastIndexOf('.');
     if (cut === -1) continue;
     const parent = stmt.name.slice(0, cut);
-    if (headings.get(parent) !== stmt.name) parents.add(parent);
+    if (headings.get(parent) !== stmt.name && !joinsTextByName(stmt.name, parent, joins)) parents.add(parent);
   }
 
   for (const stmt of statements) {
@@ -355,8 +360,8 @@ function buildTree(
       const owner = badges.get(stmt.name);
       if (owner !== undefined) {
         throw new SourceError(
-          `"${stmt.name}" is part of the heading that "${owner}"'s badge: writes out. Drop badge: from ` +
-            `"${owner}" and write the heading yourself with heading:, or give this node another name`,
+          `"${stmt.name}" is the picture that "${owner}"'s badge: writes out. Drop badge: from ` +
+            `"${owner}" and write the child yourself, joined to the text, or give this node another name`,
           stmt.line,
         );
       }
@@ -425,6 +430,7 @@ function buildTree(
       textBox: { x: 0, y: 0, width: 0, height: 0 },
       textSide: 'left',
       textAttrs,
+      ...(stmt.titlePlacements ? { titlePlacements: stmt.titlePlacements } : {}),
       attrs: stmt.attrs,
       appearance,
       placements: stmt.placements,
@@ -458,8 +464,8 @@ function buildTree(
     nodes.push(node);
     byName.set(stmt.name, node);
 
-    // `badge: X` is a shorthand for a heading of the text with the picture
-    // beside it (design.org 5.9). Read from the merged appearance, so a style
+    // `badge: X` is a shorthand for a picture beside the text, joined to it
+    // (design.org 5.9). Read from the merged appearance, so a style
     // or a default carrying a badge gives one to every box wearing it. Only a
     // box has a text to be beside; the other kinds refuse the word in
     // `checkAttrs`, and a style's is unused.
@@ -467,16 +473,32 @@ function buildTree(
     if (named !== undefined && body.kind === 'shape') {
       if (headed) {
         throw new SourceError(
-          `"${stmt.name}" has badge: and heading:, which are two headings — badge: is a heading of the text ` +
-            'and the picture, so keep one',
+          `"${stmt.name}" has badge: and heading:, but a box with a heading has no text of its own for the ` +
+            'badge to sit beside — put the picture in the heading, or drop heading:',
           stmt.line,
         );
       }
-      for (const made of writeOutBadge(node, named, icons)) {
-        badges.set(made.name, node.name);
-        nodes.push(made);
-        byName.set(made.name, made);
-      }
+      const made = writeOutBadge(node, named, icons);
+      badges.set(made.name, node.name);
+      nodes.push(made);
+      byName.set(made.name, made);
+    }
+  }
+
+  for (const node of nodes) {
+    const written = node.attrs['join-with'];
+    if (written !== undefined) node.joinWith = joinTarget(node, written, byName);
+  }
+  for (const node of nodes) checkJoinedPlacements(node);
+  // A title is placed against the box's own children, so a box needs some.
+  for (const node of nodes) {
+    const [placement] = node.titlePlacements ?? [];
+    if (placement && node.children.length === 0) {
+      throw new SourceError(
+        `"${node.name}"'s title is placed "${describePlacement(placement)}", but "${node.name}" has no children ` +
+          'for it to be placed against — a title is placed against the box it names, by its sides, or against its children',
+        placement.line,
+      );
     }
   }
 
@@ -510,81 +532,131 @@ function buildTree(
 /**
  * What `badge:` writes out, which is this:
  *
- *     node <self>  heading: <self>.head
- *     node <self>.head  ""  shape: none
- *     node <self>.head.text  "<the text>"  shape: none
- *     node <self>.head.badge  icon: X  1 right of <self>.head.text
+ *     node <self>.badge  icon: X  1 right of <self> text  join-with: <self> text
  *
- * The node's text moves into the heading, which keeps where it was said to sit.
- * The picture is set at the text's size, so it is two of its lines tall. With
- * no text, the picture is the whole heading.
+ * The text stays the node's own, and the two are one unit placed by the text's
+ * position words. The picture is set at the text's size, so it is two of its
+ * lines tall. An empty text takes no room, and that includes the unit beside
+ * it, so the picture alone is the unit.
  */
-function writeOutBadge(node: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode[] {
-  const { place, align, ...ownText } = node.textAttrs;
-  const synthetic = (name: string, parent: LayoutNode, attrs: Attrs, text: string, textAttrs: Attrs): LayoutNode => {
-    const body = bodyFor(attrs, attrs, node.line, icons);
-    const made: LayoutNode = {
-      name,
-      kind: KIND_OF_BODY[body.kind],
-      body,
-      text,
-      lines: linesFor(text, textAttrs, `"${node.name}"`, node.line),
-      children: [],
-      parent,
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-      inset: 0,
-      deckTexts: [],
-      headerHeight: 0,
-      reach: { left: 0, top: 0, right: 0, bottom: 0 },
-      banded: false,
-      textBox: { x: 0, y: 0, width: 0, height: 0 },
-      textSide: 'center',
-      textAttrs,
-      attrs,
-      appearance: attrs,
-      placements: [],
-      line: node.line,
-    };
-    parent.children.push(made);
-    return made;
-  };
-
-  const head = synthetic(`${node.name}.head`, node, { shape: 'none' }, '', {});
-  const made = [head];
-  // A title's align: says both where along its side it sits and how its lines
-  // sit against each other (design.org 7.2), so the text keeps the second.
-  const lineAlign = align === 'left' || align === 'right' ? align : 'center';
+function writeOutBadge(node: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode {
+  const attrs: Attrs = { icon: named };
+  const size = node.textAttrs['size'];
+  const textAttrs: Attrs = size === undefined ? {} : { size };
+  const body = bodyFor(attrs, attrs, node.line, icons);
   const hasText = node.lines.some((line) => plain(line).length > 0);
-  const size = ownText['size'];
-  const picture = synthetic(`${node.name}.head.badge`, head, { icon: named }, '', size === undefined ? {} : { size });
-  if (hasText) {
-    // A text with no box is set small by default, as an aside; this one is
-    // the box's own text, so it keeps the box text's size.
-    const text = synthetic(`${node.name}.head.text`, head, { shape: 'none' }, node.text, {
-      size: 'normal',
-      ...ownText,
-      align: lineAlign,
-    });
-    // The text first: it anchors the heading, and the picture is beside it.
-    head.children.reverse();
-    picture.placements = [
-      { kind: 'offset', direction: 'right', targets: [{ name: text.name }], gap: '1', line: node.line },
-    ];
-    made.push(text);
-  }
-  made.push(picture);
-
-  node.text = '';
-  node.lines = linesFor('', {}, `"${node.name}"`, node.line);
-  node.textAttrs = {
-    ...(place !== undefined ? { place } : {}),
-    ...(align !== undefined ? { align } : {}),
+  const made: LayoutNode = {
+    name: `${node.name}.badge`,
+    kind: KIND_OF_BODY[body.kind],
+    body,
+    text: '',
+    lines: linesFor('', textAttrs, `"${node.name}"`, node.line),
+    children: [],
+    parent: node,
+    joinWith: 'text',
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    inset: 0,
+    deckTexts: [],
+    headerHeight: 0,
+    reach: { left: 0, top: 0, right: 0, bottom: 0 },
+    banded: false,
+    textBox: { x: 0, y: 0, width: 0, height: 0 },
+    textSide: 'center',
+    textAttrs,
+    attrs,
+    appearance: attrs,
+    placements: [
+      {
+        kind: 'offset',
+        direction: 'right',
+        targets: [{ name: node.name, part: 'text' }],
+        ...(hasText ? { gap: '1' } : {}),
+        line: node.line,
+      },
+    ],
+    line: node.line,
   };
-  node.heading = head;
+  node.children.push(made);
   return made;
+}
+
+/**
+ * Whether a child is joined to its container's text, directly or through
+ * siblings, judged from the statements before any node is built. A sibling
+ * `badge:` writes out is joined to the text.
+ */
+function joinsTextByName(name: string, parent: string, joins: Map<string, string>): boolean {
+  const seen = new Set<string>();
+  for (let at: string | undefined = name; at !== undefined && !seen.has(at); at = joins.get(at)) {
+    seen.add(at);
+    const target = joins.get(at);
+    if (target === `${parent} text`) return true;
+    if (target === `${parent}.badge` && !joins.has(target)) return true;
+  }
+  return false;
+}
+
+/** What `join-with:` names: the node's container's text, or a sibling it is placed against. */
+function joinTarget(node: LayoutNode, written: string, byName: Map<string, LayoutNode>): LayoutNode | 'text' {
+  const parent = node.parent;
+  const [name, part] = written.split(' ') as [string, string | undefined];
+  const example = parent ? `join-with: ${parent.name} text` : 'join-with: hub text';
+  if (part === 'text') {
+    if (!parent || name !== parent.name) {
+      throw new SourceError(
+        `"${node.name}" has join-with: ${written}, but a node joins only its own container's text — ` +
+          (parent ? `write ${example}, or join a sibling` : 'a top-level node has no container, so place it without joining'),
+        node.line,
+      );
+    }
+  } else {
+    const named = byName.get(name);
+    if (!named) throw new SourceError(`"${node.name}" has join-with: ${written}, which does not exist`, node.line);
+    if (named === node || named.parent !== parent) {
+      throw new SourceError(
+        `"${node.name}" has join-with: ${written}, but a node joins ${parent ? `its container's text, such as ${example}, or ` : ''}a sibling it is placed against`,
+        node.line,
+      );
+    }
+  }
+  const placedAgainst = node.placements.some((placement) =>
+    placement.targets.some((target) =>
+      part === 'text' ? target.name === name && target.part === 'text' : target.name === name,
+    ),
+  );
+  if (!placedAgainst) {
+    throw new SourceError(
+      `"${node.name}" has join-with: ${written}, but none of its placements is against "${written}", so nothing fixes ` +
+        `where it sits beside it — place it against "${written}", such as 1 right of ${written}`,
+      node.line,
+    );
+  }
+  return part === 'text' ? 'text' : byName.get(name)!;
+}
+
+/**
+ * A node joined to its container's text is placed only against the text and
+ * what is joined to it, so the unit has one shape wherever the text's position
+ * words put it.
+ */
+function checkJoinedPlacements(node: LayoutNode): void {
+  const parent = node.parent;
+  if (!parent || !joinedToText(node)) return;
+  for (const placement of node.placements) {
+    for (const target of placement.targets) {
+      if (target.name === parent.name && target.part === 'text') continue;
+      const named = parent.children.find((child) => child.name === target.name);
+      if (named && joinedToText(named)) continue;
+      throw new SourceError(
+        `"${node.name}" is joined to "${parent.name} text", so it is placed only against the text and what is ` +
+          `joined to it, but "${describePlacement(placement)}" is against "${nameTarget(target)}" — drop it, or the join`,
+        placement.line,
+      );
+    }
+  }
 }
 
 /**
@@ -749,6 +821,12 @@ function checkStyleKeys(statements: Stmt[]): void {
       if (topKey(key) === 'heading') {
         throw new SourceError(
           `style "${stmt.name}" has heading:, which names one node's own child, so it is written on that node`,
+          stmt.line,
+        );
+      }
+      if (topKey(key) === 'join-with') {
+        throw new SourceError(
+          `style "${stmt.name}" has join-with:, which names the one thing a node moves with, so it is written on that node`,
           stmt.line,
         );
       }

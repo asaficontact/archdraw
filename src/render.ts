@@ -20,7 +20,7 @@ import { describeAxis } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
-import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LineLook } from './model.js';
+import { joinedToText, type Layout, type LayoutEdge, type LayoutNode, type LayoutPass, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
 import { searchRoute, type SearchEnd, type SearchGate, type SearchWall } from './search.js';
 import { plain, type Line, type Run } from './text.js';
@@ -246,9 +246,9 @@ function linked(svg: string, url: string | undefined): string {
   return `  <a href=${quote(escapeXml(url))} target="_blank" rel="noopener">\n${svg}\n  </a>`;
 }
 
-/** Whether a node holds anything besides its heading: what a theme draws as a container. */
+/** Whether a node holds anything besides its heading and what is joined to its text: what a theme draws as a container. */
 function holdsContents(node: LayoutNode): boolean {
-  return node.children.some((child) => child !== node.heading);
+  return node.children.some((child) => child !== node.heading && !joinedToText(child));
 }
 
 function drawNode(
@@ -402,12 +402,15 @@ function nodeSvg(
   // left of the band; both then read `at` for where it really goes. Where the
   // text sits is the resolver's answer, in `textBox`; only the alignment of
   // its lines against each other is read here. This follows the band, not the
-  // colors: a badged leaf is a backdrop but its text still centers.
+  // colors: a badged leaf is a backdrop but its text still centers. A box
+  // whose only children are joined to its text is a leaf, and its lines center
+  // against each other as a leaf's do.
+  const titled = node.banded && container;
   const textStyle = textStyleFor(
     node.textAttrs,
     node.line,
-    node.banded ? 'start' : 'middle',
-    node.banded ? 'top-left' : 'center',
+    titled ? 'start' : 'middle',
+    titled ? 'top-left' : 'center',
   );
   parts.push(
     sized(

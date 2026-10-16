@@ -397,6 +397,8 @@ export interface NodeStmt {
   statedText: boolean;
   /** The text's bracketed modifiers, as written. Usually empty. */
   textAttrs: Attrs;
+  /** Placements in the text's bracket, against the box's own children (design.org 7.2). */
+  titlePlacements?: Placement[];
   /** Everything the author said about where this goes. Empty for the anchor. */
   placements: Placement[];
   attrs: Attrs;
@@ -590,9 +592,9 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
-  icon: ['style', 'overlap', 'icon', 'text', 'url'],
-  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'shape', 'text', 'url'],
+  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
+  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url'],
+  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url'],
   edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
 };
 

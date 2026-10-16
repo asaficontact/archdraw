@@ -22,7 +22,7 @@ import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget
 import { describePlacement, nameTarget, PART_SIDES } from './ast.js';
 import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
-import type { LayoutNode } from './model.js';
+import { joinedToText, type LayoutNode } from './model.js';
 import { type Dimension, SIZE_KEYS, type SizeExpr, type SpanSide, storedSize } from './size.js';
 
 /** A stretch of one axis. */
@@ -128,6 +128,10 @@ export class Placer {
   private readonly laid = new Map<string, { start: number; size?: number }>();
   /** The band a laid-out container's children are aligned in, across its layout. */
   private readonly bands = new Map<string, number>();
+  /** Where a node joined to its container's text starts, measured from the text's start. */
+  private readonly unitStarts = new Map<string, number>();
+  /** The stretch a container's text and what is joined to it cover, measured from the text's start. */
+  private readonly units = new Map<string, Extent>();
 
   constructor(
     private readonly roots: LayoutNode[],
@@ -195,7 +199,7 @@ export class Placer {
     const key = `${node.name}\n${axis}`;
     const known = memo.get(key);
     if (known !== undefined) return known;
-    const kind = memo === this.starts ? 'start' : memo === this.owns ? 'own' : 'size';
+    const kind = memo === this.starts ? 'start' : memo === this.owns ? 'own' : memo === this.unitStarts ? 'unit' : 'size';
     const worked = this.guard(`${kind}\n${key}`, node, axis, undefined, work);
     memo.set(key, worked);
     return worked;
@@ -264,6 +268,8 @@ export class Placer {
     const parent = node.parent;
     // A heading goes where its container's title would.
     if (parent && parent.heading === node) return this.frame(parent, axis).titleStart;
+    // Joined to the text: wherever the text goes, the same distance from it.
+    if (parent && joinedToText(node)) return this.frame(parent, axis).textStart + this.unitStart(node, axis);
     if (parent && this.facts.get(parent)!.layout) return this.inLayout(node, axis).start;
     if (node.placements.length === 0) {
       // The anchor of its frame. A container's title, when something is
@@ -271,6 +277,16 @@ export class Placer {
       // there is exactly one.
       return 0;
     }
+    return this.placed(node, axis);
+  }
+
+  /** Where a node joined to its container's text starts, from the text's start. */
+  private unitStart(node: LayoutNode, axis: Axis): number {
+    return this.remember(this.unitStarts, node, axis, () => this.placed(node, axis));
+  }
+
+  /** A box's start from its own placements. */
+  private placed(node: LayoutNode, axis: Axis): number {
     const statements = this.statements(node, axis);
     if (statements.length === 0) return this.lone(node, axis);
     if (statements.length === 1) {
@@ -417,7 +433,7 @@ export class Placer {
     if (own && placement.targets.some((target) => target.part === 'text')) {
       // One unit, as beside any text of one's own. An empty text takes no
       // room, and that includes the gap beside it.
-      return this.hasTitle(parent) ? UNIT : 0;
+      return parent.heading !== undefined || this.facts.get(parent)!.hasText ? UNIT : 0;
     }
     if (placement.written === 'inside') return own ? this.facts.get(parent)!.padding : GAPS['tight']!;
     return GAPS['normal']!;
@@ -456,10 +472,25 @@ export class Placer {
       // The top level is placed on the page, so anything anywhere can be named.
       whole = { start: this.page(named, axis), size: this.size(named, axis) };
       if (target.part === 'text') text = this.textOf(named, axis, whole.start);
+    } else if (joinedToText(node)) {
+      // Joined to the text: measured from the text's start, so the unit has
+      // one shape wherever the text's position words put it. The tree pass
+      // allowed nothing else to be named.
+      if (named === parent) {
+        whole = { start: 0, size: 0 };
+        text = { start: 0, size: this.textSize(parent, axis) };
+      } else {
+        whole = { start: this.unitStart(named, axis), size: this.size(named, axis) };
+        if (target.part === 'text') text = this.textOf(named, axis, whole.start);
+      }
     } else if (named === parent && target.part === 'text' && this.anchoredOnTitle(parent)) {
-      // The title anchors the frame, so it is at the origin, known without the box.
+      // The title anchors the frame: the text is at the origin, known without the box.
       whole = { start: 0, size: 0 };
-      text = { start: 0, size: this.titleSize(parent, axis) };
+      text = { start: 0, size: this.textSize(parent, axis) };
+    } else if (named.parent === parent && joinedToText(named) && this.anchoredOnTitle(parent)) {
+      // Joined to the text, which is at the origin.
+      whole = { start: this.unitStart(named, axis), size: this.size(named, axis) };
+      if (target.part === 'text') text = this.textOf(named, axis, whole.start);
     } else if (named === parent.heading) {
       // The heading is the title: at the origin when something is placed
       // against it, and otherwise wherever the title goes.
@@ -470,7 +501,7 @@ export class Placer {
     } else if (named === parent) {
       const frame = this.frame(parent, axis);
       whole = { start: frame.boxStart, size: frame.boxSize };
-      if (target.part === 'text') text = { start: frame.titleStart, size: frame.titleSize };
+      if (target.part === 'text') text = { start: frame.textStart, size: frame.textSize };
     } else if (named.parent === parent) {
       if (this.framed(named) && !this.framed(node)) {
         throw new SourceError(
@@ -505,7 +536,7 @@ export class Placer {
     const facts = this.facts.get(node)!;
     if (node.children.length > 0) {
       const frame = this.frame(node, axis);
-      return { start: start + frame.titleStart - frame.boxStart, size: frame.titleSize };
+      return { start: start + frame.textStart - frame.boxStart, size: frame.textSize };
     }
     const box = facts.textBox;
     const natural = axis === 'x' ? facts.natural.width : facts.natural.height;
@@ -533,12 +564,46 @@ export class Placer {
     const parent = node.parent;
     if (!parent) return false;
     return node.placements.some((placement) =>
-      placement.targets.some(
-        (target) =>
-          (target.name === parent.name && target.part === 'text') ||
-          (parent.heading !== undefined && target.name === parent.heading.name),
-      ),
+      placement.targets.some((target) => {
+        if (target.name === parent.name && target.part === 'text') return true;
+        if (parent.heading !== undefined && target.name === parent.heading.name) return true;
+        const named = this.byName.get(target.name);
+        return named !== undefined && named.parent === parent && joinedToText(named);
+      }),
     );
+  }
+
+  /** The stretch a container's text and what is joined to it cover, measured from the text's start. */
+  private unit(node: LayoutNode, axis: Axis): Extent {
+    const key = `${node.name}\n${axis}`;
+    const known = this.units.get(key);
+    if (known) return known;
+    const worked = this.guard(`unit\n${key}`, node, axis, undefined, () => {
+      const hasText = this.facts.get(node)!.hasText;
+      let low = hasText ? 0 : Infinity;
+      let high = hasText ? this.textSize(node, axis) : -Infinity;
+      for (const child of node.children) {
+        if (!joinedToText(child)) continue;
+        const start = this.unitStart(child, axis);
+        const reach = this.reachOf(child, axis);
+        low = Math.min(low, start - reach.low);
+        high = Math.max(high, start + this.size(child, axis) + reach.high);
+      }
+      return low > high ? { start: 0, size: 0 } : { start: low, size: high - low };
+    });
+    this.units.set(key, worked);
+    return worked;
+  }
+
+  /** Whether anything is joined to a container's text. */
+  private hasUnit(node: LayoutNode): boolean {
+    return node.children.some((child) => joinedToText(child));
+  }
+
+  /** How big a container's own text is on one axis, without what is joined to it. */
+  private textSize(node: LayoutNode, axis: Axis): number {
+    const facts = this.facts.get(node)!;
+    return facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0;
   }
 
   /** Whether a container's title anchors its frame, because a child is placed against it. */
@@ -546,30 +611,35 @@ export class Placer {
     return this.contentOf(node).some((child) => this.onTitle(child));
   }
 
-  /** The children a container's box is the outline of: not its heading, and not those placed against the box. */
+  /**
+   * The children a container's box is the outline of, besides its title: not
+   * its heading, not what is joined to its text, and not those placed against
+   * the box.
+   */
   private contentOf(node: LayoutNode): LayoutNode[] {
-    return node.children.filter((child) => child !== node.heading && !this.framed(child));
+    return node.children.filter((child) => child !== node.heading && !joinedToText(child) && !this.framed(child));
   }
 
-  /** Whether a node has a title: its text, or a heading. */
+  /** Whether a node has a title: its text, what is joined to it, or a heading. */
   private hasTitle(node: LayoutNode): boolean {
-    return node.heading !== undefined || this.facts.get(node)!.hasText;
+    return node.heading !== undefined || this.facts.get(node)!.hasText || this.hasUnit(node);
   }
 
-  /** How big a container's title is on one axis: its heading, or its text. */
+  /** How big a container's title is on one axis: its heading, or its text with what is joined to it. */
   private titleSize(node: LayoutNode, axis: Axis): number {
     if (node.heading) return this.size(node.heading, axis);
-    const facts = this.facts.get(node)!;
-    return facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0;
+    if (this.hasUnit(node)) return this.unit(node, axis).size;
+    return this.textSize(node, axis);
   }
 
   /**
-   * Where a container's title sits. A heading over nothing else is centered,
-   * as a leaf's text is, unless its bracket says where.
+   * Where a container's title sits. A heading, or a text with something joined
+   * to it, over nothing else is centered, as a leaf's text is, unless its
+   * bracket says where.
    */
   private titleOf(node: LayoutNode): TitlePlace {
     const stated = node.textAttrs['place'] !== undefined;
-    if (node.heading && !stated && this.contentOf(node).length === 0) {
+    if ((node.heading || this.hasUnit(node)) && !stated && this.contentOf(node).length === 0) {
       return { how: 'center', side: 'center', along: 'center' };
     }
     return this.facts.get(node)!.title;
@@ -597,7 +667,7 @@ export class Placer {
       return pinned.size;
     }
     const parent = node.parent;
-    if (parent && parent.heading !== node && this.stretches(parent, axis)) {
+    if (parent && parent.heading !== node && !joinedToText(node) && this.stretches(parent, axis)) {
       const laid = this.inLayout(node, axis);
       if (laid.size !== undefined) return laid.size;
     }
@@ -784,12 +854,15 @@ export class Placer {
     // against the children by its side.
     const across = title.side === 'top' || title.side === 'bottom' ? 'x' : 'y';
     const gapToTitle = axis === 'x' ? HEADER_GAP : HEADER_GAP;
+    // With something joined to the text, the title is the whole unit, and the
+    // text sits inside it; a frame the title anchors has the text at its origin.
+    const unit = this.hasUnit(node) ? this.unit(node, axis) : undefined;
     let titleStart: number;
     if (anchoredOnTitle || empty) {
-      titleStart = 0;
+      titleStart = unit ? unit.start : 0;
       if (empty && !anchoredOnTitle && hasTitle) {
-        low = 0;
-        high = titleSize;
+        low = titleStart;
+        high = titleStart + titleSize;
       }
     } else if (title.how === 'center' || title.side === 'center') {
       titleStart = (low + high) / 2 - titleSize / 2;
@@ -807,6 +880,10 @@ export class Placer {
     } else {
       titleStart = 0;
     }
+    // A title placed against the box's own children on this axis goes there,
+    // and is content like a child: no row or column is kept for it.
+    const placedTitle = hasTitle ? this.titlePlaced(node, axis) : undefined;
+    if (placedTitle !== undefined) titleStart = placedTitle;
 
     const inBox = hasTitle && title.how !== 'outside';
     let boxLow = low;
@@ -826,7 +903,7 @@ export class Placer {
     }
 
     // Outside the border: placed off the finished box, so it never sizes it.
-    if (title.how === 'outside' && hasTitle && !anchoredOnTitle) {
+    if (title.how === 'outside' && hasTitle && !anchoredOnTitle && placedTitle === undefined) {
       if (axis === across) {
         titleStart =
           title.along === 'start'
@@ -841,7 +918,11 @@ export class Placer {
 
     // Grown evenly, so a centered title sits in the middle of its box, and a
     // centered title along a side sits in the middle of that side.
-    if (inBox && (title.how === 'center' || title.side === 'center' || (axis === across && title.along === 'center'))) {
+    if (
+      inBox &&
+      placedTitle === undefined &&
+      (title.how === 'center' || title.side === 'center' || (axis === across && title.along === 'center'))
+    ) {
       const middle = titleStart + titleSize / 2;
       const half = Math.max(middle - boxLow, boxHigh - middle);
       boxLow = middle - half;
@@ -864,7 +945,15 @@ export class Placer {
       boxLow -= inset;
       natural += inset;
     }
-    return { boxStart: boxLow, boxSize: natural, natural, titleStart, titleSize };
+    return {
+      boxStart: boxLow,
+      boxSize: natural,
+      natural,
+      titleStart,
+      titleSize,
+      textStart: unit ? titleStart - unit.start : titleStart,
+      textSize: unit ? this.textSize(node, axis) : titleSize,
+    };
   }
 
   /**
@@ -881,7 +970,7 @@ export class Placer {
     const across: Axis = title.side === 'top' || title.side === 'bottom' ? 'x' : 'y';
     const anchored = this.anchoredOnTitle(node);
     let shift = 0;
-    if (!anchored && title.how !== 'center' && title.side !== 'center') {
+    if (!anchored && title.how !== 'center' && title.side !== 'center' && !this.titleStates(node, axis)) {
       const toward = axis === across ? title.along : title.side === 'top' || title.side === 'left' ? 'start' : 'end';
       shift = toward === 'start' ? -extra / 2 : toward === 'end' ? extra / 2 : 0;
     }
@@ -890,7 +979,106 @@ export class Placer {
       boxStart: outline.boxStart - extra / 2,
       boxSize: outline.boxSize + extra,
       titleStart: outline.titleStart + shift,
+      textStart: outline.textStart + shift,
     };
+  }
+
+  /** The title's placements that state one axis. */
+  private titleStatementsOn(node: LayoutNode, axis: Axis): Placement[] {
+    return (node.titlePlacements ?? []).filter((placement) =>
+      placement.kind === 'offset'
+        ? component(placement.direction, axis) !== undefined
+        : placement.kind === 'align'
+          ? placement.axis === axis
+          : true,
+    );
+  }
+
+  /** Whether the title's bracket places it on this axis with a placement. */
+  private titleStates(node: LayoutNode, axis: Axis): boolean {
+    return this.titleStatementsOn(node, axis).length > 0;
+  }
+
+  /**
+   * Where a title placed against the box's own children starts on one axis,
+   * in the box's frame, or undefined when no placement states the axis and
+   * its side words place it (design.org 7.2). Each axis is stated once.
+   */
+  private titlePlaced(node: LayoutNode, axis: Axis): number | undefined {
+    const placements = this.titleStatementsOn(node, axis);
+    if (placements.length === 0) return undefined;
+    const subject = `"${node.name}"'s title`;
+    const said = placements.map((placement) => `"${describePlacement(placement)}"`).join(' and ');
+    const line = placements[0]!.line;
+    if (placements.length > 1) {
+      throw new SourceError(
+        `${subject} says where it goes ${AXIS_SAID[axis]} more than once: ${said}. Each axis is stated once — keep one`,
+        line,
+      );
+    }
+    // The side words state the axis across their side, and align: the axis
+    // along it; a placement may take whichever of the two they leave unsaid.
+    const place = node.textAttrs['place'];
+    const side = place?.split(' ')[1];
+    const across: Axis = side === 'left' || side === 'right' ? 'x' : 'y';
+    const words =
+      place === 'center'
+        ? ['x', 'y']
+        : [...(place !== undefined ? [across] : []), ...(node.textAttrs['align'] !== undefined ? [across === 'x' ? 'y' : 'x'] : [])];
+    if (words.includes(axis)) {
+      const written = [place, node.textAttrs['align'] !== undefined ? `align: ${node.textAttrs['align']}` : undefined]
+        .filter((one) => one !== undefined)
+        .join(', ');
+      throw new SourceError(
+        `${subject} says where it goes ${AXIS_SAID[axis]} twice: "${written}" and ${said}. Each axis is stated once — keep one`,
+        line,
+      );
+    }
+    const [placement] = placements as [Placement];
+    // A child placed against the title anchors the frame on the title, which
+    // a title placed against a child would move: a loop.
+    const onTitle = this.contentOf(node).find((child) => this.onTitle(child));
+    if (onTitle) {
+      const against = onTitle.placements.find((one) =>
+        one.targets.some((target) => target.name === node.name && target.part === 'text'),
+      ) ?? onTitle.placements[0]!;
+      throw new SourceError(
+        `these placements depend on each other in a circle: "${node.name}"'s title "${describePlacement(placement)}", ` +
+          `"${onTitle.name} ${describePlacement(against)}" — one of them has to be placed against something else`,
+        placement.line,
+      );
+    }
+    return this.guard(`title\n${node.name}\n${axis}`, node, axis, placement, () => {
+      let start = Infinity;
+      let end = -Infinity;
+      for (const target of placement.targets) {
+        const child = node.children.find((one) => one.name === target.name);
+        if (!child) {
+          throw new SourceError(
+            `${subject} is placed against "${target.name}", which is not one of "${node.name}"'s own children — ` +
+              'a title is placed against the box it names, by its sides, or against its children',
+            placement.line,
+          );
+        }
+        const whole = { start: this.start(child, axis), size: this.size(child, axis) };
+        const at =
+          target.part === 'text'
+            ? this.textOf(child, axis, whole.start)
+            : narrow(whole, target.part, axis, this.facts.get(child)!.circle, this.size(child, 'x'));
+        start = Math.min(start, at.start);
+        end = Math.max(end, at.start + at.size);
+      }
+      const size = this.titleSize(node, axis);
+      if (placement.kind === 'offset') {
+        const gap =
+          placement.gap !== undefined ? gapPixels(placement.gap, subject, placement.line) : GAPS['normal']!;
+        return component(placement.direction, axis) === 'after' ? end + gap : start - gap - size;
+      }
+      const along = placement.kind === 'align' ? sideAlong(placement.side) : 'center';
+      if (along === 'start') return start;
+      if (along === 'end') return end - size;
+      return (start + end) / 2 - size / 2;
+    });
   }
 
   /** The padded-in block of a circle on the other axis, which its diameter depends on as well. */
@@ -923,7 +1111,7 @@ export class Placer {
     if (known) return known;
     const layout = this.facts.get(parent)!.layout!;
     const main: Axis = layout.kind === 'column' ? 'y' : 'x';
-    const children = parent.children.filter((child) => child !== parent.heading);
+    const children = parent.children.filter((child) => child !== parent.heading && !joinedToText(child));
     const natural = (child: LayoutNode, on: Axis) => this.ownSize(child, on);
     if (axis !== main && this.stretches(parent, axis)) {
       for (const child of children) {
@@ -979,8 +1167,9 @@ export class Placer {
    */
   private checkAnchors(all: LayoutNode[], parent: LayoutNode | undefined): void {
     // A heading goes where the title would, and anchors nothing; the tree
-    // pass refused any placement on it.
-    const members = all.filter((member) => member !== parent?.heading);
+    // pass refused any placement on it. What is joined to the text goes with
+    // the title, placed against the text.
+    const members = all.filter((member) => member !== parent?.heading && !(parent && joinedToText(member)));
     if (parent && this.facts.get(parent)!.layout) {
       for (const child of members) {
         const [placement] = child.placements;
@@ -1039,7 +1228,7 @@ export class Placer {
     const x = this.frame(node, 'x');
     const y = this.frame(node, 'y');
     node.textBox = facts.hasText
-      ? { x: x.titleStart - x.boxStart, y: y.titleStart - y.boxStart, width: x.titleSize, height: y.titleSize }
+      ? { x: x.textStart - x.boxStart, y: y.textStart - y.boxStart, width: x.textSize, height: y.textSize }
       : { x: 0, y: 0, width: 0, height: 0 };
     node.banded = true;
     node.inset = node.deckTexts.length * DECK_STEP;
@@ -1080,8 +1269,12 @@ interface FrameAxis {
   boxSize: number;
   /** The box's size from its contents, which is its size unless something states another. */
   natural: number;
+  /** The title: the text, a heading, or the text with what is joined to it. */
   titleStart: number;
   titleSize: number;
+  /** The text alone, which is the title unless something is joined to it. */
+  textStart: number;
+  textSize: number;
 }
 
 function sideAlong(side: Side): 'start' | 'center' | 'end' {

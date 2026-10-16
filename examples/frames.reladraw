@@ -21,8 +21,10 @@ node band.b "north-east"  right of band.a (gap: 1)
 node band.c "south-west"  below band.a (gap: 1)
 node band.d "south-east"  below band.b (gap: 1)
 
-// `align:` puts the title along its side: here at the right end of the top.
-node ranged "Deployment" (inside top, align: right)  right of band (gap: wide)
+// A title may be placed against the box's own children, with the words any
+// child uses: here in the top-right corner, beside north-west, with no row of
+// its own.
+node ranged "Deployment" (right even with ranged.d, top even with ranged.a)  right of band (gap: wide)
 node ranged.a "north-west"
 node ranged.c "south-west"  below ranged.a (gap: 1)
 node ranged.d "south-east"  right of ranged.c (gap: 1)
@@ -51,9 +53,10 @@ node server.db "database"  below server.web (gap: 1)  left even with server.web
 node server.cache "cache"  below server.db (gap: 1)  left even with server.db
 node server.hot "hot"  right of server.db (gap: 1)  style: mark
 
-// Beside the text, the text and the mark centered in the box together.
-node fresh "Release notes" (inside left)  below column (gap: wide)
-node fresh.tag "new"  right of fresh text (gap: 1)  style: mark
+// Beside the text and joined to it, so the text and the mark are centered in
+// the box together.
+node fresh "Release notes"  below column (gap: wide)
+node fresh.tag "new"  right of fresh text (gap: 1)  join-with: fresh text  style: mark
 
 // On a corner rather than inside it: centered on the point, so it straddles
 // the edge.

@@ -46,11 +46,24 @@ export interface LayoutNode {
   parent?: LayoutNode;
   children: LayoutNode[];
   /**
-   * The child that is this box's heading (`heading:`, or the one `badge:`
-   * writes out): it sits where the title would, and the other children are
-   * arranged under it. It does not make the box a container to look at.
+   * The child that is this box's heading (`heading:`): it sits where the title
+   * would, and the other children are arranged under it. It does not make the
+   * box a container to look at.
    */
   heading?: LayoutNode;
+  /**
+   * What this node moves with (`join-with:`, or the child `badge:` writes
+   * out): its container's text, or a sibling. Those joined to the text,
+   * directly or through each other, are one unit with it, placed by the text's
+   * position words (design.org 5.6).
+   */
+  joinWith?: LayoutNode | 'text';
+  /**
+   * Placements in the title's bracket, against the box's own children: what
+   * places the title on the axes they state, in place of its side words
+   * (design.org 7.2).
+   */
+  titlePlacements?: Placement[];
 
   x: number;
   y: number;
@@ -192,4 +205,20 @@ export interface Layout {
    * a `top` side does exactly that, and the canvas has to grow to hold it.
    */
   margin: number;
+}
+
+/**
+ * Whether a node is joined to its container's text, directly or through
+ * siblings joined to it: one unit with the text, placed by the text's position
+ * words (design.org 5.6).
+ */
+export function joinedToText(node: LayoutNode): boolean {
+  const seen = new Set<LayoutNode>();
+  for (let at: LayoutNode | undefined = node; at && !seen.has(at); ) {
+    seen.add(at);
+    const target: LayoutNode | 'text' | undefined = at.joinWith;
+    if (target === 'text') return true;
+    at = target;
+  }
+  return false;
 }
