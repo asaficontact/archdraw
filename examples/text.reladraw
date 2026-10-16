@@ -3,35 +3,25 @@
 
 style plain  fill: theme-fill  border: theme-border
 
-// Nothing here says how far apart these two sit, so the gap is `normal`, sized
-// for two nodes to breathe and not to hold a word. The text runs over both.
-node parser   "Parser"                     style: plain
-node resolver "Resolver"  right of parser  style: plain
+// A `normal` gap is sized for two nodes to breathe, not to hold a word, so a
+// word that needs more is given it by stating the gap, here in units.
+node parser   "Parser"                           style: plain
+node resolver "Resolver"  right of parser (gap: 10)  style: plain
 edge parser -> resolver  "statements"  from: right  to: left
 
-// The same two placements with nothing on the edge, for comparison.
-node sink  "Sink"   below parser (gap: wide)  style: plain
-node quiet "Quiet"  right of sink       style: plain
-edge sink -> quiet  from: right  to: left
-
-// Going downward the text is only a line deep, so a normal gap holds it, and it
-// hangs out either side.
+// Going downward the text is only a line deep, and it hangs out either side.
 //
 // Written with `<-`, which draws the same picture as `writer -> disk`. It just
 // puts the node the line is about first. `from:` is still the first name
 // written, so it names Disk's side.
 node writer "Writer"  right of resolver (gap: wide)  style: plain
-node disk   "Disk"    below writer                  style: plain
+node disk   "Disk"    below writer (gap: wide)      style: plain
 edge disk <- writer  "flushed to disk"  from: top  to: bottom
 
-// A gap stated wide enough for the text.
-node roomy "Roomy"        below sink                                 style: plain
-node spare "Plenty spare"  right of roomy (gap: wide)  style: plain
-edge roomy -> spare  "fits"  from: right  to: left
-
-// Corner to corner, so there is no single gap the text sits in.
+// Corner to corner, the text sits at the middle of the line, so the gap is
+// stated on both axes.
 node high "High"  right of writer (gap: wide)  style: plain
-node low  "Low"   below high  right of high  style: plain
+node low  "Low"   below high (gap: wide)  right of high (gap: wide)  style: plain
 edge high -> low  "diagonal"
 
 
@@ -41,7 +31,7 @@ edge high -> low  "diagonal"
 
 style dim  text: (color: theme-muted)
 
-node shelf "Shelf" (inside bottom, align: right)  below roomy (gap: wide)  style: plain
+node shelf "Shelf" (inside bottom, align: right)  below disk (gap: wide)  left even with parser  style: plain
 node shelf.one "first"   style: plain
 node shelf.two "second"  below shelf.one (gap: tight)  style: plain
 
