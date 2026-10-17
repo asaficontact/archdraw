@@ -344,8 +344,18 @@ export const PLACEMENT_KEYS = ['gap'] as const;
  */
 export const CONTENTS_KEYS = ['widths', 'align'] as const;
 
-/** What `layout: column (…)` and `layout: row (…)` take in their bracket. */
-export const LAYOUT_KEYS = ['gap', 'widths', 'align', 'centers'] as const;
+/**
+ * What `layout: column (…)` and `layout: row (…)` take in their bracket.
+ * `align` is read only to be refused by name: it now means where along a side,
+ * and lining the children up is `align-children`.
+ */
+export const LAYOUT_KEYS = ['gap', 'widths', 'align-children', 'align', 'centers'] as const;
+
+/**
+ * Where `gather-children:` puts a container's children in its spare room: a
+ * side, a corner, or the middle.
+ */
+export const GATHER_PLACES = ['center', 'left', 'right', 'top', 'bottom', 'top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
 
 /**
  * What `widths:` may say. `natural` is the default and is today's behavior.
@@ -356,12 +366,11 @@ export const LAYOUT_KEYS = ['gap', 'widths', 'align', 'centers'] as const;
 export const CONTENT_WIDTHS = ['natural', 'match', 'fill'] as const;
 
 /**
- * Where the block of contents sits when it is narrower than the band. `right`
- * is accepted although no diagram has yet wanted it: refusing it would give
- * `align:` a different value set depending on which bracket it is in, which is
- * the divergence this scheme exists to remove.
+ * How `align-children:` lines laid-out children up with each other: in a
+ * column their left edges, middles or right edges; in a row their tops,
+ * middles or bottoms.
  */
-export const CONTENT_ALIGNMENTS = ['left', 'center', 'right'] as const;
+export const CHILD_ALIGNMENTS = { column: ['left', 'center', 'right'], row: ['top', 'center', 'bottom'] } as const;
 
 /** How a placement reads back in the author's own words, for error messages. */
 export function describePlacement(placement: Placement): string {
@@ -826,9 +835,9 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url', 'depth'],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url', 'depth'],
   icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
-  none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
+  none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
   edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
 };
 

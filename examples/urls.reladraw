@@ -12,7 +12,7 @@ node docs "Documentation"  style: plain  url: "https://example.com/docs"
 
 // A container's destination reaches its children: `intro` has none of its own
 // and follows the container, while `deep` overrules it inside its own box.
-node site "Handbook" (inside top, align: left)  right of docs (gap: wide)  layout: column  url: "https://example.com/"
+node site "Handbook" (inside top, align: left)  right of docs (gap: wide)  layout: column (align-children: left)  url: "https://example.com/"
 node site.intro  "Introduction"  style: plain
 node site.deep   "Deep dive"  style: plain  url: "https://example.com/deep"
 

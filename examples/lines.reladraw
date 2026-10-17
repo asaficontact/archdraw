@@ -27,15 +27,16 @@ edge c2 -> d2  "no sides"  line: (path: square)
 
 // A stop: the line runs along Middle's bottom. Square turns where its shape
 // says; straight joins the stop's two ends to its own with straight pieces.
+// Both run a normal gap under Middle, twice the default, to leave the text room.
 node p1 "P"  below c1  (gap: 18)
 node q1 "Q"  right of p1  (gap: 18)
 node m1 "Middle"  right of p1  left of q1  even with p1
-edge p1 -> q1  "square"  from: right  to: left  via: m1 bottom  line: (path: square)
+edge p1 -> q1  "square"  from: right  to: left  via: m1 bottom (gap: normal)  line: (path: square)
 
 node p2 "P"  below p1  (gap: 8)
 node q2 "Q"  right of p2  (gap: 18)
 node m2 "Middle"  right of p2  left of q2  even with p2
-edge p2 -> q2  "straight"  from: right  to: left  via: m2 bottom  line: (path: straight, corners: rounded)
+edge p2 -> q2  "straight"  from: right  to: left  via: m2 bottom (gap: normal)  line: (path: straight, corners: rounded)
 
 // Patterns and thicknesses.
 node f1 "F"  below p2  (gap: 8)

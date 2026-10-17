@@ -7,7 +7,8 @@ import {
   MARKS,
   COLOR_KEYS,
   COLOR_PARTS,
-  CONTENT_ALIGNMENTS,
+  CHILD_ALIGNMENTS,
+  GATHER_PLACES,
   CONTENT_WIDTHS,
   LINE_VALUES,
   describePlacement,
@@ -54,7 +55,11 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
         ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
         : PAD;
   node.textSide = 'center';
-  const measures = { lineHeight, charWidth: measurer.measure('0'.repeat(10), textSize).width / 10 };
+  const measures = {
+    lineHeight,
+    charWidth: measurer.measure('0'.repeat(10), textSize).width / 10,
+    gather: gatherOf(node),
+  };
 
   if (node.body.kind === 'icon') {
     if (node.children.length > 0) {
@@ -125,7 +130,16 @@ function titlePlaceOf(node: LayoutNode): TitlePlace {
   const across = side === 'top' || side === 'bottom';
   const words = across ? ['left', 'center', 'right'] : ['top', 'center', 'bottom'];
   const align = node.textAttrs['align'] ?? 'center';
-  if (node.children.length > 0 && !words.includes(align)) {
+  // A leaf's align: with no side lines its text up (left, center, right), so
+  // top and bottom are a side's words written without the side.
+  if (node.children.length === 0 && node.textAttrs['place'] === undefined && (align === 'top' || align === 'bottom')) {
+    throw new SourceError(
+      `"${node.name}": align: ${align} says where along a left or right side — name the side, such as (inside left, align: ${align}), ` +
+        `or write (inside ${align}) to put the text against the ${align}`,
+      node.line,
+    );
+  }
+  if ((node.children.length > 0 || node.textAttrs['place'] !== undefined) && !words.includes(align)) {
     throw new SourceError(
       `"${node.name}": a title on the ${side} side takes align: ${words.join(', ')} — not ${align}`,
       node.line,
@@ -135,7 +149,30 @@ function titlePlaceOf(node: LayoutNode): TitlePlace {
   return { how, side, along };
 }
 
-/** `layout: column (gap: 0, widths: match, align: center)`, read and checked. */
+/**
+ * Where `gather-children:` puts the children in the box's spare room, on each
+ * axis: against the start, the middle, or the end. The middle unless it says.
+ */
+function gatherOf(node: LayoutNode): NodeFacts['gather'] {
+  const written = node.appearance['gather-children'];
+  if (written === undefined) return { x: 'center', y: 'center' };
+  if (!(GATHER_PLACES as readonly string[]).includes(written)) {
+    throw new SourceError(
+      `"${node.name}" has gather-children: ${written}, which is not one of ${GATHER_PLACES.join(', ')}`,
+      node.line,
+    );
+  }
+  if (node.children.length === 0) {
+    throw new SourceError(`"${node.name}" has gather-children: but no children to gather`, node.line);
+  }
+  const parts = written.split('-');
+  return {
+    x: parts.includes('left') ? 'start' : parts.includes('right') ? 'end' : 'center',
+    y: parts.includes('top') ? 'start' : parts.includes('bottom') ? 'end' : 'center',
+  };
+}
+
+/** `layout: column (gap: 0, widths: match, align-children: left)`, read and checked. */
 function layoutOf(node: LayoutNode): ChildLayout | undefined {
   const kind = node.appearance['layout'];
   if (kind === undefined) return undefined;
@@ -153,11 +190,25 @@ function layoutOf(node: LayoutNode): ChildLayout | undefined {
       node.line,
     );
   }
-  const alignWord = bracket['align'] ?? 'left';
-  if (!(CONTENT_ALIGNMENTS as readonly string[]).includes(alignWord)) {
-    throw new SourceError(`"${node.name}" has layout: (align: ${alignWord}), which is not one of ${CONTENT_ALIGNMENTS.join(', ')}`, node.line);
+  // Two asks, two words: lining the children up with each other, here, and
+  // where the group sits in the box's spare room, gather-children: on the box.
+  if (bracket['align'] !== undefined) {
+    throw new SourceError(
+      `"${node.name}" has layout: (align: ${bracket['align']}), and align: in a layout is gone — ` +
+        `write align-children: ${bracket['align']} to line the children up with each other, ` +
+        `or gather-children: ${bracket['align']} on "${node.name}" to put them against that side of its room`,
+      node.line,
+    );
   }
-  const align = alignWord === 'left' ? 'start' : alignWord === 'right' ? 'end' : 'center';
+  const words: readonly string[] = CHILD_ALIGNMENTS[kind];
+  const alignWord = bracket['align-children'] ?? 'center';
+  if (!words.includes(alignWord)) {
+    throw new SourceError(
+      `"${node.name}" has layout: ${kind} (align-children: ${alignWord}), and a ${kind} lines its children up by ${words.join(', ')}`,
+      node.line,
+    );
+  }
+  const align = alignWord === words[0] ? 'start' : alignWord === words[2] ? 'end' : 'center';
   const centers = bracket['centers'];
   if (centers !== undefined && bracket['gap'] !== undefined) {
     throw new SourceError(`"${node.name}": layout: says gap: and centers:, which is the spacing said twice — keep one`, node.line);

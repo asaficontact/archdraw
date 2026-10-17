@@ -262,7 +262,11 @@ export function textStyleFor(
     );
   }
   const at = (written as Position | undefined) ?? fallbackAt;
-  const align = attrs['align'];
+  // On a left or right side, align: says where along it (top, center or
+  // bottom), which the resolver has checked; the lines keep their default.
+  const onLeftOrRight = attrs['place']?.endsWith(' left') === true || attrs['place']?.endsWith(' right') === true;
+  const along = onLeftOrRight && (attrs['align'] === 'top' || attrs['align'] === 'bottom');
+  const align = along ? undefined : attrs['align'];
   if (align !== undefined && TEXT_ALIGNMENTS[align] === undefined) {
     throw new SourceError(`a text's align takes left, center or right, not "${align}"`, line);
   }

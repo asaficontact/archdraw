@@ -48,6 +48,7 @@ export interface Layout {
   /** Between neighbors' centers, in pixels. */
   centers?: number;
   widths: 'natural' | 'match' | 'fill';
+  /** `align-children:`: the children's starts, middles or ends even with each other. */
   align: 'start' | 'center' | 'end';
 }
 
@@ -66,6 +67,8 @@ export interface NodeFacts {
   title: TitlePlace;
   layout?: Layout;
   circle: boolean;
+  /** Where `gather-children:` puts the children in the box's spare room, on each axis. */
+  gather: Record<Axis, 'start' | 'center' | 'end'>;
 }
 
 const BOTH_AXES: Axis[] = ['x', 'y'];
@@ -1098,8 +1101,7 @@ export class Placer {
       high = 0;
     }
     // A laid-out container's content spans the whole band its children are
-    // aligned in, so a title wider than they are is centered over the band and
-    // `align:` decides where in it they sit.
+    // lined up in.
     if (!empty && facts.layout) {
       this.inLayout(content[0]!, axis);
       const band = this.bands.get(`${node.name}\n${axis}`);
@@ -1126,6 +1128,11 @@ export class Placer {
       }
     } else if (title.how === 'center' || title.side === 'center') {
       titleStart = (low + high) / 2 - titleSize / 2;
+    } else if (axis === across && titleSize > high - low && title.how !== 'outside') {
+      // A title longer than the children leaves the box room beside them, and
+      // gather-children: says where in it they sit; the title spans it.
+      const where = facts.gather[axis];
+      titleStart = where === 'start' ? low : where === 'end' ? high - titleSize : (low + high) / 2 - titleSize / 2;
     } else if (axis === across) {
       titleStart =
         title.along === 'start' ? low : title.along === 'end' ? high - titleSize : (low + high) / 2 - titleSize / 2;
@@ -1218,8 +1225,8 @@ export class Placer {
 
   /**
    * A container's box at the size it ends up, when something states one: its
-   * outline grown or shrunk evenly about its middle, so what it holds stays
-   * centered, and its title moved with the side it keeps to. A title something
+   * outline grown or shrunk so what it holds sits where gather-children: says,
+   * the middle unless it says, and its title moved with the side it keeps to. A title something
    * is placed against is part of what it holds, and stays.
    */
   private fit(node: LayoutNode, axis: Axis): FrameAxis {
@@ -1229,14 +1236,18 @@ export class Placer {
     const title = this.titleOf(node);
     const across: Axis = title.side === 'top' || title.side === 'bottom' ? 'x' : 'y';
     const anchored = this.anchoredOnTitle(node);
+    // The children sit in the room where gather-children: says, the middle
+    // unless it says; the box grows away from them.
+    const share = { start: 0, center: 0.5, end: 1 };
+    const grow = extra * share[this.facts.get(node)!.gather[axis]];
     let shift = 0;
     if (!anchored && title.how !== 'center' && title.side !== 'center' && !this.titleStates(node, axis)) {
       const toward = axis === across ? title.along : title.side === 'top' || title.side === 'left' ? 'start' : 'end';
-      shift = toward === 'start' ? -extra / 2 : toward === 'end' ? extra / 2 : 0;
+      shift = extra * share[toward] - grow;
     }
     return {
       ...outline,
-      boxStart: outline.boxStart - extra / 2,
+      boxStart: outline.boxStart - grow,
       boxSize: outline.boxSize + extra,
       titleStart: outline.titleStart + shift,
       textStart: outline.textStart + shift,
@@ -1397,12 +1408,15 @@ export class Placer {
         }
       });
     } else {
-      // The band is the room the children are aligned in: as wide as the
-      // widest of them, or the title along the top or bottom if that is wider.
+      // The band is the room the children are lined up in: as wide as the
+      // widest of them. With widths: fill it is the title along the top or
+      // bottom if that is wider, so they stretch under it; otherwise a wider
+      // title leaves spare room, which gather-children: says where they sit in.
       let widest = Math.max(...children.map((child) => natural(child, axis)));
       const title = this.titleOf(parent);
       const titleAlong = title.side === 'top' || title.side === 'bottom';
       const band =
+        layout.widths === 'fill' &&
         axis === 'x' && titleAlong && this.hasTitle(parent) && title.how !== 'outside' && title.how !== 'center'
           ? Math.max(widest, this.titleSize(parent, 'x'))
           : widest;
@@ -1476,13 +1490,10 @@ export class Placer {
   private finish(node: LayoutNode): void {
     const facts = this.facts.get(node)!;
     if (node.children.length === 0) {
-      const box = facts.textBox;
-      node.textBox = {
-        x: box.x + (node.width - facts.natural.width) / 2,
-        y: box.y + (node.height - facts.natural.height) / 2,
-        width: box.width,
-        height: box.height,
-      };
+      node.textBox = this.leafText(node);
+      const x = this.reachOf(node, 'x');
+      const y = this.reachOf(node, 'y');
+      node.reach = { left: x.low, top: y.low, right: x.high, bottom: y.high };
       return;
     }
     const x = this.frame(node, 'x');
@@ -1498,13 +1509,60 @@ export class Placer {
   }
 
   /**
+   * Where a leaf's text sits, from the leaf's top-left. Centered unless its
+   * bracket says a side, and then where a container's title would be: inside,
+   * on or outside that side, at the start, middle or end along it. A picture
+   * and a circle keep their text where their shape puts it.
+   */
+  private leafText(node: LayoutNode): { x: number; y: number; width: number; height: number } {
+    const facts = this.facts.get(node)!;
+    const box = facts.textBox;
+    const width = this.size(node, 'x');
+    const height = this.size(node, 'y');
+    const title = facts.title;
+    const centered = {
+      x: box.x + (width - facts.natural.width) / 2,
+      y: box.y + (height - facts.natural.height) / 2,
+      width: box.width,
+      height: box.height,
+    };
+    if (node.textAttrs['place'] === undefined || title.how === 'center' || facts.circle || node.body.kind === 'icon') {
+      return centered;
+    }
+    const sideAxis: Axis = title.side === 'top' || title.side === 'bottom' ? 'y' : 'x';
+    const low = title.side === 'top' || title.side === 'left';
+    const at = (axis: Axis): number => {
+      const room = axis === 'x' ? width : height;
+      const text = axis === 'x' ? box.width : box.height;
+      if (axis !== sideAxis) {
+        // Outside, an end of the text is even with the box's edge; otherwise it clears the padding.
+        const inset = title.how === 'outside' ? 0 : facts.padding;
+        return title.along === 'start' ? inset : title.along === 'end' ? room - inset - text : (room - text) / 2;
+      }
+      if (title.how === 'inside') return low ? facts.padding : room - facts.padding - text;
+      if (title.how === 'on') return low ? -text / 2 : room - text / 2;
+      return low ? -HEADER_GAP - text : room + HEADER_GAP;
+    };
+    return { x: at('x'), y: at('y'), width: box.width, height: box.height };
+  }
+
+  /**
    * How far a node reaches past its own box on one axis: its title outside the
    * border, and its children, with whatever they reach in turn. A container's
    * outline holds what its children reach, so it is worked out as soon as a
    * container asks, not after everything is placed.
    */
   private reachOf(node: LayoutNode, axis: Axis): { low: number; high: number } {
-    if (node.children.length === 0) return { low: 0, high: 0 };
+    if (node.children.length === 0) {
+      // Only a text placed on or outside the border reaches past it; one that
+      // spills from a box too small for it is drawn spilling and reported.
+      const how = this.facts.get(node)!.title.how;
+      if (node.textAttrs['place'] === undefined || how === 'inside' || how === 'center') return { low: 0, high: 0 };
+      const text = this.leafText(node);
+      const start = axis === 'x' ? text.x : text.y;
+      const size = axis === 'x' ? text.width : text.height;
+      return { low: Math.max(0, -start), high: Math.max(0, start + size - this.size(node, axis)) };
+    }
     const frame = this.frame(node, axis);
     const end = frame.boxStart + frame.boxSize;
     let low = 0;

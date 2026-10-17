@@ -1623,11 +1623,13 @@ function expand(stop: ViaStop, at: Rect | undefined, prev: Point, context: Conte
   if (stop.kind === 'bundle') throw new Error(`bundle stop ${stop.written} reached expand`);
   // A place: a side is a run just outside it, a point on a side is passed just
   // outside it going along the side, and anything else is passed through.
+  // "Just outside" and "just inside" are a tight gap: a line passing a box
+  // needs less room than two boxes need from each other.
   const box = at!;
   const target = stop.target;
   const gap = stop.gap !== undefined
     ? gapPixels(stop.gap, `${subject}: via:`, line)
-    : stop.mode === 'on' ? 0 : stop.mode === 'inside' ? GAPS['tight']! : GAPS['normal']!;
+    : stop.mode === 'on' ? 0 : GAPS['tight']!;
   const out = stop.mode === 'inside' ? -gap : stop.mode === 'on' ? 0 : gap;
   const part = target.part;
   if (stop.gap !== undefined && stop.mode === 'on') {

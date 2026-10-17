@@ -28,13 +28,13 @@ node c "C"  right of b  (gap: wide)
 node tall "Tall / middle / node"  right of c
 node d "D"  right of tall
 
-edge c -> d  "over the tall one"  from: left  to: right  via: c top, d top
+edge c -> d  "over the tall one"  from: left  to: right  via: c top (gap: normal), d top (gap: normal)
 
 // Stepped down, with a gap wide enough: the line turns back under E and over
-// F, through the gap between them. A wide gap is twice the distance a line
+// F, through the gap between them. A normal gap is twice the distance a line
 // keeps from a side it runs along, so the two runs meet in one level line.
 node e "E"  below a  (gap: wide)
-node f "F"  right of e  (gap: wide)  below e  (gap: wide)
+node f "F"  right of e  (gap: wide)  below e  (gap: normal)
 
 edge e -> f  "through the gap"  from: left  to: right  via: e bottom, f top
 
@@ -58,7 +58,7 @@ edge self -> self  "itself"  from: left  to: right  via: self top
 
 // Two lines out of one side, each the shorter way round. They share J's left
 // side, so the one leaving lower down has the shorter way underneath.
-node j "J"  below e  (gap: 21)
+node j "J"  below e  (gap: 17)
 node k "K"  right of j
 node l "L"  right of k
 

@@ -397,8 +397,8 @@ function edgeCrossings(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[
 }
 
 /**
- * A text that runs out of the box it belongs inside: a leaf's text, or a
- * title placed inside the border or in the middle. A stated size is kept even
+ * A text that runs out of the box it belongs inside: one placed inside the
+ * border or in the middle, a leaf's or a title. A stated size is kept even
  * when the text needs more, so the text is drawn spilling and this says so.
  */
 function textOverflows(layout: Layout): Finding[] {
@@ -408,7 +408,7 @@ function textOverflows(layout: Layout): Finding[] {
     const text = node.textBox;
     if (text.width <= 0 || text.height <= 0) continue;
     const place = node.textAttrs['place'];
-    if (node.children.length > 0 && place !== undefined && place !== 'center' && !place.startsWith('inside')) continue;
+    if (place !== undefined && place !== 'center' && !place.startsWith('inside')) continue;
     const spill = {
       left: Math.max(0, -text.x),
       right: Math.max(0, text.x + text.width - node.width),

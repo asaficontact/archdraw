@@ -22,14 +22,16 @@ edge a -> b  "an S"  from: top  to: bottom  via: a left, b right
 node p "P"  right of a  (gap: 18)
 node q "Q"  below p  (gap: normal)
 
-edge p -> q  "the left"  from: top  to: top  via: p left
+edge p -> q  "the left"  from: top  to: top  via: p left (gap: normal)
 
 // One point, over the middle of Peak's top: the line rises to it and falls.
+// A curve swings in below the point on either side of it, so the point is
+// a normal gap up, clear of Peak's corners, rather than the default tight.
 node t1 "T1"  below b  (gap: 16)
 node t2 "T2"  right of t1  (gap: 13)
 node peak "Peak"  right of t1  left of t2  above t1  (gap: tight)
 
-edge t1 -> t2  "over a point"  from: right  to: left  via: peak top-center
+edge t1 -> t2  "over a point"  from: right  to: left  via: peak top-center (gap: normal)
 
 // Runs under both ends, so the line stays low past Peak2 between them.
 node u1 "U1"  right of t2  (gap: wide)

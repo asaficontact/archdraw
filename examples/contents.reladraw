@@ -1,49 +1,52 @@
 // How a container's contents sit inside it, when the container is wider than
 // they are. A container is as wide as the wider of its title and its contents,
-// so a long title leaves slack, and `align:` says where the column sits in it:
-// against the left unless it says otherwise.
+// so a long title leaves spare room. Two words say two different things:
 //
-// `layout: column (widths: …, align: …)`. The two are independent: equal widths
-// ranged left is a real arrangement, and so is natural widths centered.
+// `align-children:`, in the layout's bracket, lines the children up with each
+// other: their left edges even, their middles, or their right edges.
+// `gather-children:`, on the box, says where the group of them sits in the
+// spare room: against a side, or in the middle.
+//
+// Both default to the middle. Neither moves what the other says.
 
 style plain  fill: theme-fill  border: theme-border
 
-// Nothing said but the column. Natural widths, and the column sits against the left.
+// Nothing said: the children centered on each other, in the middle of the room.
 node ragged "Ingestion and enrichment pipeline"  layout: column
 node ragged.one   "parse"  style: plain
 node ragged.two   "resolve and lay out"  style: plain
 node ragged.three "draw"  style: plain
 
-// One edge down each side of the column, still against the left of the slack.
-node block "Ingestion and enrichment pipeline"  right of ragged  layout: column (widths: match)
-node block.one   "parse"  style: plain
-node block.two   "resolve and lay out"  style: plain
-node block.three "draw"  style: plain
+// Their left edges even, the group still in the middle.
+node lined "Ingestion and enrichment pipeline"  right of ragged  layout: column (align-children: left)
+node lined.one   "parse"  style: plain
+node lined.two   "resolve and lay out"  style: plain
+node lined.three "draw"  style: plain
 
-// The same column, moved into the middle of the room the title asked for.
-node middle "Ingestion and enrichment pipeline"  right of block  layout: column (widths: match, align: center)
-node middle.one   "parse"  style: plain
-node middle.two   "resolve and lay out"  style: plain
-node middle.three "draw"  style: plain
+// The same column against the left of the room.
+node left "Ingestion and enrichment pipeline"  right of lined  gather-children: left  layout: column (align-children: left)
+node left.one   "parse"  style: plain
+node left.two   "resolve and lay out"  style: plain
+node left.three "draw"  style: plain
 
-// `fill` takes the whole band, so there is no slack left for `align` to say
-// anything about. Under a title this long that is what `match` could not do.
-node full "Ingestion and enrichment pipeline"  right of middle  layout: column (widths: fill)
+// `widths: fill` takes the whole band, so there is no spare room left for
+// gather-children: to say anything about. Under a title this long that is
+// what `match` could not do.
+node full "Ingestion and enrichment pipeline"  right of left  layout: column (widths: fill)
 node full.one   "parse"  style: plain
 node full.two   "resolve and lay out"  style: plain
 node full.three "draw"  style: plain
 
-// Natural widths, centered: the column keeps its ragged edges and the block of
-// them sits in the middle. The cell of the cross product that needs both words.
-node loose "Ingestion and enrichment pipeline"  below ragged  layout: column (align: center)
-node loose.one   "parse"  style: plain
-node loose.two   "resolve and lay out"  style: plain
-node loose.three "draw"  style: plain
+// Every child as wide as the widest, against the right of the room.
+node block "Ingestion and enrichment pipeline"  below ragged  gather-children: right  layout: column (widths: match)
+node block.one   "parse"  style: plain
+node block.two   "resolve and lay out"  style: plain
+node block.three "draw"  style: plain
 
-// A style may carry the layout and its settings.
-style boxed  layout: column (widths: match, align: center)
+// A style may carry the layout and where the children gather.
+style boxed  gather-children: left  layout: column (widths: match)
 
-node carried "Ingestion and enrichment pipeline"  right of loose  style: boxed
+node carried "Ingestion and enrichment pipeline"  right of block  style: boxed
 node carried.one   "parse"  style: plain
 node carried.two   "resolve and lay out"  style: plain
 node carried.three "draw"  style: plain
