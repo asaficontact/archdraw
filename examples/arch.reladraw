@@ -6,6 +6,9 @@ style dim        text: (color: theme-muted)
 style backup     border: #d2904e  line: #d2904e
 style dump       fill: theme-secondary-subtle  border: theme-border  shape: document
 
+// The draw.io original draws every line as a curve.
+default edge  line: (path: curved)
+
 
 // --- The hub and its four machines ------------------------------------------
 // The cluster is wrapped in an invisible container so things outside it can be
@@ -69,8 +72,8 @@ edge server.docker.db2 -> dumps.db2  from: right  to: left
 
 // The rclone lines run up the channel between the two left-hand machines, so
 // the dumps arrive through the middle of the cluster rather than across one.
-edge dumps.db1 -> cluster.hub  "rclone"  between cluster.desktop1 and cluster.laptop1  from: right  to: left
-edge dumps.db2 -> cluster.hub  "rclone"  between cluster.desktop1 and cluster.laptop1  from: right  to: left
+edge dumps.db1 -> cluster.hub  "rclone"  from: right  to: left  via: cluster.laptop1 top (gap: wide)
+edge dumps.db2 -> cluster.hub  "rclone"  from: right  to: left  via: cluster.laptop1 top
 
 edge cluster.desktop1.files -> server.mirror  "backup script"  style: backup  from: left  to: right
 edge cluster.desktop1.files -> server.deploy  "deploy script"                 from: left  to: right

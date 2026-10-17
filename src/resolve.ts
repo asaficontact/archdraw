@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_FONT_SIZE,
   DEFAULT_MARGIN,
+  GAPS,
   ICON_GAP,
   ICON_LINES,
   PAD,
@@ -27,7 +28,7 @@ import { SourceError } from './errors.js';
 import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LayoutPass, type LayoutPassage, type LineLook } from './model.js';
+import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
 import { gapPixels, Placer, type Layout as ChildLayout, type NodeFacts, type TitlePlace } from './place.js';
 
 /**
@@ -214,7 +215,8 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   const placer = new Placer(roots, byName, facts, named);
   placer.run();
   const marks = buildMarks(named, placer.placeNamed(), styles);
-  normalize(nodes, marks, margin);
+  locateStops(edges, placer, byName, named);
+  normalize(nodes, marks, margin, edges.flatMap((edge) => (edge.viaAt ?? []).filter((at) => at !== undefined)));
 
   const extent = bounds(nodes, marks);
   const look = (kind: 'node' | 'edge' | 'point' | 'region') => defaults.get(`guide ${kind}`) ?? {};
@@ -1035,53 +1037,68 @@ function buildEdges(
   defaults: Map<DefaultTarget, Attrs>,
 ): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
+  // A line's name is used before or after it is written, so every name is
+  // known before any end is looked up. A name belongs to one thing.
+  const lineNames = new Map<string, number>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'edge' || stmt.name === undefined) continue;
+    if (byName.has(stmt.name) || lineNames.has(stmt.name)) {
+      throw new SourceError(
+        `line "${stmt.name}": the name is already ${byName.has(stmt.name) ? "a node's" : `the line's on line ${lineNames.get(stmt.name)}`} — a name belongs to one thing`,
+        stmt.line,
+      );
+    }
+    lineNames.set(stmt.name, stmt.line);
+  }
+  // A named leg works anywhere a line does, an end included (design.org 4.6).
+  // Clashes between leg names and other names are refused in `lines.ts`.
+  const legNames = new Map<string, number>();
   for (const stmt of statements) {
     if (stmt.kind !== 'edge') continue;
-    const from = byName.get(stmt.from);
-    const to = byName.get(stmt.to);
-    if (!from) throw new SourceError(`edge from "${stmt.from}", which does not exist`, stmt.line);
-    if (!to) throw new SourceError(`edge to "${stmt.to}", which does not exist`, stmt.line);
-    const between: LayoutPassage | undefined = stmt.between && {
-      nodes: stmt.between.targets.map(({ name, part }) => {
-        if (part !== undefined) {
-          // A passage is the gap between two boxes, and a side or a point has
-          // no gap on either hand. Refused by name rather than dropped.
-          throw new SourceError(
-            `edge passes between "${name} ${part}", and a passage runs between two whole boxes ` +
-              `— drop "${part}"`,
-            stmt.line,
-          );
-        }
-        const node = byName.get(name);
-        if (!node) {
-          throw new SourceError(`edge passes between "${name}", which does not exist`, stmt.line);
-        }
-        return node;
-      }) as [LayoutNode, LayoutNode],
-      ...(stmt.between.axis !== undefined ? { axis: stmt.between.axis } : {}),
-    };
-    const passes: LayoutPass[] | undefined = stmt.passes?.map((placement) => {
-      const written = describePlacement(placement);
-      return {
-        direction: placement.direction,
-        written,
-        nodes: placement.targets.map(({ name, part }) => {
-          if (part !== undefined) {
-            // The line passes a box, and a side or a point has no side of its
-            // own to be passed on. Refused by name rather than dropped.
-            throw new SourceError(
-              `edge passes "${written}", and a line passes a whole box — drop "${part}"`,
-              stmt.line,
-            );
-          }
-          const node = byName.get(name);
-          if (!node) {
-            throw new SourceError(`edge passes "${written}", and "${name}" does not exist`, stmt.line);
-          }
-          return node;
-        }),
-      };
-    });
+    for (const entry of stmt.via ?? []) {
+      if (entry.leg && !lineNames.has(entry.leg.name) && !byName.has(entry.leg.name)) legNames.set(entry.leg.name, stmt.line);
+    }
+  }
+  for (const [name, line] of legNames) lineNames.set(name, line);
+  // An end on another line (`edge log audit -> req`) has no box: it stands on
+  // a point of that line, which `lines.ts` fills in once the line is drawn.
+  const onLines = new Map<string, LayoutNode>();
+  const endNode = (name: string, which: string, line: number): LayoutNode => {
+    const node = byName.get(name);
+    if (node) return node;
+    if (!lineNames.has(name)) throw new SourceError(`edge ${which} "${name}", which does not exist`, line);
+    const point = onLines.get(name) ?? ({
+      name,
+      kind: 'none',
+      body: { kind: 'none' },
+      text: '',
+      lines: [],
+      children: [],
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      inset: 0,
+      deckTexts: [],
+      headerHeight: 0,
+      reach: { left: 0, top: 0, right: 0, bottom: 0 },
+      banded: false,
+      textBox: { x: 0, y: 0, width: 0, height: 0 },
+      textSide: 'center',
+      textAttrs: {},
+      attrs: {},
+      appearance: {},
+      placements: [],
+      line,
+    } as LayoutNode);
+    onLines.set(name, point);
+    return point;
+  };
+  const pending: { edge: LayoutEdge; from?: string; to?: string }[] = [];
+  for (const stmt of statements) {
+    if (stmt.kind !== 'edge') continue;
+    const from = endNode(stmt.from, 'from', stmt.line);
+    const to = endNode(stmt.to, 'to', stmt.line);
     const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
     const what = `${stmt.from} ${stmt.arrow} ${stmt.to}`;
     checkAttrs('edge', what, stmt.attrs, stmt.line);
@@ -1109,16 +1126,80 @@ function buildEdges(
       ...(stmt.text !== undefined
         ? { text: stmt.text, lines: linesFor(stmt.text, textAttrs, `edge ${what}`, stmt.line) }
         : {}),
-      ...(between ? { between } : {}),
-      ...(passes ? { passes } : {}),
+      arrow: stmt.arrow,
+      ...(stmt.name !== undefined ? { name: stmt.name } : {}),
+      ...(stmt.via !== undefined ? { via: stmt.via } : {}),
+      ...(stmt.straight !== undefined ? { straight: stmt.straight } : {}),
       look: lineLook(stmt.attrs, appearance, what, stmt.line),
       attrs: stmt.attrs,
       appearance,
       ...(stmt.guide ? { guide: true } : {}),
       line: stmt.line,
     });
+    pending.push({
+      edge: edges[edges.length - 1]!,
+      ...(onLines.has(stmt.from) && !byName.has(stmt.from) ? { from: stmt.from } : {}),
+      ...(onLines.has(stmt.to) && !byName.has(stmt.to) ? { to: stmt.to } : {}),
+    });
+  }
+  const byLine = new Map(edges.filter((edge) => edge.name !== undefined).map((edge) => [edge.name!, edge]));
+  for (const edge of edges) {
+    for (const entry of edge.via ?? []) {
+      if (entry.leg && legNames.has(entry.leg.name)) byLine.set(entry.leg.name, edge);
+    }
+  }
+  for (const { edge, from, to } of pending) {
+    if (from === undefined && to === undefined) continue;
+    edge.onLine = {
+      ...(from !== undefined ? { from: byLine.get(from)! } : {}),
+      ...(to !== undefined ? { to: byLine.get(to)! } : {}),
+    };
   }
   return edges;
+}
+
+/**
+ * Where each `via:` stop that names something placed is, worked out by the
+ * placer once everything is placed. A stop naming a line or a leg is left to
+ * `lines.ts`, which has the lines.
+ */
+function locateStops(edges: LayoutEdge[], placer: Placer, byName: Map<string, LayoutNode>, named: Map<string, PointStmt | RegionStmt>): void {
+  const lineNames = new Set(edges.map((edge) => edge.name).filter((name) => name !== undefined));
+  const legNames = new Set(edges.flatMap((edge) => (edge.via ?? []).map((entry) => entry.leg?.name)).filter((name) => name !== undefined));
+  for (const edge of edges) {
+    if (!edge.via) continue;
+    const subject = `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    edge.viaAt = edge.via.map((entry) => {
+      const stop = entry.stop;
+      if (!stop) return undefined;
+      if (stop.kind === 'through') {
+        if (!named.has(stop.region) || named.get(stop.region)!.kind !== 'region') {
+          throw new SourceError(
+            `${subject}: "via: ${stop.written}" — ${stop.region} is not a region; name one with \`region ${stop.region}  …\``,
+            edge.line,
+          );
+        }
+        return placer.locate({ name: stop.region }, subject, edge.line);
+      }
+      if (stop.kind !== 'place') return undefined;
+      const target = stop.target;
+      if (target.point === undefined && (lineNames.has(target.name) || legNames.has(target.name))) {
+        if (target.part !== undefined || target.fraction !== undefined) {
+          throw new SourceError(
+            `${subject}: "via: ${stop.written}" — ${target.name} is a line, and a point on it is written \`${target.name} at 1/3\`, \`${target.name} start\` or \`${target.name} end\``,
+            edge.line,
+          );
+        }
+        // A bare line or leg name is its middle.
+        entry.stop = { kind: 'online', line: target.name, at: 1 / 2, written: stop.written };
+        return undefined;
+      }
+      if (target.point === undefined && !byName.has(target.name) && !named.has(target.name)) {
+        throw new SourceError(`${subject}: "via: ${stop.written}" names ${target.name}, which does not exist`, edge.line);
+      }
+      return placer.locate(target, subject, edge.line);
+    });
+  }
 }
 
 /**
@@ -1158,13 +1239,50 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     return THICKNESS[word('thickness')]!;
   })();
 
+  const turn = ((): number => {
+    const value = appearance['line.turn'];
+    if (value === undefined) return 1 / 2;
+    const ratio = /^(\d+)\/(\d+)$/.exec(value);
+    const number = ratio ? Number(ratio[1]) / Number(ratio[2]) : /^\d*\.?\d+$/.test(value) ? Number(value) : NaN;
+    if (!(number >= 0 && number <= 1)) {
+      throw new SourceError(
+        `edge ${what}: "turn: ${value}" — a turn is a fraction of the way across from the start's box, such as \`turn: 1/3\``,
+        line,
+      );
+    }
+    return number;
+  })();
+  const stepOut = appearance['line.step-out'] === undefined
+    ? GAPS['normal']!
+    : gapPixels(appearance['line.step-out'], `edge ${what}: step-out:`, line);
+
   const look: LineLook = {
     path: word('path'),
     corners: word('corners'),
     crossing: word('crossing'),
     pattern: word('pattern'),
     thickness,
+    curve: word('curve'),
+    turn,
+    stepOut,
   };
+  // Said on the edge itself, a property its path doesn't have is refused; from
+  // a style or a default it lands on the lines that have it.
+  if (look.path === 'straight' && (written['line.turn'] !== undefined || written['line.step-out'] !== undefined)) {
+    const key = written['line.turn'] !== undefined ? 'turn' : 'step-out';
+    throw new SourceError(
+      `edge ${what}: a straight line has no route to ${key === 'turn' ? 'move' : 'step out of'} — \`${key}:\` takes a ` +
+        '`path: square` or `path: curved` line',
+      line,
+    );
+  }
+  if (look.path !== 'curved' && written['line.curve'] !== undefined) {
+    throw new SourceError(
+      `edge ${what}: \`curve:\` says how widely a curved line swings, and this line is ${look.path} — ` +
+        (look.path === 'square' ? 'for rounded corners write `corners: rounded`' : 'write `path: curved` with it'),
+      line,
+    );
+  }
   if (look.path === 'curved' && written['line.corners'] === 'rounded') {
     throw new SourceError(
       `edge ${what}: a curved line has no corners to round — \`corners: rounded\` takes a ` +
@@ -1280,11 +1398,13 @@ function bounds(nodes: LayoutNode[], marks: LayoutMark[]) {
 }
 
 /** Shift everything so the diagram starts at the margin rather than wherever the anchor fell. */
-function normalize(nodes: LayoutNode[], marks: LayoutMark[], margin: number): void {
+function normalize(nodes: LayoutNode[], marks: LayoutMark[], margin: number, stops: Rect[] = []): void {
   const { minX, minY } = bounds(nodes, marks);
   const dx = margin - minX;
   const dy = margin - minY;
-  for (const box of [...nodes, ...marks]) {
+  // A line's stops move with everything else, but don't widen the page: the
+  // renderer grows it to hold whatever the lines reach.
+  for (const box of [...nodes, ...marks, ...stops]) {
     box.x += dx;
     box.y += dy;
   }

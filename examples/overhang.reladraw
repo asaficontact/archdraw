@@ -1,6 +1,9 @@
 // Edges that leave the area the nodes cover. The page grows to hold them: the
 // nodes here cover 421x230 and the page comes out 465x328.
 
+// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
+default edge  line: (path: curved)
+
 style plain  fill: theme-fill  border: theme-border
 
 node a "A"                            style: plain

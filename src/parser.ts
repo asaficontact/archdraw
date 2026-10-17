@@ -12,9 +12,7 @@ import type {
   EdgeStmt,
   IconStmt,
   Mark,
-  OffsetPlacement,
   Part,
-  Passage,
   PlacementTarget,
   PointExpr,
   PointStmt,
@@ -23,6 +21,8 @@ import type {
   Stmt,
   StyleStmt,
   Way,
+  ViaEntry,
+  ViaStop,
 } from './ast.js';
 import {
   COLOR_KEYS,
@@ -38,7 +38,6 @@ import {
   describePlacement,
   SIDE_AXIS,
   SIDES,
-  PASSAGE_AXES,
   TEXT_KEYS,
   LINE_KEYS,
   LINE_VALUES,
@@ -503,6 +502,69 @@ function readAttr(
       if (!more) break;
     }
     setOnce(attrs, 'depth', clauses.join('; '), subject, line, { key, value: (v) => v.split('; ').join(', ') });
+    return next;
+  }
+  if (key === 'via') {
+    // Stored as JSON, which `parseEdge` takes back out: a `via:` list belongs
+    // to one line, never to a style.
+    if (!subject.startsWith('edge ')) {
+      throw new SourceError(`${subject}: via: says where one line goes, so it is written on the edge itself`, line);
+    }
+    const read = readVia(tokens, at + 1, subject, line);
+    setOnce(attrs, 'via', JSON.stringify(read.entries), subject, line, { key, value: () => 'a list' });
+    return read.next;
+  }
+  if (key === 'from' || key === 'to') {
+    // `to: top`, `to: left 3/4 down`, `to: bottom 1/4 across from right`,
+    // `to: top, right of z`, `from: bottom-center`, `from: center`. Stored as
+    // written, one space between words; `lines.ts` reads it (design.org 6.2).
+    const first = tokens[at + 1];
+    if (!first || first.quoted || isAttrKey(first) || first.text === '(') {
+      throw new SourceError(`${subject}: ${key}: names a side or a point, such as ${key}: top`, line);
+    }
+    const words = [first.text];
+    let next = at + 2;
+    const side = first.text.replace(/,$/, '');
+    const second = tokens[at + 2];
+    const plain = (token: Token | undefined): boolean => token !== undefined && !token.quoted && !isAttrKey(token) && token.text !== '(';
+    if ((WAYS as readonly string[]).includes(side) && second?.text === 'from' && plain(tokens[at + 3])) {
+      // `to: down from z3`, `from: left from bin`: lined up with another thing (6.2).
+      words.push('from', tokens[at + 3]!.text);
+      next = at + 4;
+    } else if (side === 'at' && plain(second)) {
+      // `to: at 1/3`: how far along the line this end is on.
+      words.push(second!.text);
+      next = at + 3;
+    } else if (!isSideWord(side) && second?.text === 'at' && plain(tokens[at + 3])) {
+      // `to: climb at 1/3`: how far along a leg of that line.
+      words.push('at', tokens[at + 3]!.text);
+      next = at + 4;
+    } else if (!isSideWord(side) && !isPosition(side) && (second?.text === 'start' || second?.text === 'end')) {
+      // `from: req end`: where another line ends.
+      words.push(second.text);
+      next = at + 3;
+    } else if (isSideWord(side)) {
+      let listed = first.text.endsWith(',');
+      if (!listed) {
+        const fraction = readFraction(tokens, next);
+        if (fraction) {
+          words.push(fraction.fraction.written);
+          next = fraction.next;
+          listed = fraction.fraction.written.endsWith(',');
+        }
+      }
+      if (listed) {
+        // `top, right of z`: this end's place among the others on the side.
+        const way = tokens[next]?.text;
+        const two = way === 'left' || way === 'right';
+        const name = tokens[next + (two ? 2 : 1)];
+        if (way !== undefined && name && !name.quoted) {
+          words.push(two ? `${way} ${tokens[next + 1]?.text ?? ''}` : way, name.text);
+          next += two ? 3 : 2;
+        }
+      }
+    }
+    setOnce(attrs, key, words.join(' '), subject, line);
     return next;
   }
   if (key === 'join-with') {
@@ -1026,6 +1088,27 @@ function readMark(written: string, end: 'from' | 'to', arrow: string, line: numb
  * every edge has — so `from:` names the first name's side on every edge.
  */
 function parseEdge(head: Token[], line: number): EdgeStmt {
+  // `edge req client -> api`: a word before the ends names the line, told
+  // from the ends by position, as in `node api "API"` (design.org 6.1).
+  if (head[2] && head[3] && !head[2].quoted && !looksLikeArrow(head[2]) && looksLikeArrow(head[3])) {
+    const name = requireName(head[1], 'edge', line);
+    return { ...parseEdge([head[0]!, ...head.slice(2)], line), name };
+  }
+  const stmt = parseEdgeEnds(head, line);
+  const via = stmt.attrs['via'];
+  if (via === undefined) return stmt;
+  const { via: _, ...attrs } = stmt.attrs;
+  return { ...stmt, attrs, via: JSON.parse(via) as ViaEntry[] };
+}
+
+/** Whether a token is an arrow, or begins one: a bracketed mark, or a run of dashes with marks at its ends. */
+function looksLikeArrow(token: Token): boolean {
+  if (token.quoted) return false;
+  if (token.text === '(' || /^\[[^\]]*\]-*$/.test(token.text)) return true;
+  return /^[<|*o]*\|?-{1,}[>|*o]*$/.test(token.text) || /^-+$/.test(token.text);
+}
+
+function parseEdgeEnds(head: Token[], line: number): EdgeStmt {
   const left = requireName(head[1], 'edge', line);
   const arrow = readArrow(head, line);
   const rightToken = head[arrow.next];
@@ -1068,64 +1151,59 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     line,
   });
   at = bracket.next;
-  let between: Passage | undefined;
 
-  // An edge is not placed, so its tail holds attributes and the one clause that
-  // is neither: `between`, which says which gap the line travels down.
+  // An edge is not placed, so its tail holds only attributes. The clauses that
+  // once said what a line keeps clear of, `between c and d` and `below b`, are
+  // gone: a line says the places it passes instead (design.org 6.4).
+  let straight: Way | undefined;
   const tail = parseTail(head, at, line, subject, (tokens, index) => {
     const word = tokens[index]!;
-    if (word.quoted || word.text !== 'between') return undefined;
-    if (between) throw new SourceError(`${subject}: "between" is written twice`, line);
-
-    // A gap has two sides, so `between` takes exactly two targets rather than
-    // the open list a placement takes. `right of a and b` means "clear of
-    // both", and there is no matching reading of "pass between three things".
-    const read = readTargets(tokens, index + 1, subject, 'between', line);
-    if (read.targets.length !== 2) {
-      throw new SourceError(
-        `"between" takes two nodes, one for each side of the gap — found ${read.targets.length}`,
-        line,
-      );
+    if (!word.quoted && word.text === 'straight') {
+      // `straight down`: leave that way and stop at what the line meets (6.2).
+      const way = tokens[index + 1]?.text;
+      if (!(WAYS as readonly string[]).includes(way ?? '')) {
+        throw new SourceError(`${subject}: "straight" is followed by the way the line goes — up, down, left or right`, line);
+      }
+      if (straight !== undefined) throw new SourceError(`${subject}: "straight" is written twice — keep one`, line);
+      straight = way as Way;
+      return index + 2;
     }
-    let next = read.next;
-
-    // Two targets sitting diagonally have two gaps between them, and this is
-    // the only way to say which. It is optional because most pairs have one.
-    const trailing = tokens[next];
-    const axis = trailing && !trailing.quoted ? PASSAGE_AXES[trailing.text] : undefined;
-    if (axis !== undefined) next += 1;
-
-    between = { targets: read.targets, ...(axis !== undefined ? { axis } : {}) };
-    return next;
+    if (word.quoted || word.text !== 'between') return undefined;
+    const read = readTargets(tokens, index + 1, subject, 'between', line);
+    const named = read.targets.map(nameTarget);
+    throw new SourceError(
+      `${subject}: "between ${named.join(' and ')}" on an edge is gone — a line says the places it passes, ` +
+        `so write \`via: between ${named[0] ?? 'c'} and ${named[1] ?? 'd'}\``,
+      line,
+    );
   });
 
-  // An edge is not placed, so a direction on its line says which side of that
-  // node the line passes. The other placements say where a thing *is*, and
-  // have no reading for a line.
-  const passes: OffsetPlacement[] = [];
-  for (const placement of tail.placements) {
+  if (tail.placements.length > 0) {
+    const placement = tail.placements[0]!;
     const written = describePlacement(placement);
     if (placement.kind !== 'offset' || placement.written !== undefined) {
       throw new SourceError(
         `${subject}: "${written}" places a node, and an edge is not placed — it joins two things ` +
-          'that are. On an edge, above, below, left of and right of say which side of a node the ' +
-          'line passes',
+          'that are. A line says the places it passes with via:, such as `via: b top`',
         line,
       );
     }
-    if (placement.gap !== undefined) {
-      throw new SourceError(
-        `${subject}: "${written}" gives a gap, and a gap is kept between nodes — the line passes ` +
-          'as close as it reads clearly. Drop the brackets',
-        line,
-      );
-    }
-    passes.push(placement);
-  }
-  if (passes.length > 0 && between) {
+    // `below b` said what to keep clear of, and left the engine to find the
+    // line; the place it passes is written instead.
+    const part = {
+      above: 'top',
+      below: 'bottom',
+      left: 'left',
+      right: 'right',
+      'above-left': 'top-left',
+      'above-right': 'top-right',
+      'below-left': 'bottom-left',
+      'below-right': 'bottom-right',
+    }[placement.direction];
+    const stops = placement.targets.map((target) => `${target.name} ${part}`).join(', ');
     throw new SourceError(
-      `${subject}: "between" and "${describePlacement(passes[0]!)}" on one edge — an edge passing ` +
-        'between two things already has a side of each, so say one or the other',
+      `${subject}: "${written}" on an edge is gone — it said what the line keeps clear of, and a line now ` +
+        `says the places it passes: \`via: ${stops}\``,
       line,
     );
   }
@@ -1140,8 +1218,7 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     arrow: arrow.text,
     marks: arrow.marks,
     ...(textToken ? { text: textToken.text } : {}),
-    ...(between ? { between } : {}),
-    ...(passes.length > 0 ? { passes } : {}),
+    ...(straight !== undefined ? { straight } : {}),
     attrs: tail.attrs,
     line,
   };
@@ -2095,6 +2172,211 @@ function readOneTarget(
     );
   }
   return { target, next: i, listed };
+}
+
+/** What a leg's bracket may set: its own shape, in the words of the line's bracket. */
+const LEG_KEYS = ['path', 'turn', 'curve', 'corners', 'step-out'] as const;
+
+/**
+ * `via: b top, between c and d (gap: wide), leg climb, leg over b top` — the
+ * places a line passes, in order, separated by commas; the list ends at the
+ * next key (design.org 6.4).
+ */
+function readVia(tokens: Token[], start: number, subject: string, line: number): { entries: ViaEntry[]; next: number } {
+  const entries: ViaEntry[] = [];
+  const ends = (token: Token | undefined): boolean => !token || isAttrKey(token);
+  let i = start;
+  for (;;) {
+    const token = tokens[i];
+    if (ends(token) || token!.quoted) {
+      throw new SourceError(
+        entries.length === 0
+          ? `${subject}: via: lists the places the line passes, such as \`via: b top, between c and d\``
+          : `${subject}: the comma at the end of via: promises another stop — remove it, or name the stop`,
+        line,
+      );
+    }
+    const entry: ViaEntry = {};
+    let listed = false;
+    if (token!.text === 'leg') {
+      const nameToken = tokens[i + 1];
+      if (!nameToken || nameToken.quoted || isAttrKey(nameToken) || nameToken.text === '(') {
+        throw new SourceError(`${subject}: "leg" in via: is followed by the leg's name, such as \`leg climb\``, line);
+      }
+      listed = nameToken.text.endsWith(',');
+      const name = listed ? nameToken.text.slice(0, -1) : nameToken.text;
+      i += 2;
+      let attrs: Attrs = {};
+      if (!listed && follows(tokens, i, '(')) {
+        const read = readBracket(tokens, i, LEG_KEYS, { subject, what: `leg ${name}`, kind: 'a leg', example: 'path: straight', line });
+        attrs = read.values;
+        i = read.next;
+      }
+      if (!listed && follows(tokens, i, ',')) {
+        listed = true;
+        i += 1;
+      }
+      entry.leg = { name, attrs };
+      if (!listed && !ends(tokens[i])) {
+        const read = readStop(tokens, i, subject, line);
+        entry.stop = read.stop;
+        i = read.next;
+        listed = read.listed;
+      }
+    } else {
+      const read = readStop(tokens, i, subject, line);
+      entry.stop = read.stop;
+      i = read.next;
+      listed = read.listed;
+    }
+    entries.push(entry);
+    if (!listed) break;
+  }
+  const after = tokens[i];
+  if (after && !isAttrKey(after)) {
+    throw new SourceError(
+      `${subject}: the stops in via: are separated by commas — "${after.joined ?? after.text}" follows "${describeEntry(entries[entries.length - 1]!)}" with none`,
+      line,
+    );
+  }
+  return { entries, next: i };
+}
+
+function describeEntry(entry: ViaEntry): string {
+  return [entry.leg ? `leg ${entry.leg.name}` : '', entry.stop?.written ?? ''].filter((part) => part.length > 0).join(' ');
+}
+
+/** One stop in a `via:` list, and whether a comma after it promises another. */
+function readStop(tokens: Token[], start: number, subject: string, line: number): { stop: ViaStop; next: number; listed: boolean } {
+  const token = tokens[start]!;
+  const word = token.text.replace(/,$/, '');
+  const written = (from: number, to: number): string =>
+    tokens.slice(from, to).map((t) => t.text).join(' ').replace(/,$/, '').replace(/ \( /g, ' (').replace(/ \)/g, ')');
+  const finish = (stop: ViaStop, next: number, listed: boolean): { stop: ViaStop; next: number; listed: boolean } => {
+    if (!listed && follows(tokens, next, ',')) return { stop, next: next + 1, listed: true };
+    return { stop, next, listed };
+  };
+  const gapBracket = (at: number): { gap?: string; next: number; listed: boolean } => {
+    if (!follows(tokens, at, '(')) return { next: at, listed: false };
+    const read = readBracket(tokens, at, ['gap'], { subject, what: 'the stop', kind: 'a stop', example: 'gap: wide', line });
+    return { ...(read.values['gap'] !== undefined ? { gap: read.values['gap'] } : {}), next: read.next, listed: false };
+  };
+
+  // `through slot horizontal`: from one edge of a region to the other.
+  if (word === 'through' && !token.text.endsWith(',')) {
+    const region = tokens[start + 1];
+    const axisToken = tokens[start + 2];
+    const axis = axisToken?.text.replace(/,$/, '');
+    if (!region || region.quoted || isAttrKey(region)) {
+      throw new SourceError(`${subject}: "through" in via: names a region, such as \`via: through slot horizontal\``, line);
+    }
+    if (axis !== 'horizontal' && axis !== 'vertical') {
+      throw new SourceError(
+        `${subject}: "through ${region.text.replace(/,$/, '')}" says which way across it — \`through ${region.text.replace(/,$/, '')} horizontal\` or \`vertical\`; the axis is always written`,
+        line,
+      );
+    }
+    return finish(
+      { kind: 'through', region: region.text, axis, written: written(start, start + 3) },
+      start + 3,
+      axisToken!.text.endsWith(','),
+    );
+  }
+
+  // `above thru (gap: tight)`: the whole length of a named leg, beside it.
+  const two = (word === 'left' || word === 'right') && follows(tokens, start + 1, 'of');
+  if ((word === 'above' || word === 'below' || two) && !token.text.endsWith(',')) {
+    const legToken = tokens[start + (two ? 2 : 1)];
+    if (!legToken || legToken.quoted || isAttrKey(legToken)) {
+      throw new SourceError(`${subject}: "${word}${two ? ' of' : ''}" in via: names a leg to run beside, such as \`via: above thru\``, line);
+    }
+    const listedName = legToken.text.endsWith(',');
+    const leg = listedName ? legToken.text.slice(0, -1) : legToken.text;
+    const next = start + (two ? 3 : 2);
+    const bracket = listedName ? { next, listed: false } : gapBracket(next);
+    return finish(
+      {
+        kind: 'alongside',
+        way: (two ? `${word} of` : word) as 'above' | 'below' | 'left of' | 'right of',
+        leg,
+        ...('gap' in bracket && bracket.gap !== undefined ? { gap: bracket.gap } : {}),
+        written: written(start, bracket.next),
+      },
+      bracket.next,
+      listedName,
+    );
+  }
+
+  // `on b top`, `inside p top`: on the side itself, or just inside it.
+  let mode: 'outside' | 'on' | 'inside' = 'outside';
+  let at = start;
+  if (word === 'outside') {
+    throw new SourceError(
+      `${subject}: "outside" in via: says what via: already means — a part of a box is passed just outside it. Write \`via: ${tokens[start + 1]?.text ?? 'b'} ${tokens[start + 2]?.text ?? 'top'}\``,
+      line,
+    );
+  }
+  if ((word === 'on' || word === 'inside') && !token.text.endsWith(',')) {
+    mode = word;
+    at += 1;
+  }
+  const read = readOneTarget(tokens, at, subject, line);
+  let next = read.next;
+  let listed = read.listed;
+  const bare = read.target.part === undefined && read.target.fraction === undefined && read.target.point === undefined;
+  // `req at 1/3`, `req start`, `req end`: a point on a named line.
+  if (bare && !listed && mode === 'outside') {
+    if (follows(tokens, next, 'at')) {
+      const amount = tokens[next + 1];
+      const value = amount ? fractionValue(amount.text.replace(/,$/, '')) : undefined;
+      if (value === undefined || value > 1) {
+        throw new SourceError(`${subject}: "${read.target.name} at" is followed by how far along, such as \`${read.target.name} at 1/3\``, line);
+      }
+      return finish(
+        { kind: 'online', line: read.target.name, at: value, written: written(start, next + 2) },
+        next + 2,
+        amount!.text.endsWith(','),
+      );
+    }
+    const end = tokens[next]?.text.replace(/,$/, '');
+    if (end === 'start' || end === 'end') {
+      return finish(
+        { kind: 'online', line: read.target.name, at: end, written: written(start, next + 1) },
+        next + 1,
+        tokens[next]!.text.endsWith(','),
+      );
+    }
+    // `req b top`: a name, then one of that line's own stops, with no comma
+    // between. Only a line can be followed by a stop, so anything else is the
+    // missing comma `readVia` reports.
+    const after = tokens[next];
+    if (after && !after.quoted && !isAttrKey(after) && after.text !== '(' && after.text !== ',') {
+      const inner = readOneTarget(tokens, next, subject, line);
+      const along = written(next, inner.next);
+      return finish(
+        { kind: 'online', line: read.target.name, at: 1 / 2, along, written: written(start, inner.next) },
+        inner.next,
+        inner.listed,
+      );
+    }
+  }
+  let gap: string | undefined;
+  if (!listed) {
+    const bracket = gapBracket(next);
+    gap = bracket.gap;
+    next = bracket.next;
+  }
+  if (mode !== 'outside' && read.target.part === undefined) {
+    throw new SourceError(
+      `${subject}: "${mode} ${nameTarget(read.target)}" in via: names a part of a box to be ${mode === 'on' ? 'on' : 'just inside'}, such as \`via: ${mode} ${read.target.name} top\``,
+      line,
+    );
+  }
+  return finish(
+    { kind: 'place', target: read.target, mode, ...(gap !== undefined ? { gap } : {}), written: written(start, next) },
+    next,
+    listed,
+  );
 }
 
 /**

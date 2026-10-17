@@ -470,14 +470,16 @@ export const TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'at'] as const;
  * it goes in one bracket, as the text's do. `line: red` stays as the short form
  * of `line: (color: red)`, and both are stored under the bare `line` key.
  */
-export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness'] as const;
+export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness', 'curve', 'turn', 'step-out'] as const;
 
 /**
  * The words each of the line's properties takes, the default first. Thickness
- * takes a plain number of pixels as well.
+ * takes a plain number of pixels as well. `turn:` takes a fraction and
+ * `step-out:` a distance, so neither has a list.
  */
 export const LINE_VALUES = {
-  path: ['curved', 'square', 'straight'],
+  path: ['straight', 'square', 'curved'],
+  curve: ['normal', 'strong', 'subtle'],
   corners: ['sharp', 'rounded'],
   crossing: ['gap', 'none', 'arc', 'square'],
   pattern: ['solid', 'dashed', 'dotted', 'dash-dot'],
@@ -553,10 +555,53 @@ export interface EdgeStmt {
    * line is passing, as `between` does. Always `kind: 'offset'` with no gap.
    */
   passes?: OffsetPlacement[];
+  /** `edge req client -> api`: the line's own name. */
+  name?: string;
+  /** `straight down`: the line leaves its start that way and stops at what it meets (design.org 6.2). */
+  straight?: Way;
+  /** `via: b top, between c and d, leg climb`: the places the line passes, in order (design.org 6.4). */
+  via?: ViaEntry[];
   attrs: Attrs;
   /** `guide edge a -> b`: shapes nothing differently, and is drawn only when guides are shown. */
   guide?: boolean;
   line: number;
+}
+
+/** One place a line passes (design.org 6.4). */
+export type ViaStop =
+  | {
+      /**
+       * `b top`, `server right 3/4 down`, `proxy`, `between c and d`, a named
+       * point or region: anything section 4 names. A part of a box is just
+       * outside it unless `on` or `inside` says otherwise.
+       */
+      kind: 'place';
+      target: PlacementTarget;
+      mode: 'outside' | 'on' | 'inside';
+      gap?: string;
+      written: string;
+    }
+  | { kind: 'through'; region: string; axis: 'horizontal' | 'vertical'; written: string }
+  | { kind: 'alongside'; way: 'above' | 'below' | 'left of' | 'right of'; leg: string; gap?: string; written: string }
+  | {
+      /** `req at 1/3`, `req start`, `req end`, or a bare `req`, its middle: a point on a named line or leg. */
+      kind: 'online';
+      line: string;
+      at: number | 'start' | 'end';
+      /** `req b top`: the middle of where req runs along one of its own stops, written as that stop. */
+      along?: string;
+      written: string;
+    };
+
+/** An entry in a `via:` list: a stop, a leg's name, or a leg's name and the run it names. */
+export interface ViaEntry {
+  leg?: { name: string; attrs: Attrs };
+  stop?: ViaStop;
+}
+
+/** A stop written as the author would write it. */
+export function describeStop(stop: ViaStop): string {
+  return stop.written;
 }
 
 /**
@@ -744,7 +789,7 @@ export const ATTR_KEYS: Record<Kind, readonly string[]> = {
   shape: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url', 'depth'],
   icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
   none: ['style', 'overlap', 'layout', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
-  edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
+  edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
 };
 
 /**

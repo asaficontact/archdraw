@@ -2,6 +2,9 @@
 // the stretch where it is passing them. Before and after, it goes wherever its
 // ends take it.
 
+// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
+default edge  line: (path: curved)
+
 style channel  fill: theme-page  border: theme-fill
 
 // North and South are apart vertically, so that is the gap. Both edges start
@@ -14,8 +17,8 @@ node north  "North"   right of west (gap: wide)   style: channel
 node south  "South"   below north (gap: wide)     style: channel
 node east   "East"    right of north and south (gap: wide)  even with west
 
-edge west  -> east  "over"   between north and south  from: right  to: left
-edge lower -> east  "under"  between north and south  from: right  to: left
+edge west  -> east  "over"   from: right  to: left  via: between north and south at 1/3
+edge lower -> east  "under"  from: right  to: left  via: between north and south at 2/3
 
 // Port and Starboard are apart horizontally, so here the line runs down the gap
 // instead. This edge names no sides: the open end aims at the channel rather
@@ -26,12 +29,12 @@ node port       "Port"       below bow (gap: wide)       style: channel
 node starboard  "Starboard"  right of port (gap: wide)  style: channel
 node stern      "Stern"      below port (gap: wide)
 
-edge bow -> stern  "down"  between port and starboard
+edge bow -> stern  "down"  via: between port and starboard at 1/3
 
 // The same channel travelled the other way. No text on this one, so its lane
 // needs only the room two arrows need.
 
-edge stern -> bow  between port and starboard  from: top  to: bottom
+edge stern -> bow  from: top  to: bottom  via: between port and starboard at 2/3
 
 // High and Low sit diagonally, so there are two gaps between them and the file
 // has to say which. `vertically` is the gap you measure with a vertical ruler —
@@ -42,4 +45,4 @@ node high  "High"   right of far (gap: wide)  style: channel
 node low   "Low"    below-right of high (gap: wide)  style: channel
 node near  "Near"   right of low (gap: wide)  even with high
 
-edge far -> near  "threaded"  between high and low vertically
+edge far -> near  "threaded"  via: between high and low

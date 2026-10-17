@@ -1,7 +1,9 @@
 // Edges whose two ends face away from each other. Each has to turn back on
-// itself, and a single curve could only do that through its own nodes. So the
-// line takes the shortest way round: along the gap between its two nodes when
-// there is room for it, and over the top of the row when there is not.
+// itself, and over and under are both reasonable, so each line says which way
+// round it goes with via:.
+
+// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
+default edge  line: (path: curved)
 
 // The case that found it: level, with a node in the middle, and a text that
 // used to land on that node.
@@ -11,44 +13,44 @@ node renderer "Renderer"  8 right of resolver
 
 edge parser -> resolver    "statements"  from: right  to: left
 edge resolver -> renderer  "layout"      from: right  to: left
-edge parser -> renderer    "test edge"   from: left   to: right
+edge parser -> renderer    "test edge"   from: left   to: right  via: parser top
 
 // Two nodes side by side. The text goes over the top and the gap stays as it
 // was, since no text rides in it.
 node a "A"  below parser  (gap: wide)
 node b "B"  right of a
 
-edge a -> b  "adjacent"  from: left  to: right
+edge a -> b  "adjacent"  from: left  to: right  via: a top
 
 // A taller node in the way lifts the whole run over it.
 node c "C"  right of b  (gap: wide)
 node tall "Tall / middle / node"  right of c
 node d "D"  right of tall
 
-edge c -> d  "over the tall one"  from: left  to: right
+edge c -> d  "over the tall one"  from: left  to: right  via: tall top
 
 // Stepped down, with a gap wide enough: the line turns back through it.
 node e "E"  below a  (gap: wide)
 node f "F"  right of e  (gap: wide)  below e  (gap: normal)
 
-edge e -> f  "through the gap"  from: left  to: right
+edge e -> f  "through the gap"  from: left  to: right  via: between e and f
 
 // Stepped down with too little room between them: over the top again.
 node g "G"  right of f  (gap: wide)  even with e
 node h "H"  right of g  (gap: wide)  below g  (gap: tight)
 
-edge g -> h  "no room below"  from: left  to: right
+edge g -> h  "no room below"  from: left  to: right  via: g top
 
 // A column goes round the right.
 node top "Top"  right of d  (gap: wide)
 node bottom "Bottom"  below top
 
-edge top -> bottom  "column"  from: top  to: bottom
+edge top -> bottom  "column"  from: top  to: bottom  via: top right
 
 // And an edge from a node back to itself.
 node self "Self"  below bottom  (gap: wide)
 
-edge self -> self  "itself"  from: left  to: right
+edge self -> self  "itself"  from: left  to: right  via: self top
 
 // Two lines out of one side, each the shorter way round. They share J's left
 // side, so the one leaving lower down has the shorter way underneath.
@@ -56,8 +58,8 @@ node j "J"  below e  (gap: 16)
 node k "K"  right of j
 node l "L"  right of k
 
-edge j -> l  "outer"  from: left  to: right
-edge j -> k  "inner"  from: left  to: right
+edge j -> l  "outer"  from: left  to: right  via: j top
+edge j -> k  "inner"  from: left  to: right  via: j bottom
 
 // Sides at right angles, one facing away: out of the left, up over the row,
 // and down into the top. The side the far end names says which way round.
@@ -65,8 +67,8 @@ node m "M"  right of l  (gap: wide)
 node n "N"  right of m
 node o "O"  right of n
 
-edge m -> o  "into the top"  from: left  to: top
-edge m -> o  "into the bottom"  from: left  to: bottom
+edge m -> o  "into the top"  from: left  to: top  via: m top
+edge m -> o  "into the bottom"  from: left  to: bottom  via: m bottom
 
 // Stacked, sides at right angles (GitHub issue #2). Coming straight in would
 // pass through the lower node, so the line steps out beside it and comes in
@@ -80,13 +82,13 @@ edge p -> q  "curve"  from: bottom  to: left
 // between them widens to hold the text, which rides over the node and the gap.
 node r "R"  right of p  (gap: wide)
 node s "S"  right of r
-edge r -> s  "left to left"  from: left  to: left
+edge r -> s  "left to left"  from: left  to: left  via: r top
 
 node t "T"  right of s  (gap: wide)
 node u "U"  right of t
-edge t -> u  "right to right"  from: right  to: right
+edge t -> u  "right to right"  from: right  to: right  via: u top
 
 // In a column, round the right.
 node v "V"  right of u  (gap: wide)
 node w "W"  below v
-edge v -> w  from: bottom  to: bottom
+edge v -> w  from: bottom  to: bottom  via: w right

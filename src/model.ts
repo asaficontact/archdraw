@@ -1,25 +1,14 @@
-import type { Attrs, Axis, Direction, Kind, Mark, Placement } from './ast.js';
+import type { Attrs, Kind, Mark, Placement, ViaEntry, Way } from './ast.js';
+
+/** A rectangle on the page; a side or a point has no size on one axis or both. */
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 import type { Line } from './text.js';
 import type { Body } from './icons.js';
-
-/** A `between` clause with its targets resolved. Mirrors `Passage` in `ast.ts`. */
-export interface LayoutPassage {
-  nodes: [LayoutNode, LayoutNode];
-  /** Which gap, where the pair has two. Absent when the pair leaves no doubt. */
-  axis?: Axis;
-}
-
-/**
- * `below resolver` on an edge with its targets resolved: the line is on that
- * side of the box bounding `nodes`, where it passes them. Mirrors the edge's
- * `passes` in `ast.ts`.
- */
-export interface LayoutPass {
-  direction: Direction;
-  nodes: LayoutNode[];
-  /** As the author wrote it, for error messages. */
-  written: string;
-}
 
 /** A node with its geometry solved. Coordinates are absolute, origin top-left. */
 /** A distance past each side of a box. */
@@ -181,14 +170,23 @@ export interface LayoutEdge {
   lines?: Line[];
   /** The text's bracketed modifiers, with a style's `text: (…)` underneath. */
   textAttrs: Attrs;
+  /** The arrow as written, for quoting the edge back: `a -> b`. */
+  arrow: string;
+  /** `edge req client -> api`: the line's own name, for other statements to refer to. */
+  name?: string;
+  /** The places the line passes, as written (design.org 6.4). */
+  via?: ViaEntry[];
   /**
-   * The gap a `between` clause named, with its two nodes resolved. Nothing in
-   * the resolver uses this — a corridor is measured off the solved layout
-   * rather than solved for, so edges stay out of the constraint system entirely.
+   * Where each `via:` stop that names something placed is on the page, worked
+   * out by the placer once everything is placed: a box, a side, a point or a
+   * region. Absent for a stop on a line or beside a leg, which `lines.ts`
+   * works out from the lines themselves. Same order as `via`.
    */
-  between?: LayoutPassage;
-  /** Which side of which nodes the line passes. Measured in the renderer, like `between`. */
-  passes?: LayoutPass[];
+  viaAt?: (Rect | undefined)[];
+  /** `straight down`: leaving its start that way from the center, and ending where that meets the far end (6.2). */
+  straight?: Way;
+  /** An end on another line (`edge log audit -> req`): the line it is on, for that end. */
+  onLine?: { from?: LayoutEdge; to?: LayoutEdge };
   /** What the line's bracket says, checked and with every default filled in. */
   look: LineLook;
   attrs: Attrs;
@@ -209,6 +207,12 @@ export interface LineLook {
   pattern: 'solid' | 'dashed' | 'dotted' | 'dash-dot';
   /** In pixels. */
   thickness: number;
+  /** How widely a curved line swings between its points. */
+  curve: 'normal' | 'strong' | 'subtle';
+  /** Where the free leg sits, a fraction of the way from the start's box (6.3). */
+  turn: number;
+  /** The short first and last leg of a square or curved line, in pixels. */
+  stepOut: number;
 }
 
 export interface Layout {

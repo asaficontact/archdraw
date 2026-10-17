@@ -6,10 +6,13 @@
 
 // Hacker News, 2026-09-26: ends facing away across a row. The line ran
 // straight through the middle node, its text sitting on it.
+// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
+default edge  line: (path: curved)
+
 node parser "Parser"
 node resolver "Resolver"  right of parser
 node renderer "Renderer"  right of resolver
-edge parser -> renderer  "Hacker News"  from: left  to: right
+edge parser -> renderer  "Hacker News"  from: left  to: right  via: parser top
 
 // GitHub issue #2: stacked, sides at right angles. The line came straight up
 // through the lower node.
@@ -21,11 +24,11 @@ edge p -> q  "issue #2"  from: bottom  to: left
 // line went straight through the node behind.
 node r "R"  right of p  (gap: wide)
 node s "S"  right of r  (gap: 19)
-edge r -> s  "issue #2, same side"  from: left  to: left
+edge r -> s  "issue #2, same side"  from: left  to: left  via: r top
 
 node v "V"  right of s  (gap: wide)
 node w "W"  below v
-edge v -> w  from: bottom  to: bottom
+edge v -> w  from: bottom  to: bottom  via: w right
 
 // A fan of three, 2026-09-27. The lines to the top and bottom nodes ran level
 // with the middle one, straight through it, out past the column and back.
@@ -66,16 +69,16 @@ edge x1 -> b1  from: right  to: left
 node x "X"  right of f  (gap: wide)
 node y "Y"  right of x
 node z "Z"  right of y
-edge x -> z  "no sides named"
+edge x -> z  "no sides named"  via: y top
 
 // Three lines told the same thing, 2026-09-27. "below ra" lines were drawn on
 // one path, so the three read as one line with three arrowheads. They now take
 // a lane each, nested so that none crosses another.
 node ra "A"  below g  (gap: wide)
 node rb "B"  right of ra
-edge ra -> rb  from: left  to: right  below ra
-edge ra -> rb  from: left  to: right  below ra
-edge ra -> rb  from: left  to: right  below ra
+edge ra -> rb  from: left  to: right  via: ra bottom
+edge ra -> rb  from: left  to: right  via: ra bottom
+edge ra -> rb  from: left  to: right  via: ra bottom
 
 // Through a named gap, 2026-09-28. The line ran about 2px from Lower, then
 // came into Lowest's right side down Lowest's own edge. It now keeps clear of
@@ -83,4 +86,4 @@ edge ra -> rb  from: left  to: right  below ra
 node west "West"  right of rb  (gap: wide)
 node lower "Lower"  below west  (gap: tight)
 node lowest "Lowest"  below lower  (gap: normal)
-edge west -> lowest  "between"  from: left  to: right  between lower and lowest
+edge west -> lowest  "between"  from: left  to: right  via: between lower and lowest

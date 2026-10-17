@@ -7,8 +7,9 @@
  * anything: the picture is drawn as written, and this says where it may not
  * read as the writer meant.
  */
-import type { Layout, LayoutNode } from './model.js';
-import { UNIT } from './constants.js';
+import type { Layout, LayoutEdge, LayoutNode } from './model.js';
+import { UNIT, arrowLength } from './constants.js';
+import { describeEdge, planSides, traceRoute, type Route, type SideEnds } from './lines.js';
 
 /**
  * The kinds of finding, each with whether it is on when nothing says. Named in
@@ -104,7 +105,273 @@ export function findings(layout: Layout, checks: Checks): Finding[] {
   const found: Finding[] = [];
   if (checks['node-overlap']) found.push(...nodeOverlaps(layout));
   if (checks['text-overflow']) found.push(...textOverflows(layout));
+  if (checks['edge-node-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends']) {
+    const plan = planSides(layout);
+    if (checks['edge-node-overlap']) found.push(...edgeNodeOverlaps(layout, plan.routes));
+    if (checks['edge-no-length']) found.push(...edgesWithNoLength(layout, plan.routes));
+    if (checks['crowded-edge-ends']) found.push(...crowdedEnds(plan.sides));
+  }
   return found.sort((a, b) => a.line - b.line);
+}
+
+/**
+ * A line across a node that isn't one of its ends: drawn, since nothing is
+ * avoided, and reported (design.org 6.3). A line through one of its own boxes
+ * is reported too, which is what a straight line between side-by-side boxes
+ * named on their far sides does. A box holding either end is the line's own
+ * surroundings, not something it crosses.
+ *
+ * Nodes are filed in a grid first, so each line looks only at the boxes near
+ * it rather than at every box.
+ */
+function edgeNodeOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
+  const found: Finding[] = [];
+  const grid = new Grid(layout.nodes.filter((node) => !node.guide));
+  for (const edge of layout.edges) {
+    if (edge.guide) continue;
+    const trace = traceRoute(routes.get(edge)!);
+    for (const node of grid.near(trace)) {
+      if (holdsEnd(node, edge)) continue;
+      const inner = { x: node.x + 1, y: node.y + 1, width: node.width - 2, height: node.height - 2 };
+      const round = node.body.kind === 'shape' && node.body.outline === 'circle';
+      const through = round ? crossingCircle(trace, node) : crossing(trace, inner);
+      if (through === undefined) continue;
+      const own = node === edge.from || node === edge.to;
+      const words = `line ${describeEdge(edge)} ${own ? 'runs through its own box' : 'crosses node'} ${node.name}, ` +
+        `${through.enters === through.leaves ? `in and out of its ${through.enters}` : `entering its ${through.enters} and leaving its ${through.leaves}`}`;
+      const hint = own && edge.look.path !== 'straight'
+        ? `; say which way round, such as \`via: ${node.name} top\` or \`via: ${node.name} bottom\``
+        : '';
+      found.push(new Finding('edge-node-overlap', words + hint, edge.line));
+    }
+  }
+  return dropInner(found, layout);
+}
+
+/**
+ * Only the outermost of several nested boxes one line crosses is reported: a
+ * line across a container crosses whatever of its children it reaches too, and
+ * saying so for each child repeats the one fact.
+ */
+function dropInner(found: Finding[], layout: Layout): Finding[] {
+  const byName = new Map(layout.nodes.map((node) => [node.name, node]));
+  const key = (finding: Finding): { prefix: string; node: LayoutNode | undefined } => {
+    const match = /^(line .*? (?:crosses node|runs through its own box)) (\S+),/.exec(finding.message);
+    return { prefix: `${finding.line}\n${match?.[1] ?? ''}`, node: byName.get(match?.[2] ?? '') };
+  };
+  const reported = new Set(found.map((finding) => {
+    const { prefix, node } = key(finding);
+    return `${prefix}\n${node?.name}`;
+  }));
+  return found.filter((finding) => {
+    const { prefix, node } = key(finding);
+    for (let at = node?.parent; at; at = at.parent) {
+      if (reported.has(`${prefix}\n${at.name}`)) return false;
+    }
+    return true;
+  });
+}
+
+/** Whether a node is one of the line's ends, or holds one: the line starts or ends inside it. */
+function holdsEnd(node: LayoutNode, edge: LayoutEdge): boolean {
+  for (const end of [edge.from, edge.to]) {
+    for (let at = end.parent; at; at = at.parent) if (at === node) return true;
+  }
+  return false;
+}
+
+/**
+ * Where a polyline first enters a box and last leaves it, as the sides it
+ * crosses; undefined when it never goes inside. A point on the border is not
+ * inside, so a line ending on a box's side doesn't cross it.
+ */
+function crossing(trace: { x: number; y: number }[], box: { x: number; y: number; width: number; height: number }): { enters: string; leaves: string } | undefined {
+  const inside = (p: { x: number; y: number }): boolean =>
+    p.x > box.x && p.x < box.x + box.width && p.y > box.y && p.y < box.y + box.height;
+  const sideAt = (p: { x: number; y: number }): string => {
+    const distances: [number, string][] = [
+      [Math.abs(p.y - box.y), 'top'],
+      [Math.abs(p.y - (box.y + box.height)), 'bottom'],
+      [Math.abs(p.x - box.x), 'left'],
+      [Math.abs(p.x - (box.x + box.width)), 'right'],
+    ];
+    distances.sort((a, b) => a[0] - b[0]);
+    return distances[0]![1];
+  };
+  let enters: string | undefined;
+  let leaves: string | undefined;
+  for (let index = 1; index < trace.length; index += 1) {
+    const a = trace[index - 1]!;
+    const b = trace[index]!;
+    const clip = clipSegment(a, b, box);
+    if (clip === undefined) continue;
+    if (enters === undefined) enters = inside(a) ? 'middle' : sideAt(clip[0]);
+    leaves = inside(b) ? 'middle' : sideAt(clip[1]);
+  }
+  if (enters === undefined || leaves === undefined) return undefined;
+  return { enters, leaves };
+}
+
+/**
+ * The same for a circle, which is drawn in its node's square: walked a couple
+ * of pixels at a time, a point counting as inside only past a pixel within the
+ * outline, so a line ending on the circle doesn't cross it.
+ */
+function crossingCircle(trace: { x: number; y: number }[], node: LayoutNode): { enters: string; leaves: string } | undefined {
+  const radius = node.width / 2 - 1;
+  const center = { x: node.x + node.width / 2, y: node.y + node.height / 2 };
+  const inside = (p: { x: number; y: number }): boolean => Math.hypot(p.x - center.x, p.y - center.y) < radius;
+  const sideAt = (p: { x: number; y: number }): string => {
+    const dx = p.x - center.x;
+    const dy = p.y - center.y;
+    return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : dy >= 0 ? 'bottom' : 'top';
+  };
+  let enters: string | undefined;
+  let leaves: string | undefined;
+  let was = inside(trace[0]!);
+  if (was) enters = 'middle';
+  for (let index = 1; index < trace.length; index += 1) {
+    const a = trace[index - 1]!;
+    const b = trace[index]!;
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 2));
+    for (let step = 1; step <= steps; step += 1) {
+      const p = { x: a.x + ((b.x - a.x) * step) / steps, y: a.y + ((b.y - a.y) * step) / steps };
+      const is = inside(p);
+      if (is && !was) enters ??= sideAt(p);
+      if (!is && was) leaves = sideAt(p);
+      was = is;
+    }
+  }
+  if (enters === undefined) return undefined;
+  return { enters, leaves: was ? 'middle' : (leaves ?? enters) };
+}
+
+/** The part of a segment inside a box, strictly, as its two ends; undefined when none is. */
+function clipSegment(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  box: { x: number; y: number; width: number; height: number },
+): [{ x: number; y: number }, { x: number; y: number }] | undefined {
+  if (box.width <= 0 || box.height <= 0) return undefined;
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const edges: [number, number][] = [
+    [-dx, a.x - box.x],
+    [dx, box.x + box.width - a.x],
+    [-dy, a.y - box.y],
+    [dy, box.y + box.height - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q <= 0) return undefined;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 >= t1) return undefined;
+  }
+  return [
+    { x: a.x + dx * t0, y: a.y + dy * t0 },
+    { x: a.x + dx * t1, y: a.y + dy * t1 },
+  ];
+}
+
+/** Boxes filed by the cells of a coarse grid, so a line finds the boxes near it without trying every one. */
+class Grid {
+  private readonly cells = new Map<string, LayoutNode[]>();
+  private static readonly SIZE = 160;
+
+  constructor(nodes: LayoutNode[]) {
+    for (const node of nodes) {
+      for (const key of this.keys(node.x, node.y, node.x + node.width, node.y + node.height)) {
+        const cell = this.cells.get(key) ?? [];
+        cell.push(node);
+        this.cells.set(key, cell);
+      }
+    }
+  }
+
+  near(trace: { x: number; y: number }[]): LayoutNode[] {
+    const found = new Set<LayoutNode>();
+    for (let index = 1; index < trace.length; index += 1) {
+      const a = trace[index - 1]!;
+      const b = trace[index]!;
+      for (const key of this.keys(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y))) {
+        for (const node of this.cells.get(key) ?? []) found.add(node);
+      }
+    }
+    return [...found];
+  }
+
+  private keys(minX: number, minY: number, maxX: number, maxY: number): string[] {
+    const keys: string[] = [];
+    for (let i = Math.floor(minX / Grid.SIZE); i <= Math.floor(maxX / Grid.SIZE); i += 1) {
+      for (let j = Math.floor(minY / Grid.SIZE); j <= Math.floor(maxY / Grid.SIZE); j += 1) keys.push(`${i},${j}`);
+    }
+    return keys;
+  }
+}
+
+/**
+ * A line between two boxes that touch has no length: it is drawn as its marks
+ * at the seam, and reported (design.org 6.3).
+ */
+function edgesWithNoLength(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
+  const found: Finding[] = [];
+  for (const edge of layout.edges) {
+    if (edge.guide) continue;
+    const points = routes.get(edge)!.points;
+    let length = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      length += Math.hypot(points[index]!.x - points[index - 1]!.x, points[index]!.y - points[index - 1]!.y);
+    }
+    if (length >= 1) continue;
+    found.push(
+      new Finding(
+        'edge-no-length',
+        `line ${describeEdge(edge)} has no length; ${edge.from.name} and ${edge.to.name} touch`,
+        edge.line,
+      ),
+    );
+  }
+  return found;
+}
+
+/**
+ * Ends spread on a side too short to space them: closer than an arrowhead's
+ * width apart, their marks run together. Reported against the last line
+ * written to land there, with the room they need beside the room there is.
+ */
+function crowdedEnds(sides: SideEnds[]): Finding[] {
+  const found: Finding[] = [];
+  for (const { node, side, ends } of sides) {
+    if (node.guide) continue;
+    const drawn = ends.filter((end) => !end.edge.guide);
+    if (drawn.length < 2) continue;
+    const across = side === 'top' || side === 'bottom';
+    const want = Math.max(...drawn.map((end) => arrowLength(end.edge.look.thickness))) + 4;
+    let closest = Infinity;
+    for (let index = 1; index < drawn.length; index += 1) {
+      const a = drawn[index - 1]!.at;
+      const b = drawn[index]!.at;
+      closest = Math.min(closest, Math.abs(across ? b.x - a.x : b.y - a.y));
+    }
+    if (closest >= want) continue;
+    const length = across ? node.width : node.height;
+    const needs = want * (drawn.length + 1);
+    found.push(
+      new Finding(
+        'crowded-edge-ends',
+        `${drawn.length} line ends share node ${node.name}'s ${side} side, which is ${units(length)} long; ` +
+          `spaced so their marks don't run together they need ${units(needs)}`,
+        Math.max(...drawn.map((end) => end.edge.line)),
+      ),
+    );
+  }
+  return found;
 }
 
 /**

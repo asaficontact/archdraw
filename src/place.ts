@@ -167,6 +167,19 @@ export class Placer {
     return placed;
   }
 
+  /**
+   * Where a target is on the page once everything is placed: a box, a side (a
+   * stretch on one axis), a point, a named point or region. For a line's
+   * `via:` stops (design.org 6.4).
+   */
+  locate(target: PlacementTarget, subject: string, line: number): { x: number; y: number; width: number; height: number } {
+    const page = { name: subject, parent: undefined, children: [], placements: [], line } as unknown as LayoutNode;
+    const placement: Placement = { kind: 'on', targets: [target], line };
+    const x = this.extentOf(page, target, 'x', placement);
+    const y = this.extentOf(page, target, 'y', placement);
+    return { x: x.start, y: y.start, width: x.size, height: y.size };
+  }
+
   /** Work out everything, and write it onto the nodes. */
   run(): void {
     this.checkAnchors(this.roots, undefined);
