@@ -1,77 +1,54 @@
-// Saying which side of a node a line passes. `below resolver` on an edge means
-// that where the line passes Resolver, it is below it — not that the whole line
-// is. The line meets the nodes in the order they sit along its way.
+// Saying where a line passes, with via:. A side is a run along it, just
+// outside, from the end nearer the line; a point is one spot the line goes
+// through. Between the stops it names, a curved line takes one sweep.
 
-// The row that goes over the top by default, sent underneath instead.
-// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
 default edge  line: (path: curved)
 
+// A row, with the line sent underneath it: a run under each end box.
 node parser "Parser"
 node resolver "Resolver"  right of parser
 node renderer "Renderer"  right of resolver
 
-edge parser -> renderer  "underneath"  from: left  to: right  via: resolver bottom
+edge parser -> renderer  "underneath"  from: left  to: right  via: parser bottom, renderer bottom
 
-// Two clauses on opposite sides: the line crosses over in the gap between.
-node a "A"  below parser  (gap: 7.5)
-node b "B"  below a  (gap: normal)
+// Two runs on opposite sides: down A's left, then down B's right, so the line
+// crosses over in the gap between.
+node a "A"  below parser  (gap: 14)
+node b "B"  below a  (gap: wide)
 
 edge a -> b  "an S"  from: top  to: bottom  via: a left, b right
 
-// Out of the top and round the left, where the default would go round the right.
+// Out of the top and round the left.
 node p "P"  right of a  (gap: 18)
 node q "Q"  below p  (gap: normal)
 
 edge p -> q  "the left"  from: top  to: top  via: p left
 
-// Three separate clauses: under each end, rising over the one in the middle.
-node t1 "T1"  below b  (gap: 7.5)
+// One point, over the middle of Peak's top: the line rises to it and falls.
+node t1 "T1"  below b  (gap: 16)
 node t2 "T2"  right of t1  (gap: 13)
 node peak "Peak"  right of t1  left of t2  above t1  (gap: tight)
 
-edge t1 -> t2  "weave"  from: bottom  to: bottom  via: t1 bottom, peak top, t2 bottom
+edge t1 -> t2  "over a point"  from: right  to: left  via: peak top-center
 
-// One clause naming two nodes: under the whole stretch, with no rising
-// between them. Adding "above peak2" to this one would be refused, because
-// Peak2 sits over that stretch.
-node u1 "U1"  right of t2  (gap: 7.5)
+// Runs under both ends, so the line stays low past Peak2 between them.
+node u1 "U1"  right of t2  (gap: wide)
 node u2 "U2"  right of u1  (gap: 13)
 node peak2 "Peak2"  right of u1  left of u2  above u1  (gap: tight)
 
 edge u1 -> u2  "under both"  from: left  to: right  via: u1 bottom, u2 bottom
 
-// An end naming no side leaves from the one facing where the line goes.
-node x "X"  below t1  (gap: 7.5)
+// An end naming no side leaves from the one facing the other box.
+node x "X"  below t1  (gap: 12)
 node z "Z"  right of x
 node y "Y"  right of z
 
 edge x -> y  "no sides named"  via: z bottom
 
-// Both kinds on one edge. With no clauses this line runs straight from LA to
-// LB. "left of ln" sends it down LN's left instead, and "above lm" brings it
-// across between LN and LM rather than round under LM.
-node la "LA"  below x  (gap: 7.5)
-node ln "LN"  below la  (gap: 3.5)
-node lm "LM"  below ln  (gap: 3.5)
-node lb "LB"  right of lm  (gap: 6.5)
+// The point between two boxes: the line threads the gap between LN and LM.
+node la "LA"  right of y  (gap: wide)
+node ln "LN"  below la  (gap: wide)
+node lm "LM"  right of ln  (gap: wide)
+node lb "LB"  below lm  (gap: wide)
 
-edge la -> lb  "threaded"  via: ln left, lm top
-
-// A named side says which way it goes first, and several clauses of the
-// second kind weave as they do on their own.
-node wa "WA"  right of la  (gap: 25)
-node wm "WM"  right of wa  (gap: 5)
-node wn "WN"  below wm  right of wm  (gap: 3.5)
-node wb "WB"  below wn  (gap: 6)
-
-edge wa -> wb  from: right  to: bottom  via: wm bottom, wn right, wb left
-
-// Clauses of one kind in two legs: over one node on the way out, under
-// another on the way in, so the line turns twice.
-node za "ZA"  below lb  left of lb  (gap: 7.5)
-node zp "ZP"  right of za  (gap: 5)
-node zn "ZN"  below zp  right of zp  (gap: 3.5)
-node zm "ZM"  below zn  right of zn  (gap: 3.5)
-node zb "ZB"  right of zm  (gap: 5)
-
-edge za -> zb  from: right  to: bottom  via: zp top, zn right, zm bottom
+edge la -> lb  "between"  from: bottom  to: top  via: between ln and lm

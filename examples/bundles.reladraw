@@ -39,10 +39,11 @@ edge h2 -- bus  straight down  to-mark: dot
 edge s2 -- bus  straight up  to-mark: dot
 edge h1 -> s3  from: bottom  to: top  via: bus  line: (path: square)
 
-// One line from each child, which stays true as children are added.
+// One line from each child, which stays true as children are added. They
+// meet at one point on Queue, so its side never runs out of room for them.
 node pool "Workers"  below s1 (gap: wide)  layout: column  style: plain
 node pool.w1 "w1"
 node pool.w2 "w2"
 node pool.w3 "w3"
 node queue "Queue"  right of pool (gap: wide)  style: plain
-edge each child of pool -> queue
+edge each child of pool -> queue  to: left-center

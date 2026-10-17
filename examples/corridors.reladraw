@@ -1,15 +1,16 @@
-// `between a and b` sends an edge through the gap between two named things, for
-// the stretch where it is passing them. Before and after, it goes wherever its
-// ends take it.
+// `between a and b` is a point: the middle of the space between two things.
+// A line passes it with `via:`, and before and after goes wherever its ends
+// take it. `at 1/3` moves the point a third of the way across, measured from
+// the first thing named.
 
-// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
 default edge  line: (path: curved)
 
 style channel  fill: theme-page  border: theme-fill
 
-// North and South are apart vertically, so that is the gap. Both edges start
-// well to the left, climb into the channel, run along it and leave for East.
-// They share it, so they take a lane each.
+// North and South are apart vertically, so the point lies in the gap between
+// them. Both lines start to the left, pass through the gap and leave for East.
+// Two lines through one point would pinch there, so each passes its own:
+// a third and two thirds of the way down.
 
 node west   "West"
 node lower  "Lower"   below west (gap: tight)
@@ -20,9 +21,9 @@ node east   "East"    right of north and south (gap: wide)  even with west
 edge west  -> east  "over"   from: right  to: left  via: between north and south at 1/3
 edge lower -> east  "under"  from: right  to: left  via: between north and south at 2/3
 
-// Port and Starboard are apart horizontally, so here the line runs down the gap
-// instead. This edge names no sides: the open end aims at the channel rather
-// than at the far node, so it leaves Bow already heading for the gap.
+// Port and Starboard are apart horizontally, so here the line runs down the
+// gap instead. This line names no sides, so it leaves Bow's bottom, the side
+// facing Stern.
 
 node bow        "Bow"        below lower (gap: wide)
 node port       "Port"       below bow (gap: wide)       style: channel
@@ -31,14 +32,13 @@ node stern      "Stern"      below port (gap: wide)
 
 edge bow -> stern  "down"  via: between port and starboard at 1/3
 
-// The same channel travelled the other way. No text on this one, so its lane
-// needs only the room two arrows need.
+// The same gap travelled the other way, through its own point.
 
 edge stern -> bow  from: top  to: bottom  via: between port and starboard at 2/3
 
-// High and Low sit diagonally, so there are two gaps between them and the file
-// has to say which. `vertically` is the gap you measure with a vertical ruler —
-// under High, over Low — so a line running along it travels sideways.
+// High and Low sit diagonally, so the space between them is the rectangle
+// between their nearest corners, and the point is its middle: under High and
+// over Low at once.
 
 node far   "Far"    below stern (gap: wide)
 node high  "High"   right of far (gap: wide)  style: channel

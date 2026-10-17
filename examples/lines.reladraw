@@ -1,11 +1,12 @@
-// Everything about how a line is drawn, in its bracket: line: (…). A shape is
-// the rule for joining what the file fixed — where the line leaves and which
-// way it heads, where it arrives, and any sides it passes.
+// Everything about how a line is drawn, in its bracket: line: (…). A line is
+// straight unless the bracket says otherwise. A shape is the rule for joining
+// what the file fixed — where the line leaves and which way it heads, where it
+// arrives, and any sides it passes.
 
 // Out of A's top and into B's left, three ways.
 node a1 "A"
 node b1 "B"  right of a1  above a1  (gap: wide)
-edge a1 -> b1  "curved"  from: top  to: left
+edge a1 -> b1  "curved"  from: top  to: left  line: (path: curved)
 
 node a2 "A"  right of a1  (gap: 18)
 node b2 "B"  right of a2  above a2  (gap: wide)
@@ -24,16 +25,17 @@ node c2 "C"  right of c1  (gap: 18)
 node d2 "D"  right of c2  below c2  (gap: wide)
 edge c2 -> d2  "no sides"  line: (path: square)
 
-// A pass: straight bends only where the clause makes it.
+// A stop: the line runs along Middle's bottom. Square turns where its shape
+// says; straight joins the stop's two ends to its own with straight pieces.
 node p1 "P"  below c1  (gap: 18)
 node q1 "Q"  right of p1  (gap: 18)
-node m1 "M"  right of p1  left of q1  even with p1
-edge p1 -> q1  "below M, square"  from: right  to: left  via: m1 bottom  line: (path: square)
+node m1 "Middle"  right of p1  left of q1  even with p1
+edge p1 -> q1  "square"  from: right  to: left  via: m1 bottom  line: (path: square)
 
 node p2 "P"  below p1  (gap: 8)
 node q2 "Q"  right of p2  (gap: 18)
-node m2 "M"  right of p2  left of q2  even with p2
-edge p2 -> q2  "below M, straight"  from: right  to: left  via: m2 bottom  line: (path: straight, corners: rounded)
+node m2 "Middle"  right of p2  left of q2  even with p2
+edge p2 -> q2  "straight"  from: right  to: left  via: m2 bottom  line: (path: straight, corners: rounded)
 
 // Patterns and thicknesses.
 node f1 "F"  below p2  (gap: 8)

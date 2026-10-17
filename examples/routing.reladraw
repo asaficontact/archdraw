@@ -1,21 +1,21 @@
 // Every routing bug reported so far, one row each, the line's text saying
 // where it was reported. Each of these was drawn through a box, on top of
-// another line, or hard against a box's edge at some point. Every line now
-// takes the shortest way round that passes through none, keeps a lane of its
-// own, and keeps its distance.
+// another line, or hard against a box's edge. Lines no longer find their own
+// way round anything: each row states its course, and the line follows it.
+
+default edge  line: (path: square, corners: rounded)
 
 // Hacker News, 2026-09-26: ends facing away across a row. The line ran
-// straight through the middle node, its text sitting on it.
-// Drawn curved, as 0.16.0 drew every line, so the route is what changed.
-default edge  line: (path: curved)
-
+// straight through the middle node, its text sitting on it. It now runs along
+// the tops of the two end boxes, so it passes over the row.
 node parser "Parser"
 node resolver "Resolver"  right of parser
 node renderer "Renderer"  right of resolver
-edge parser -> renderer  "Hacker News"  from: left  to: right  via: parser top
+edge parser -> renderer  "Hacker News"  from: left  to: right  via: parser top, renderer top
 
 // GitHub issue #2: stacked, sides at right angles. The line came straight up
-// through the lower node.
+// through the lower node. Leaving the bottom and arriving at the left, it now
+// steps out and comes round.
 node p "P"  below parser  (gap: wide)
 node q "Q"  below p  (gap: 7)
 edge p -> q  "issue #2"  from: bottom  to: left
@@ -32,37 +32,37 @@ edge v -> w  from: bottom  to: bottom  via: w right
 
 // A fan of three, 2026-09-27. The lines to the top and bottom nodes ran level
 // with the middle one, straight through it, out past the column and back.
+// All three now leave from one point and fan out.
 node a "A"  below q  (gap: wide)
 node c "C"  right of a  (gap: wide)
 node b "B"  above c  (gap: 1)
 node d "D"  below c  (gap: 1)
-edge a -> b  "fan"  from: right  to: top
-edge a -> c  from: right  to: left
-edge a -> d  from: right  to: bottom
+edge a -> b  "fan"  from: right-center  to: left
+edge a -> c  from: right-center  to: left
+edge a -> d  from: right-center  to: left
 
 // The Cache case, 2026-09-27. The curved line dipped through Cache, while the
-// same line drawn square happened to clear it.
+// same line drawn square happened to clear it. It now runs under Cache.
 node web "Web"  right of c  (gap: wide)
 node api "API"  right of web
 node db "Postgres"  right of api
 node cache "Cache"  below api
-edge web -> db  "cache case"  from: bottom  to: bottom
+edge web -> db  "cache case"  from: bottom  to: bottom  via: cache bottom
 
-// A curve back round the side of a row, 2026-09-26: it crossed the node it
+// A line back round the side of a row, 2026-09-26: it crossed the node it
 // was going round.
-node e "E"  below a  (gap: 16)
-node f "F"  right of e  (gap: wide)
+node e "E"  below a  (gap: 22)
+node f "F"  right of e  (gap: 16)
 node g "G"  below e and f
 edge g -> e  "round the side"  from: left  to: left
 
-// Two lines turning down the same gap into one box, 2026-09-27. The longer
-// one's curve swung across the other's twice. They now take a lane each, in
-// the order that keeps them from crossing at all.
+// Two lines into one box, 2026-09-27. The longer one's curve swung across
+// the other's twice. The longer one now comes in from above.
 node x1 "X"  right of z  (gap: wide)
 node a1 "A"  below x1
 node b1 "B"  right of a1  (gap: normal)  below a1  (gap: tight)
 edge a1 -> b1  from: right  to: left
-edge x1 -> b1  from: right  to: left
+edge x1 -> b1  from: right  to: top
 
 // No side named, with a box in the way. The line used to be straight from
 // center to center, through whatever lay between.
@@ -71,18 +71,18 @@ node y "Y"  right of x
 node z "Z"  right of y
 edge x -> z  "no sides named"  via: y top
 
-// Three lines told the same thing, 2026-09-27. "below ra" lines were drawn on
-// one path, so the three read as one line with three arrowheads. They now take
-// a lane each, nested so that none crosses another.
-node ra "A"  below g  (gap: wide)
-node rb "B"  right of ra
-edge ra -> rb  from: left  to: right  via: ra bottom
-edge ra -> rb  from: left  to: right  via: ra bottom
-edge ra -> rb  from: left  to: right  via: ra bottom
+// Three lines told the same thing, 2026-09-27. They were drawn on one path,
+// so the three read as one line with three arrowheads. Copies of one line now
+// fan out, nested so that none crosses another.
+node ra "A"  below g  (gap: wide)  width: 6
+node rb "B"  right of ra  width: 6
+edge ra -> rb  from: bottom  to: bottom
+edge ra -> rb  from: bottom  to: bottom
+edge ra -> rb  from: bottom  to: bottom
 
 // Through a named gap, 2026-09-28. The line ran about 2px from Lower, then
-// came into Lowest's right side down Lowest's own edge. It now keeps clear of
-// both and comes into the side from outside.
+// came into Lowest's right side down Lowest's own edge. It now passes the
+// point between the two and comes into the side from outside.
 node west "West"  right of rb  (gap: wide)
 node lower "Lower"  below west  (gap: tight)
 node lowest "Lowest"  below lower  (gap: normal)

@@ -31,17 +31,19 @@ node d "D"  right of tall
 edge c -> d  "over the tall one"  from: left  to: right  via: c top, d top
 
 // Stepped down, with a gap wide enough: the line turns back under E and over
-// F, through the gap between them.
+// F, through the gap between them. A wide gap is twice the distance a line
+// keeps from a side it runs along, so the two runs meet in one level line.
 node e "E"  below a  (gap: wide)
-node f "F"  right of e  (gap: wide)  below e  (gap: normal)
+node f "F"  right of e  (gap: wide)  below e  (gap: wide)
 
 edge e -> f  "through the gap"  from: left  to: right  via: e bottom, f top
 
-// Stepped down with too little room between them: over the top again.
+// Stepped down with too little room between them: over the top of G, then
+// one sweep down round H's right.
 node g "G"  right of f  (gap: wide)  even with e
 node h "H"  right of g  (gap: wide)  below g  (gap: tight)
 
-edge g -> h  "no room below"  from: left  to: right  via: g top, h top 1/1 across
+edge g -> h  "no room below"  from: left  to: right  via: g top
 
 // A column goes round the right.
 node top "Top"  right of d  (gap: wide)
@@ -56,7 +58,7 @@ edge self -> self  "itself"  from: left  to: right  via: self top
 
 // Two lines out of one side, each the shorter way round. They share J's left
 // side, so the one leaving lower down has the shorter way underneath.
-node j "J"  below e  (gap: 16)
+node j "J"  below e  (gap: 21)
 node k "K"  right of j
 node l "L"  right of k
 
@@ -74,10 +76,11 @@ edge m -> o  "into the bottom"  from: left  to: bottom  via: m bottom, n bottom
 
 // Stacked, sides at right angles (GitHub issue #2). Coming straight in would
 // pass through the lower node, so the line steps out beside it and comes in
-// to the side named.
+// to the side named. The turn is stated, so the curve passes the middle of
+// the gap heading across it, and comes round in a hook rather than a kink.
 node p "P"  below j  (gap: 12)
 node q "Q"  below p
-edge p -> q  "curve"  from: bottom  to: left  via: q left 0 down
+edge p -> q  "curve"  from: bottom  to: left  line: (turn: 1/2)
 
 // Both ends facing the same way, one node behind the other: the line has to
 // get round the node behind, so it goes over the top, as a loop does. A wide
