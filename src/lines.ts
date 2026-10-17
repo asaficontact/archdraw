@@ -1296,6 +1296,13 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     });
   }
 
+  // A curved line passes a stop with no way of its own, such as a corner,
+  // heading from the place before it toward the place after it (6.4), so a
+  // set of stops that mirror each other draws a curve that does too.
+  const smooth = ways.map((way, index) =>
+    index > 0 && index < ways.length - 1 && !way.dir && !way.choices ? unit(ways[index - 1]!.at, ways[index + 1]!.at) : undefined,
+  );
+
   // Each segment's points, in order, and whether it is drawn curved.
   const drawn: { points: Point[]; curved: boolean; through: Point[]; turned?: Turned; segment: Segment; from: Way; to: Way; step: number }[] = [];
   let arriving: Point | undefined;
@@ -1329,7 +1336,8 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
       refuseTie(edge, index === 0 ? start : end, best.map((option) => (index === 0 ? option.out : back(option.arrive))), fewest);
     }
     const chosen = best[0]!;
-    // A point with no way of its own is passed in the way the line arrives (6.4).
+    // A point with no way of its own is passed in the way the line arrives,
+    // along an axis, which is what a square line needs (6.4).
     from.dir ??= chosen.out;
     to.dir ??= chosen.arrive;
     arriving = chosen.arrive;
@@ -1358,7 +1366,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
   const hidden: [number, number][] = [];
   for (const [index, part] of drawn.entries()) {
     const own: Piece[] = part.curved
-      ? curve(part.through, part.from.dir, part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined), part.step, part.turned)
+      ? curve(part.through, smooth[index] ?? part.from.dir, smooth[index + 1] ?? part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined), part.step, part.turned)
       : part.points.slice(1).map((to) => ({ to }));
     if (part.segment.hidden) {
       const last = hidden[hidden.length - 1];
