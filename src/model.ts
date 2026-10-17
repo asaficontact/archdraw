@@ -230,8 +230,14 @@ export interface LineLook {
   thickness: number;
   /** How widely a curved line swings between its points. */
   curve: 'normal' | 'strong' | 'subtle';
-  /** Where the free leg sits, a fraction of the way from the start's box (6.3). */
-  turn: number;
+  /**
+   * Where the free leg sits, a fraction of the way from the start's box (6.3).
+   * Undefined where nothing says: a square line's leg sits halfway, and a
+   * curved line takes one free sweep.
+   */
+  turn: number | undefined;
+  /** `turn:` as written on the edge itself, refused where it places nothing; from a style or a default it is undefined. */
+  turnWritten: string | undefined;
   /** The short first and last leg of a square or curved line, in pixels. */
   stepOut: number;
 }

@@ -222,6 +222,7 @@ interface Shape {
   curved: boolean;
   out: Point;
   arrive: Point;
+  turned?: Turned;
 }
 
 /** A set of copies of one line, in written order; the first sets the direction they all travel in. */
@@ -288,16 +289,17 @@ function fanned(edge: LayoutEdge, start: End, end: End, set: CopySet, context: C
   const [a, b] = along ? [start.at!, end.at!] : [end.at!, start.at!];
   const moved = shiftShape(shape, a, b, k * FAN_STEP);
   if (moved === undefined) return undefined;
-  let { square, through } = moved;
+  let { square, through, turned } = moved;
   let out = shape.out;
   let arrive = shape.arrive;
   if (!along) {
     square = [...square].reverse();
     through = [...through].reverse();
     [out, arrive] = [{ x: -arrive.x, y: -arrive.y }, { x: -out.x, y: -out.y }];
+    if (turned) turned = { at: turned.at, dir: { x: -turned.dir.x, y: -turned.dir.y } };
   }
   const pieces: Piece[] = shape.curved
-    ? curve(through, out, arrive, edge.look.curve, undefined, edge.look.stepOut)
+    ? curve(through, out, arrive, edge.look.curve, undefined, edge.look.stepOut, turned)
     : square.slice(1).map((to) => ({ to }));
   return { edge, start: square[0]!, pieces, points: shape.curved ? tracePieces(square[0]!, pieces) : tidyCorners(square), legs: new Map(), stops: [] };
 }
@@ -308,7 +310,7 @@ function fanned(edge: LayoutEdge, start: End, end: End, set: CopySet, context: C
  * they lie on, at the same share of the way along. Undefined for a shape that
  * isn't made of legs at right angles, which is drawn as it is.
  */
-function shiftShape(shape: Shape, a: Point, b: Point, by: number): { square: Point[]; through: Point[] } | undefined {
+function shiftShape(shape: Shape, a: Point, b: Point, by: number): { square: Point[]; through: Point[]; turned?: Turned } | undefined {
   const base = tidyCorners(shape.square);
   const count = base.length - 1;
   if (count < 1) return undefined;
@@ -335,7 +337,7 @@ function shiftShape(shape: Shape, a: Point, b: Point, by: number): { square: Poi
     level[index] ? { x: across[index + 1]!, y: value } : { x: value, y: across[index + 1]! },
   );
   const square = [a, ...corners, b];
-  const through = shape.through.map((point) => {
+  const move = (point: Point): Point => {
     for (let index = 0; index < count; index += 1) {
       const p = base[index]!;
       const q = base[index + 1]!;
@@ -348,8 +350,9 @@ function shiftShape(shape: Shape, a: Point, b: Point, by: number): { square: Poi
       return { x: p2.x + (q2.x - p2.x) * t, y: p2.y + (q2.y - p2.y) * t };
     }
     return point;
-  });
-  return { square, through };
+  };
+  const through = shape.through.map(move);
+  return { square, through, ...(shape.turned ? { turned: { at: move(shape.turned.at), dir: shape.turned.dir } } : {}) };
 }
 
 // --- lines straight between two boxes ---------------------------------------------
@@ -1294,8 +1297,10 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
   }
 
   // Each segment's points, in order, and whether it is drawn curved.
-  const drawn: { points: Point[]; curved: boolean; through: Point[]; segment: Segment; from: Way; to: Way; step: number }[] = [];
+  const drawn: { points: Point[]; curved: boolean; through: Point[]; turned?: Turned; segment: Segment; from: Way; to: Way; step: number }[] = [];
   let arriving: Point | undefined;
+  // For each stretch the line's own turn: shapes, why it placed nothing there, or undefined where it did.
+  const unturned: (string | undefined)[] = [];
   for (const [index, segment] of segments.entries()) {
     const from = ways[index]!;
     const to = ways[index + 1]!;
@@ -1314,7 +1319,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     for (const out of outs) {
       const arrivals = ins.length > 0 ? ins : [arrival(from.at, to.at, out)];
       for (const arrive of arrivals) {
-        options.push({ out, arrive, built: squareRoute(from, to, out, back(arrive), turn, step) });
+        options.push({ out, arrive, built: squareRoute(from, to, out, back(arrive), turn ?? 1 / 2, step) });
       }
     }
     const bends = (option: (typeof options)[number]): number => option.built.points.length - 2;
@@ -1328,10 +1333,22 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     from.dir ??= chosen.out;
     to.dir ??= chosen.arrive;
     arriving = chosen.arrive;
-    drawn.push({ points: chosen.built.points, curved: path === 'curved', through: chosen.built.through, segment, from, to, step });
-    if (segments.length === 1) {
-      context.shapes.set(edge, { square: chosen.built.points, through: chosen.built.through, curved: path === 'curved', out: chosen.out, arrive: chosen.arrive });
+    // Only a stated turn is passed through; without one a curve is one free sweep.
+    const turned = turn !== undefined ? chosen.built.turned : undefined;
+    if (attrs['turn'] !== undefined && !chosen.built.turned) {
+      throw new SourceError(`${subject}: leg ${segment.leg!.name}: \`turn: ${attrs['turn']}\` places nothing — ${chosen.built.unturned ?? 'it has no leg between its stops'}. Remove it, or say where the line goes with \`via:\``, edge.line);
     }
+    if (attrs['turn'] === undefined) unturned.push(chosen.built.turned ? undefined : chosen.built.unturned ?? '');
+    drawn.push({ points: chosen.built.points, curved: path === 'curved', through: chosen.built.through, ...(turned ? { turned } : {}), segment, from, to, step });
+    if (segments.length === 1) {
+      context.shapes.set(edge, { square: chosen.built.points, through: chosen.built.through, curved: path === 'curved', out: chosen.out, arrive: chosen.arrive, ...(turned ? { turned } : {}) });
+    }
+  }
+
+  // A turn: written on the line itself must place a leg somewhere; from a style or a default it lands where it can.
+  if (edge.look.turnWritten !== undefined && unturned.length > 0 && unturned.every((why) => why !== undefined)) {
+    const why = unturned.length === 1 && unturned[0] ? unturned[0] : 'no stretch of it has a leg between its stops';
+    throw new SourceError(`${subject}: \`turn: ${edge.look.turnWritten}\` places nothing — ${why}. Remove it, or say where the line goes with \`via:\``, edge.line);
   }
 
   // The pieces, and each named leg as drawn.
@@ -1341,7 +1358,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
   const hidden: [number, number][] = [];
   for (const [index, part] of drawn.entries()) {
     const own: Piece[] = part.curved
-      ? curve(part.through, part.from.dir, part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined), part.step)
+      ? curve(part.through, part.from.dir, part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined), part.step, part.turned)
       : part.points.slice(1).map((to) => ({ to }));
     if (part.segment.hidden) {
       const last = hidden[hidden.length - 1];
@@ -1654,6 +1671,16 @@ interface Built {
   points: Point[];
   /** The points a curved line passes through, ends included (6.3). */
   through: Point[];
+  /** The middle of the free leg, where `turn:` placed one. */
+  turned?: Turned;
+  /** Where `turn:` placed nothing, why, for the refusal. */
+  unturned?: string;
+}
+
+/** Where a stated turn puts a curved line: through the middle of the free leg, heading along it. */
+interface Turned {
+  at: Point;
+  dir: Point;
 }
 
 /**
@@ -1687,24 +1714,31 @@ function squareRoute(start: Way, end: Way, out: Point, back: Point, turn: number
     return undefined;
   };
   const between = (from: number, to: number): number => from + (to - from) * turn;
+  // The free leg from p1 to p2, placed by `between`, as a curve passes it.
+  const turnedOn = (p1: Point, p2: Point): { turned?: Turned } =>
+    distance(p1, p2) < 0.5 ? {} : { turned: { at: midpoint(p1, p2), dir: unit(p1, p2) } };
 
   const parallel = (back.x !== 0) === across;
   if (parallel) {
     const facing = out.x * back.x + out.y * back.y < 0;
     if (facing && (u(b) - u(a)) * du >= 0) {
       // The range has two ends: the free leg runs between them.
-      if (Math.abs(v(a) - v(b)) < 0.5) return { points: [a, b], through: [a, b] };
+      if (Math.abs(v(a) - v(b)) < 0.5) return { points: [a, b], through: [a, b], unturned: 'its ends are level, so it runs straight across' };
       const m = between(u(a), u(b));
       const p1 = make(m, v(a));
       const p2 = make(m, v(b));
-      return { points: [a, p1, p2, b], through: [a, midpoint(p1, p2), b] };
+      return { points: [a, p1, p2, b], through: [a, midpoint(p1, p2), b], ...turnedOn(p1, p2) };
     }
     if (!facing) {
       // Both sides face the same way: the leg runs a step-out beyond the farther side.
       const far = du > 0 ? Math.max(u(a), u(b)) + step : Math.min(u(a), u(b)) - step;
       const p1 = make(far, v(a));
       const p2 = make(far, v(b));
-      return { points: tidyCorners([a, p1, p2, b]), through: [a, midpoint(p1, p2), b] };
+      return {
+        points: tidyCorners([a, p1, p2, b]),
+        through: [a, midpoint(p1, p2), b],
+        unturned: 'both its ends face the same way, so its middle leg runs a step-out beyond the farther one, not between them',
+      };
     }
     // The range is empty: each end steps out, and the line crosses halfway
     // between the boxes in the other direction, through the gap if there is one.
@@ -1712,7 +1746,7 @@ function squareRoute(start: Way, end: Way, out: Point, back: Point, turn: number
     const m = gap ? between(gap[0], gap[1]) : between(v(a), v(b));
     const p1 = make(u(sa), m);
     const p2 = make(u(sb), m);
-    return { points: tidyCorners([a, sa, p1, p2, sb, b]), through: [a, sa, midpoint(p1, p2), sb, b] };
+    return { points: tidyCorners([a, sa, p1, p2, sb, b]), through: [a, sa, midpoint(p1, p2), sb, b], ...turnedOn(p1, p2) };
   }
 
   // At right angles: one corner where it sits behind neither end's side.
@@ -1720,12 +1754,15 @@ function squareRoute(start: Way, end: Way, out: Point, back: Point, turn: number
   const dv = across ? back.y : back.x;
   const aheadOfStart = (u(corner) - u(a)) * du > 0;
   const aheadOfEnd = (v(corner) - v(b)) * dv > 0;
-  if (aheadOfStart && aheadOfEnd) return { points: [a, corner, b], through: [a, b] };
+  const once = 'it turns once, at right angles, and that corner has only one place';
+  if (aheadOfStart && aheadOfEnd) return { points: [a, corner, b], through: [a, b], unturned: once };
   // A waypoint in line with the other end: the corner is the waypoint itself,
   // so the line turns there rather than going round it.
   const point = (face: Face) => face.width === 0 && face.height === 0;
-  if (aheadOfStart && point(toFace) && Math.abs(v(corner) - v(b)) < 0.5) return { points: [a, b], through: [a, b] };
-  if (aheadOfEnd && point(fromFace) && Math.abs(u(corner) - u(a)) < 0.5) return { points: [a, b], through: [a, b] };
+  const inLine = 'it runs straight, in line with the waypoint';
+  if (aheadOfStart && point(toFace) && Math.abs(v(corner) - v(b)) < 0.5) return { points: [a, b], through: [a, b], unturned: inLine };
+  if (aheadOfEnd && point(fromFace) && Math.abs(u(corner) - u(a)) < 0.5) return { points: [a, b], through: [a, b], unturned: inLine };
+  const round = 'it goes round the end a step-out off it, with no gap between the two to cross';
   if (!aheadOfStart && aheadOfEnd) {
     // The far end is behind the start's side: out, across the gap on the end's
     // axis (or round, a step-out off the end where there is none), and in.
@@ -1733,7 +1770,7 @@ function squareRoute(start: Way, end: Way, out: Point, back: Point, turn: number
     const m = gap ? between(gap[0], gap[1]) : v(sb);
     const p1 = make(u(sa), m);
     const p2 = make(u(b), m);
-    return { points: tidyCorners([a, sa, p1, p2, b]), through: [a, sa, midpoint(p1, p2), b] };
+    return { points: tidyCorners([a, sa, p1, p2, b]), through: [a, sa, midpoint(p1, p2), b], ...(gap ? turnedOn(p1, p2) : { unturned: round }) };
   }
   if (aheadOfStart && !aheadOfEnd) {
     // The start is behind the end's side: along to the gap on the start's axis
@@ -1743,11 +1780,11 @@ function squareRoute(start: Way, end: Way, out: Point, back: Point, turn: number
     const p1 = make(m, v(a));
     const p2 = make(m, v(sb));
     const p3 = make(u(b), v(sb));
-    return { points: tidyCorners([a, p1, p2, p3, b]), through: [a, midpoint(p1, p2), sb, b] };
+    return { points: tidyCorners([a, p1, p2, p3, b]), through: [a, midpoint(p1, p2), sb, b], ...(gap ? turnedOn(p1, p2) : { unturned: round }) };
   }
   // Behind both: out, round to a step-out off the end, and in.
   const p1 = make(u(sa), v(sb));
-  return { points: tidyCorners([a, sa, p1, sb, b]), through: [a, sa, sb, b] };
+  return { points: tidyCorners([a, sa, p1, sb, b]), through: [a, sa, sb, b], unturned: 'it goes round behind both ends, a step-out off each' };
 }
 
 function midpoint(p: Point, q: Point): Point {
@@ -1781,13 +1818,21 @@ const CURVE_REACH: Record<LayoutEdge['look']['curve'], number> = { subtle: 0.22,
  * corners are not passed through: a curve forced through points a step-out
  * apart bends sharply between them. An end that heads away from the other end
  * reaches at least a step-out, so a line that turns back loops wide enough to
- * read as a turn. Nothing is checked or retried.
+ * read as a turn. A stated turn is stated, so it splits the sweep in two,
+ * passing the middle of the free leg heading along it. Nothing is checked or
+ * retried.
  */
-function curve(points: Point[], first: Point | undefined, last: Point | undefined, look: LayoutEdge['look']['curve'], leg: LayoutEdge['look']['curve'] | undefined, step: number): Piece[] {
+function curve(points: Point[], first: Point | undefined, last: Point | undefined, look: LayoutEdge['look']['curve'], leg: LayoutEdge['look']['curve'] | undefined, step: number, turned?: Turned): Piece[] {
   if (leg !== undefined && !(leg in CURVE_REACH)) leg = undefined;
   const reach = CURVE_REACH[leg ?? look];
   const a = points[0]!;
   const b = points[points.length - 1]!;
+  if (turned) return [...sweep(a, turned.at, first, turned.dir, reach, step), ...sweep(turned.at, b, turned.dir, last, reach, step)];
+  return sweep(a, b, first, last, reach, step);
+}
+
+/** One cubic from a to b, leaving along `first` and arriving along `last`. */
+function sweep(a: Point, b: Point, first: Point | undefined, last: Point | undefined, reach: number, step: number): Piece[] {
   const length = distance(a, b);
   const chord = unit(a, b);
   const ta = first ?? chord;

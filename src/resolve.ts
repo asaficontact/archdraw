@@ -1368,9 +1368,9 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     return THICKNESS[word('thickness')]!;
   })();
 
-  const turn = ((): number => {
+  const turn = ((): number | undefined => {
     const value = appearance['line.turn'];
-    if (value === undefined) return 1 / 2;
+    if (value === undefined) return undefined;
     const ratio = /^(\d+)\/(\d+)$/.exec(value);
     const number = ratio ? Number(ratio[1]) / Number(ratio[2]) : /^\d*\.?\d+$/.test(value) ? Number(value) : NaN;
     if (!(number >= 0 && number <= 1)) {
@@ -1393,6 +1393,7 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     thickness,
     curve: word('curve'),
     turn,
+    turnWritten: written['line.turn'],
     stepOut,
   };
   // Said on the edge itself, a property its path doesn't have is refused; from
