@@ -1139,6 +1139,14 @@ function buildEdges(
       const what = `bundle ${stmt.name}`;
       const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
       const asEdge = { marks: {}, attrs: stmt.attrs, line: stmt.line } as unknown as EdgeStmt;
+      const between = stmt.between?.map((name) => {
+        const node = byName.get(name);
+        if (!node) throw new SourceError(`${what} runs between ${stmt.between![0]} and ${stmt.between![1]}, and ${name} does not exist`, stmt.line);
+        return node;
+      }) as [LayoutNode, LayoutNode] | undefined;
+      if (between && between[0] === between[1]) {
+        throw new SourceError(`${what} runs from ${between[0].name} to itself — a bundle between two boxes names two`, stmt.line);
+      }
       edges.push({
         from: placeholder(stmt.name, stmt.line),
         to: placeholder(stmt.name, stmt.line),
@@ -1146,16 +1154,19 @@ function buildEdges(
         textAttrs: {},
         arrow: '--',
         name: stmt.name,
-        via: stmt.via,
+        ...(stmt.via !== undefined ? { via: stmt.via } : {}),
         look: lineLook(stmt.attrs, appearance, what, stmt.line),
         attrs: stmt.attrs,
         appearance,
-        // A parallel bundle's path is where its members run, not a line of its own.
-        ...(stmt.arrangement === 'parallel' ? { guide: true } : {}),
+        // A parallel bundle's path is where its members run, not a line of its
+        // own; a bundle between two boxes has no path, and its members are
+        // drawn themselves, a collapsed one's on top of each other.
+        ...(stmt.arrangement !== 'collapsed' || between ? { guide: true } : {}),
         bundle: {
           arrangement: stmt.arrangement,
           gap: stmt.gap === undefined ? GAPS['tight']! : gapPixels(stmt.gap, `bundle "${stmt.name}" layout: (gap: …)`, stmt.line),
           ...(stmt.order ? { order: stmt.order } : {}),
+          ...(between ? { between } : {}),
         },
         line: stmt.line,
       });

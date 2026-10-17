@@ -209,9 +209,11 @@ export interface LayoutEdge {
    * A `bundle` statement: a line with no ends, whose path is its `via:` list
    * alone, and which other lines travel along (design.org 6.6). Its `from` and
    * `to` are placeholders named after it. A parallel bundle is drawn only with
-   * the guides; a collapsed one is drawn, as the bus.
+   * the guides; a collapsed one is drawn, as the bus. A bundle written
+   * `a -> b` has no path: `between` holds its two boxes, and its members are
+   * drawn straight from one to the other.
    */
-  bundle?: { arrangement: 'parallel' | 'collapsed'; gap: number; order?: string[] };
+  bundle?: { arrangement: 'parallel' | 'collapsed' | 'fan'; gap: number; order?: string[]; between?: [LayoutNode, LayoutNode] };
   line: number;
 }
 

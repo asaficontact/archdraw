@@ -126,6 +126,17 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
   const ends = new Map<LayoutEdge, [End, End]>();
   for (const edge of layout.edges) ends.set(edge, [endOf(edge, 'from'), endOf(edge, 'to')]);
   const copies = copySets(layout.edges, ends);
+  // Lines drawn straight from one box to the other: a bundle written `a -> b`,
+  // and plain copies whose sides were left to the default. Their ends land
+  // where their lanes meet the boxes, so they take no slot on a side.
+  const direct = directSets(layout.edges, ends, copies);
+  for (const edge of direct.keys()) {
+    for (const end of ends.get(edge)!) {
+      end.spec = { kind: 'free' };
+      end.headings = [];
+    }
+  }
+  const directDrawn = new Map<DirectSet, Map<LayoutEdge, Route>>();
 
   // Ends spread along a side first, since where an end lands on a shared side
   // depends on the others there.
@@ -149,6 +160,27 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
     working.push(edge);
     for (const other of needs(edge, context)) draw(other);
     working.pop();
+    if (edge.bundle?.between) {
+      // A bundle between two boxes has no path of its own: shown with the
+      // guides, it is the line between the two centers, box to box.
+      const [a, b] = edge.bundle.between.map(faceOfNode) as [Face, Face];
+      const from = outlineToward(a, centerOf(b));
+      const to = outlineToward(b, centerOf(a));
+      routes.set(edge, { edge, start: from, pieces: [{ to }], points: [from, to], legs: new Map(), stops: [] });
+      done.add(edge);
+      return;
+    }
+    const group = direct.get(edge);
+    if (group) {
+      let drawn = directDrawn.get(group);
+      if (!drawn) {
+        drawn = directRoutes(group);
+        directDrawn.set(group, drawn);
+      }
+      routes.set(edge, drawn.get(edge)!);
+      done.add(edge);
+      return;
+    }
     const [start, end] = ends.get(edge)!;
     for (const one of [start, end]) placeEnd(one, context);
     for (const [own, other] of [[start, end], [end, start]] as [End, End][]) faceThePoint(own, other);
@@ -318,6 +350,181 @@ function shiftShape(shape: Shape, a: Point, b: Point, by: number): { square: Poi
     return point;
   });
   return { square, through };
+}
+
+// --- lines straight between two boxes ---------------------------------------------
+
+/** Lines sharing the direct way between two boxes, in order across it. */
+interface DirectSet {
+  a: LayoutNode;
+  b: LayoutNode;
+  members: LayoutEdge[];
+  arrangement: 'parallel' | 'collapsed' | 'fan';
+  gap: number;
+}
+
+/**
+ * Each line drawn straight between its two boxes, and the set it shares that
+ * way with (design.org 6.5, 6.6). A bundle written `a -> b` holds the lines
+ * that name it in `via:`; plain straight copies whose sides were both left to
+ * the default are an unnamed parallel set, at a bundle's default gap.
+ */
+function directSets(edges: LayoutEdge[], ends: Map<LayoutEdge, [End, End]>, copies: Map<LayoutEdge, CopySet>): Map<LayoutEdge, DirectSet> {
+  const found = new Map<LayoutEdge, DirectSet>();
+  const bundles = new Map(edges.filter((edge) => edge.bundle?.between).map((edge) => [edge.name!, edge]));
+  const named = new Map<LayoutEdge, DirectSet>();
+  for (const edge of edges) {
+    if (edge.bundle) continue;
+    const entries = edge.via ?? [];
+    const stop = entries.map((entry) => entry.stop).find((one) => one?.kind === 'bundle' && bundles.has(one.bundle)) as Extract<ViaStop, { kind: 'bundle' }> | undefined;
+    if (!stop) continue;
+    const bundle = bundles.get(stop.bundle)!;
+    const [a, b] = bundle.bundle!.between!;
+    const subject = `edge ${describeEdge(edge)}`;
+    if (!((edge.from === a && edge.to === b) || (edge.from === b && edge.to === a))) {
+      throw new SourceError(
+        `${subject}: "via: ${stop.written}" — ${stop.bundle} runs directly between ${a.name} and ${b.name}, so only a line between those two can take it`,
+        edge.line,
+      );
+    }
+    if (entries.length > 1) {
+      throw new SourceError(`${subject}: ${stop.bundle} runs directly between ${a.name} and ${b.name}, so the line passes nothing else — leave the other stops off`, edge.line);
+    }
+    for (const which of ['from', 'to'] as const) {
+      if (edge.attrs[which] !== undefined) {
+        throw new SourceError(
+          `${subject}: "${which}: ${edge.attrs[which]}" — ${stop.bundle} says where its lines land, each where its lane meets the box; leave ${which}: off, or take the line out of the bundle`,
+          edge.line,
+        );
+      }
+    }
+    if (edge.attrs['line.path'] !== undefined) {
+      throw new SourceError(
+        `${subject}: "path: ${edge.attrs['line.path']}" — ${stop.bundle}'s layout: says the shape of its lines; leave path: off, or take the line out of the bundle`,
+        edge.line,
+      );
+    }
+    if (stop.order !== undefined) {
+      throw new SourceError(
+        `${subject}: "via: ${stop.written}" — ${stop.bundle} runs between two boxes, and its lines take their order from the bundle's order: or the order they are written in`,
+        edge.line,
+      );
+    }
+    const set = named.get(bundle) ?? { a, b, members: [], arrangement: bundle.bundle!.arrangement, gap: bundle.bundle!.gap };
+    set.members.push(edge);
+    named.set(bundle, set);
+  }
+  for (const [bundle, set] of named) {
+    const order = bundle.bundle!.order;
+    if (order) {
+      const subject = `bundle ${bundle.name}`;
+      for (const name of order) {
+        if (!set.members.some((edge) => edge.name === name)) {
+          throw new SourceError(`${subject}: order: lists ${name}, which is not a line through it — add \`via: ${bundle.name}\` to ${name}, or take it off the list`, bundle.line);
+        }
+      }
+      for (const edge of set.members) {
+        if (edge.name === undefined || !order.includes(edge.name)) {
+          throw new SourceError(`edge ${describeEdge(edge)}: passes through ${bundle.name}, whose order: lists every line through it and leaves this one out`, edge.line);
+        }
+      }
+      set.members.sort((p, q) => order.indexOf(p.name!) - order.indexOf(q.name!));
+    }
+    for (const edge of set.members) found.set(edge, set);
+  }
+  // Plain copies: straight, and neither end's side written.
+  const seen = new Set<CopySet>();
+  for (const set of copies.values()) {
+    if (seen.has(set)) continue;
+    seen.add(set);
+    const plain = set.lines.every((edge) => edge.look.path === 'straight' && ends.get(edge)!.every((end) => end.spec.kind === 'side' && end.spec.implied));
+    if (!plain) continue;
+    const first = set.lines[0]!;
+    const group: DirectSet = { a: first.from, b: first.to, members: set.lines, arrangement: 'parallel', gap: GAPS['tight']! };
+    for (const edge of set.lines) found.set(edge, group);
+  }
+  return found;
+}
+
+/**
+ * The members of one direct set, drawn (6.6). Lanes run parallel to the line
+ * between the two centers, a gap apart, the first written uppermost (or
+ * leftmost, on an upright way), and each end lands where its lane meets the
+ * box. Where a box is too small across to take the lanes at their gap, they
+ * draw together at that box: parallel lines stay straight, closer together;
+ * fanned ones keep the gap at the middle and bow out to it, the middle line
+ * straight. Collapsed, they share the one line.
+ */
+function directRoutes(set: DirectSet): Map<LayoutEdge, Route> {
+  const fa = faceOfNode(set.a);
+  const fb = faceOfNode(set.b);
+  const ca = centerOf(fa);
+  const cb = centerOf(fb);
+  const d = unit(ca, cb);
+  // Across the way, pointing up, or left where the way is level across.
+  let p = { x: -d.y, y: d.x };
+  if (p.y > 1e-9 || (Math.abs(p.y) <= 1e-9 && p.x > 0)) p = { x: -p.x, y: -p.y };
+  const n = set.members.length;
+  const gap = set.arrangement === 'collapsed' ? 0 : set.gap;
+  const lane = (k: number): number => ((n - 1) / 2 - k) * gap;
+  const widest = lane(0);
+  // How far across a lane may sit at a box: within its width across the way,
+  // kept a little off the corners.
+  const room = (face: Face): number => {
+    const half = face.round ? face.width / 2 : (Math.abs(p.x) * face.width + Math.abs(p.y) * face.height) / 2;
+    return Math.max(0, half - Math.min(8, half * 0.3));
+  };
+  const squeeze = (face: Face): number => (widest <= 0 ? 1 : Math.min(1, room(face) / widest));
+  const sa = squeeze(fa);
+  const sb = squeeze(fb);
+  const fanned = set.arrangement === 'fan';
+  // Parallel lines keep one spacing all the way, the tighter box's.
+  const parallelScale = Math.min(sa, sb);
+  const across = (point: Point): number => (point.x - ca.x) * p.x + (point.y - ca.y) * p.y;
+  const routes = new Map<LayoutEdge, Route>();
+  set.members.forEach((edge, k) => {
+    const ea = lane(k) * (fanned ? sa : parallelScale);
+    const eb = lane(k) * (fanned ? sb : parallelScale);
+    const s = leaving(fa, { x: ca.x + p.x * ea, y: ca.y + p.y * ea }, d);
+    const e = leaving(fb, { x: cb.x + p.x * eb, y: cb.y + p.y * eb }, { x: -d.x, y: -d.y });
+    let start = s;
+    let pieces: Piece[] = [{ to: e }];
+    const want = lane(k);
+    const shortfall = want - (across(s) + across(e)) / 2;
+    if (fanned && Math.abs(shortfall) > 0.5) {
+      // One curve, through the lane at its middle and level with the way there.
+      const length = (e.x - s.x) * d.x + (e.y - s.y) * d.y;
+      const h = (8 * want - 4 * (across(s) + across(e))) / 6;
+      const c1 = { x: s.x + (d.x * length) / 3 + p.x * h, y: s.y + (d.y * length) / 3 + p.y * h };
+      const c2 = { x: e.x - (d.x * length) / 3 + p.x * h, y: e.y - (d.y * length) / 3 + p.y * h };
+      pieces = [{ c1, c2, to: e }];
+    }
+    if (edge.from !== set.a) {
+      // Written the other way round: the same lane, travelled back.
+      const only = pieces[0]!;
+      pieces = 'c1' in only ? [{ c1: only.c2, c2: only.c1, to: s }] : [{ to: s }];
+      start = e;
+    }
+    routes.set(edge, { edge, start, pieces, points: 'c1' in pieces[0]! ? tracePieces(start, pieces) : [start, pieces[0]!.to], legs: new Map(), stops: [] });
+  });
+  return routes;
+}
+
+/** Where a ray from a point inside a face, heading `way`, leaves its outline. */
+function leaving(face: Face, from: Point, way: Point): Point {
+  if (face.round) {
+    const c = centerOf(face);
+    const r = face.width / 2;
+    const fx = from.x - c.x;
+    const fy = from.y - c.y;
+    const b = fx * way.x + fy * way.y;
+    const t = -b + Math.sqrt(Math.max(0, b * b - (fx * fx + fy * fy - r * r)));
+    return { x: from.x + way.x * t, y: from.y + way.y * t };
+  }
+  const tx = way.x > 1e-9 ? (face.x + face.width - from.x) / way.x : way.x < -1e-9 ? (face.x - from.x) / way.x : Infinity;
+  const ty = way.y > 1e-9 ? (face.y + face.height - from.y) / way.y : way.y < -1e-9 ? (face.y - from.y) / way.y : Infinity;
+  const t = Math.max(0, Math.min(tx, ty));
+  return { x: from.x + way.x * t, y: from.y + way.y * t };
 }
 
 /** Every named leg, refusing a name used twice or already a box's or a line's. */

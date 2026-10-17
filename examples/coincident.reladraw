@@ -1,57 +1,65 @@
-// Several edges between the same two nodes with no side named anywhere. Each
-// line is shifted sideways off the one a single edge would draw, so they stay
-// parallel and each end lands wherever its own line crosses the border.
+// Several edges between the same two nodes. Left alone they are copies, and
+// run side by side a gap apart, straight from box to box, each end landing
+// where its own line meets the border. A bundle between the two nodes says
+// how they share the way instead: layout: fan bows them apart to a gap at
+// the middle while their ends stay close on a small side.
 
 style plain  fill: theme-fill  border: theme-border
 
-// Level nodes, so the run is horizontal and the lanes fan out vertically.
+// Level nodes, fanned: the ends crowd one side, and the lines bow out so each
+// text has a lane of its own. The middle line stays straight.
 node a "A"  style: plain
 node b "B"  10 right of a  style: plain
-edge a -> b  "first"
-edge a -> b  "second"
-edge a -> b  "third"
+bundle ab  a -> b  layout: fan
+edge a -> b  "first"   via: ab
+edge a -> b  "second"  via: ab
+edge a -> b  "third"   via: ab
 
 // A perfect diagonal, where the single line would leave through the corner
-// exactly. These two straddle it, one point on each of the edges meeting there.
+// exactly. The two copies run either side of it, one end on each of the
+// sides meeting there, written in either direction.
 node low  "Low"   16 below a  left of a  style: plain
 node high "High"  above low (gap: wide)  right of low (gap: wide)  style: plain
 edge low -> high   "up"
 edge high -> low   "down"
 
-// A near diagonal, where the crossing point sits on one edge but close to the
-// corner.
+// A near diagonal, where the lines cross the border on one side, close to
+// the corner.
 node near "Near"  below low (gap: wide)  style: plain
 node far  "Far"   right of near (gap: wide)  above near (gap: wide)  style: plain
 edge near -> far  "one"
 edge near -> far  "two"
 
-// A lone edge is in no group and does not move.
+// A lone edge has nothing to share the way with, and runs center to center.
 node solo  "Solo"   below near (gap: wide)  style: plain
 node alone "Alone"  12 right of solo  style: plain
 edge solo -> alone  "by itself"
 
-// Naming a side on either end takes an edge out of the group.
+// Naming a side takes an edge out of the copies. Two ends on top, curved, so
+// the line leaves upward and comes back down rather than running along the
+// tops.
 node named "Named"  below solo (gap: wide)  style: plain
 node other "Other"  11 right of named  style: plain
 edge named -> other  "free"
 edge named -> other  "free too"
-edge named -> other  "top"  from: top  to: top
+edge named -> other  "top"  from: top  to: top  line: (path: curved)
 
-// More than the edges can hold. The ends squeeze together and each line bows
-// out in the middle to make up what its ends could not give it, so the texts
-// still come apart. The middle line has no shortfall and stays straight.
+// More than the side can hold at a gap. The ends squeeze together and each
+// line bows out to its lane at the middle.
 node many "Many"  below named (gap: wide)  style: plain
 node one  "One"   10 right of many  style: plain
-edge many -> one  "first"
-edge many -> one  "second"
-edge many -> one  "third"
-edge many -> one  "fourth"
-edge many -> one  "fifth"
+bundle five  many -> one  layout: fan
+edge many -> one  "first"   via: five
+edge many -> one  "second"  via: five
+edge many -> one  "third"   via: five
+edge many -> one  "fourth"  via: five
+edge many -> one  "fifth"   via: five
 
-// The same on a vertical run, where the texts sit at one height and a lane is
-// a whole text wide.
+// The same on an upright way, where the texts sit side by side, so the gap
+// the bundle states is a whole text wide.
 node top    "Top"     below many (gap: wide)  style: plain
 node bottom "Bottom"  below top (gap: wide)  style: plain
-edge top -> bottom  "alpha"
-edge top -> bottom  "beta"
-edge top -> bottom  "gamma"
+bundle abc  top -> bottom  layout: fan (gap: 5)
+edge top -> bottom  "alpha"  via: abc
+edge top -> bottom  "beta"   via: abc
+edge top -> bottom  "gamma"  via: abc

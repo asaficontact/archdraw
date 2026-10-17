@@ -651,9 +651,15 @@ export interface RegionStmt {
 export interface BundleStmt {
   kind: 'bundle';
   name: string;
-  via: ViaEntry[];
-  /** `layout: parallel (gap: tight)`, the default, or `layout: collapsed`, a bus. */
-  arrangement: 'parallel' | 'collapsed';
+  /** A path out in space. A bundle has this or `between`, never both. */
+  via?: ViaEntry[];
+  /** `bundle calls  a -> b`: the direct way between two boxes, with no path of its own. */
+  between?: [string, string];
+  /**
+   * `layout: parallel (gap: tight)`, the default; `layout: collapsed`, a bus;
+   * or, between two boxes only, `layout: fan`, lanes widest apart at the middle.
+   */
+  arrangement: 'parallel' | 'collapsed' | 'fan';
   /** The gap between neighboring members of a parallel bundle, as written. */
   gap?: string;
   /** `order: y, z, x`: every member, in reading order across where the bundle starts. */

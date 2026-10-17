@@ -1286,7 +1286,8 @@ function parseGuide(head: Token[], line: number): Stmt {
 /**
  * `bundle trunk  via: through slot horizontal  layout: parallel (gap: tight)
  * order: y, z, x`: a line with no ends, which others travel together
- * (design.org 6.6).
+ * (design.org 6.6). Or `bundle calls  a -> b  layout: fan`: the direct way
+ * between two boxes, which copies of one line share.
  */
 function parseBundle(head: Token[], line: number): BundleStmt {
   const name = requireName(head[1], 'bundle', line);
@@ -1294,7 +1295,20 @@ function parseBundle(head: Token[], line: number): BundleStmt {
   const attrs: Attrs = {};
   let via: ViaEntry[] | undefined;
   let order: string[] | undefined;
+  let between: [string, string] | undefined;
   let i = 2;
+  const shaft = head[3];
+  if (head[2] && !head[2].quoted && !isAttrKey(head[2]) && shaft && !shaft.quoted && /^[^-]*-+[^-]*$/.test(shaft.text)) {
+    if (shaft.text !== '--' && shaft.text !== '->') {
+      throw new SourceError(`${subject}: "${shaft.text}" — a bundle's lines carry their own marks, so it is written a -- b or a -> b`, line);
+    }
+    const other = head[4];
+    if (!other || other.quoted || isAttrKey(other)) {
+      throw new SourceError(`${subject}: a bundle between two boxes names both, such as \`bundle ${name}  a -> b\``, line);
+    }
+    between = [head[2].text, other.text];
+    i = 5;
+  }
   while (i < head.length) {
     const token = head[i]!;
     if (!isAttrKey(token)) {
@@ -1333,12 +1347,24 @@ function parseBundle(head: Token[], line: number): BundleStmt {
     i = readAttr(head, i, attrs, line, subject);
   }
   refuseKeys(attrs, BUNDLE_KEYS, subject, 'a bundle', line);
-  if (via === undefined) {
-    throw new SourceError(`${subject} says the way its lines travel together, such as \`bundle ${name}  via: through slot horizontal\``, line);
+  if (via === undefined && between === undefined) {
+    throw new SourceError(
+      `${subject} says the way its lines travel together: a path, such as \`bundle ${name}  via: through slot horizontal\`, or two boxes, such as \`bundle ${name}  a -> b\``,
+      line,
+    );
+  }
+  if (via !== undefined && between !== undefined) {
+    throw new SourceError(
+      `${subject} runs directly between ${between[0]} and ${between[1]}, so it has no path for via: to name — keep one: the two boxes or the via:`,
+      line,
+    );
   }
   const arrangement = attrs['layout'] ?? 'parallel';
-  if (arrangement !== 'parallel' && arrangement !== 'collapsed') {
-    throw new SourceError(`${subject}: layout: ${arrangement} is not a bundle's arrangement — parallel (the default) or collapsed`, line);
+  if (arrangement !== 'parallel' && arrangement !== 'collapsed' && arrangement !== 'fan') {
+    throw new SourceError(`${subject}: layout: ${arrangement} is not a bundle's arrangement — parallel (the default), collapsed or fan`, line);
+  }
+  if (arrangement === 'fan' && between === undefined) {
+    throw new SourceError(`${subject}: layout: fan spreads lines between two boxes, and this bundle has a path — write the boxes, such as \`bundle ${name}  a -> b  layout: fan\`, or say parallel`, line);
   }
   const gap = attrs['layout.gap'];
   for (const key of Object.keys(attrs)) {
@@ -1353,7 +1379,17 @@ function parseBundle(head: Token[], line: number): BundleStmt {
     throw new SourceError(`${subject}: a collapsed bundle runs every line on one path, so it has no order across — leave order: off, or say parallel`, line);
   }
   for (const key of ['layout', 'layout.gap']) delete attrs[key];
-  return { kind: 'bundle', name, via, arrangement, ...(gap !== undefined ? { gap } : {}), ...(order ? { order } : {}), attrs, line };
+  return {
+    kind: 'bundle',
+    name,
+    ...(via !== undefined ? { via } : {}),
+    ...(between !== undefined ? { between } : {}),
+    arrangement,
+    ...(gap !== undefined ? { gap } : {}),
+    ...(order ? { order } : {}),
+    attrs,
+    line,
+  };
 }
 
 /** `point funnel  between c2 and api at 2/3` */
