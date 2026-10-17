@@ -1,5 +1,6 @@
 import type {
   Attrs,
+  BundleStmt,
   NodeStmt,
   Side,
   Placement,
@@ -25,6 +26,7 @@ import type {
   ViaStop,
 } from './ast.js';
 import {
+  BUNDLE_KEYS,
   COLOR_KEYS,
   POINT_KEYS,
   REGION_KEYS,
@@ -231,6 +233,8 @@ function parseStatement(tokens: Token[], line: number): Stmt {
       return parsePoint(tokens, line);
     case 'region':
       return parseRegion(tokens, line);
+    case 'bundle':
+      return parseBundle(tokens, line);
     case 'guide':
       return parseGuide(tokens, line);
     default:
@@ -1088,6 +1092,25 @@ function readMark(written: string, end: 'from' | 'to', arrow: string, line: numb
  * every edge has — so `from:` names the first name's side on every edge.
  */
 function parseEdge(head: Token[], line: number): EdgeStmt {
+  // `edge each child of a -> b`: one line from each direct child of a (design.org 6.6).
+  const each = eachChildAt(head);
+  if (each.length > 0) {
+    const kept = head.filter((_, index) => !each.some((at) => index >= at && index < at + 3));
+    const stmt = parseEdge(kept, line);
+    // Before the arrow, the first end; after it, the second.
+    const sides = each.map((at) => (head.slice(1, at).some(looksLikeArrow) ? 'to' : 'from'));
+    const subject = `edge ${sides.includes('from') ? 'each child of ' : ''}${stmt.from} ${stmt.arrow} ${sides.includes('to') ? 'each child of ' : ''}${stmt.to}`;
+    if (sides.length > 1) {
+      throw new SourceError(
+        `${subject}: "each child of" on both ends would pair the children of two containers, and nothing on the page says which goes with which — write the lines out`,
+        line,
+      );
+    }
+    if (stmt.name !== undefined) {
+      throw new SourceError(`${subject}: a name belongs to one line, and "each child of" draws one line per child — leave the name off`, line);
+    }
+    return { ...stmt, each: sides[0]! };
+  }
   // `edge req client -> api`: a word before the ends names the line, told
   // from the ends by position, as in `node api "API"` (design.org 6.1).
   if (head[2] && head[3] && !head[2].quoted && !looksLikeArrow(head[2]) && looksLikeArrow(head[3])) {
@@ -1099,6 +1122,20 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
   if (via === undefined) return stmt;
   const { via: _, ...attrs } = stmt.attrs;
   return { ...stmt, attrs, via: JSON.parse(via) as ViaEntry[] };
+}
+
+/** Where `each child of` starts in an edge's head, before the attributes, once per time it is written. */
+function eachChildAt(head: Token[]): number[] {
+  const found: number[] = [];
+  for (let index = 1; index + 2 < head.length; index += 1) {
+    const token = head[index]!;
+    if (token.quoted || isAttrKey(token)) break;
+    if (token.text === 'each' && head[index + 1]?.text === 'child' && head[index + 2]?.text === 'of' && !head[index + 1]!.quoted && !head[index + 2]!.quoted) {
+      found.push(index);
+      index += 2;
+    }
+  }
+  return found;
 }
 
 /** Whether a token is an arrow, or begins one: a bracketed mark, or a run of dashes with marks at its ends. */
@@ -1244,6 +1281,79 @@ function parseGuide(head: Token[], line: number): Stmt {
     throw new SourceError('guide goes before a node, an edge, a point or a region', line);
   }
   return { ...stmt, guide: true };
+}
+
+/**
+ * `bundle trunk  via: through slot horizontal  layout: parallel (gap: tight)
+ * order: y, z, x`: a line with no ends, which others travel together
+ * (design.org 6.6).
+ */
+function parseBundle(head: Token[], line: number): BundleStmt {
+  const name = requireName(head[1], 'bundle', line);
+  const subject = `bundle "${name}"`;
+  const attrs: Attrs = {};
+  let via: ViaEntry[] | undefined;
+  let order: string[] | undefined;
+  let i = 2;
+  while (i < head.length) {
+    const token = head[i]!;
+    if (!isAttrKey(token)) {
+      throw new SourceError(`${subject}: expected an attribute like "via: b top", found "${token.text}"`, line);
+    }
+    const key = token.text.slice(0, -1);
+    if (key === 'via') {
+      if (via !== undefined) throw new SourceError(`${subject}: "via" is written twice — keep one`, line);
+      const read = readVia(head, i + 1, subject, line);
+      via = read.entries;
+      i = read.next;
+      continue;
+    }
+    if (key === 'order') {
+      // `order: y, z, x`: names separated by commas, as `depth:` lists them.
+      if (order !== undefined) throw new SourceError(`${subject}: "order" is written twice — keep one`, line);
+      order = [];
+      let next = i + 1;
+      for (;;) {
+        const item = head[next];
+        if (!item || item.quoted || isAttrKey(item) || item.text === '(' || item.text === ',') {
+          throw new SourceError(`${subject}: order: lists the lines through the bundle, such as order: y, z, x${order.length > 0 ? ' — the comma at the end promises another' : ''}`, line);
+        }
+        const listed = item.text.endsWith(',');
+        order.push(listed ? item.text.slice(0, -1) : item.text);
+        next += 1;
+        if (!listed && follows(head, next, ',')) {
+          next += 1;
+          continue;
+        }
+        if (!listed) break;
+      }
+      i = next;
+      continue;
+    }
+    i = readAttr(head, i, attrs, line, subject);
+  }
+  refuseKeys(attrs, BUNDLE_KEYS, subject, 'a bundle', line);
+  if (via === undefined) {
+    throw new SourceError(`${subject} says the way its lines travel together, such as \`bundle ${name}  via: through slot horizontal\``, line);
+  }
+  const arrangement = attrs['layout'] ?? 'parallel';
+  if (arrangement !== 'parallel' && arrangement !== 'collapsed') {
+    throw new SourceError(`${subject}: layout: ${arrangement} is not a bundle's arrangement — parallel (the default) or collapsed`, line);
+  }
+  const gap = attrs['layout.gap'];
+  for (const key of Object.keys(attrs)) {
+    if (key.startsWith('layout.') && key !== 'layout.gap') {
+      throw new SourceError(`${subject}: a bundle's layout: takes only gap:, such as layout: parallel (gap: normal)`, line);
+    }
+  }
+  if (arrangement === 'collapsed' && gap !== undefined) {
+    throw new SourceError(`${subject}: a collapsed bundle runs every line on one path, so it has no gap — leave (gap: ${gap}) off, or say parallel`, line);
+  }
+  if (arrangement === 'collapsed' && order !== undefined) {
+    throw new SourceError(`${subject}: a collapsed bundle runs every line on one path, so it has no order across — leave order: off, or say parallel`, line);
+  }
+  for (const key of ['layout', 'layout.gap']) delete attrs[key];
+  return { kind: 'bundle', name, via, arrangement, ...(gap !== undefined ? { gap } : {}), ...(order ? { order } : {}), attrs, line };
 }
 
 /** `point funnel  between c2 and api at 2/3` */
@@ -2361,10 +2471,18 @@ function readStop(tokens: Token[], start: number, subject: string, line: number)
     }
   }
   let gap: string | undefined;
-  if (!listed) {
-    const bracket = gapBracket(next);
-    gap = bracket.gap;
-    next = bracket.next;
+  let order: { way: 'after' | 'before'; name: string } | undefined;
+  if (!listed && follows(tokens, next, '(')) {
+    // A stop's bracket holds its gap, or, on a bundle, this line's place in its order.
+    const read = readBracket(tokens, next, ['gap', 'after', 'before'], { subject, what: 'the stop', kind: 'a stop', example: 'gap: wide', line });
+    gap = read.values['gap'];
+    const after = read.values['after'];
+    const before = read.values['before'];
+    if (after !== undefined && before !== undefined) {
+      throw new SourceError(`${subject}: "via: ${written(start, read.next)}" says after: and before:, which is this line's place said twice — keep one`, line);
+    }
+    if (after !== undefined || before !== undefined) order = { way: after !== undefined ? 'after' : 'before', name: (after ?? before)! };
+    next = read.next;
   }
   if (mode !== 'outside' && read.target.part === undefined) {
     throw new SourceError(
@@ -2373,7 +2491,7 @@ function readStop(tokens: Token[], start: number, subject: string, line: number)
     );
   }
   return finish(
-    { kind: 'place', target: read.target, mode, ...(gap !== undefined ? { gap } : {}), written: written(start, next) },
+    { kind: 'place', target: read.target, mode, ...(gap !== undefined ? { gap } : {}), ...(order ? { order } : {}), written: written(start, next) },
     next,
     listed,
   );

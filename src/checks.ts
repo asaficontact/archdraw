@@ -9,7 +9,7 @@
  */
 import type { Layout, LayoutEdge, LayoutNode } from './model.js';
 import { UNIT, arrowLength } from './constants.js';
-import { describeEdge, planSides, traceRoute, type Route, type SideEnds } from './lines.js';
+import { crossingPoints, describeEdge, planSides, traceRoute, type Route, type SideEnds } from './lines.js';
 
 /**
  * The kinds of finding, each with whether it is on when nothing says. Named in
@@ -105,11 +105,12 @@ export function findings(layout: Layout, checks: Checks): Finding[] {
   const found: Finding[] = [];
   if (checks['node-overlap']) found.push(...nodeOverlaps(layout));
   if (checks['text-overflow']) found.push(...textOverflows(layout));
-  if (checks['edge-node-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends']) {
+  if (checks['edge-node-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends'] || checks['edge-crossings']) {
     const plan = planSides(layout);
     if (checks['edge-node-overlap']) found.push(...edgeNodeOverlaps(layout, plan.routes));
     if (checks['edge-no-length']) found.push(...edgesWithNoLength(layout, plan.routes));
     if (checks['crowded-edge-ends']) found.push(...crowdedEnds(plan.sides));
+    if (checks['edge-crossings']) found.push(...edgeCrossings(layout, plan.routes));
   }
   return found.sort((a, b) => a.line - b.line);
 }
@@ -371,6 +372,27 @@ function crowdedEnds(sides: SideEnds[]): Finding[] {
       ),
     );
   }
+  return found;
+}
+
+/**
+ * Two lines crossing (design.org 6.6). Often fine, which is why it is off
+ * unless asked for. Found where the renderer finds the crossings it jumps, so
+ * a crossing drawn is a crossing reported; reported once per pair, against the
+ * later line, with how many times they cross.
+ */
+function edgeCrossings(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
+  const found: Finding[] = [];
+  const drawn = layout.edges.filter((edge) => !edge.guide).map((edge) => ({ edge, trace: traceRoute(routes.get(edge)!) }));
+  drawn.forEach((later, index) => {
+    for (const earlier of drawn.slice(0, index)) {
+      const thickness = Math.max(later.edge.look.thickness, earlier.edge.look.thickness);
+      const count = crossingPoints(later.trace, earlier.trace, 3 + thickness * 2 + arrowLength(thickness)).length;
+      if (count === 0) continue;
+      const times = count === 1 ? '' : count === 2 ? ' twice' : ` ${count} times`;
+      found.push(new Finding('edge-crossings', `line ${describeEdge(later.edge)} crosses line ${describeEdge(earlier.edge)}${times}`, later.edge.line));
+    }
+  });
   return found;
 }
 

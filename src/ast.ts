@@ -561,6 +561,8 @@ export interface EdgeStmt {
   straight?: Way;
   /** `via: b top, between c and d, leg climb`: the places the line passes, in order (design.org 6.4). */
   via?: ViaEntry[];
+  /** `edge each child of a -> b`: the end whose name is a container, one line per direct child of it (design.org 6.6). */
+  each?: 'from' | 'to';
   attrs: Attrs;
   /** `guide edge a -> b`: shapes nothing differently, and is drawn only when guides are shown. */
   guide?: boolean;
@@ -579,6 +581,15 @@ export type ViaStop =
       target: PlacementTarget;
       mode: 'outside' | 'on' | 'inside';
       gap?: string;
+      /** `via: trunk (after: z)`: this line's place in a bundle's order, which only a bundle has. */
+      order?: { way: 'after' | 'before'; name: string };
+      written: string;
+    }
+  | {
+      /** `via: trunk`: the whole length of a bundle, in this line's lane (6.6). Read from a place naming a bundle. */
+      kind: 'bundle';
+      bundle: string;
+      order?: { way: 'after' | 'before'; name: string };
       written: string;
     }
   | { kind: 'through'; region: string; axis: 'horizontal' | 'vertical'; written: string }
@@ -631,6 +642,29 @@ export interface RegionStmt {
   guide?: boolean;
   line: number;
 }
+
+/**
+ * `bundle trunk  via: through slot horizontal`: a shared path several lines
+ * travel together, built like a line with no ends (design.org 6.6). A line
+ * joins it with `via: trunk` and runs its whole length.
+ */
+export interface BundleStmt {
+  kind: 'bundle';
+  name: string;
+  via: ViaEntry[];
+  /** `layout: parallel (gap: tight)`, the default, or `layout: collapsed`, a bus. */
+  arrangement: 'parallel' | 'collapsed';
+  /** The gap between neighboring members of a parallel bundle, as written. */
+  gap?: string;
+  /** `order: y, z, x`: every member, in reading order across where the bundle starts. */
+  order?: string[];
+  /** `line:`, `from-mark:`, `to-mark:`: how a collapsed bundle's shared stretch is drawn. */
+  attrs: Attrs;
+  line: number;
+}
+
+/** What a bundle may say besides `via:`, `layout:` and `order:`. */
+export const BUNDLE_KEYS = ['via', 'layout', 'order', 'line', 'from-mark', 'to-mark'] as const;
 
 /** What a point and a region may say. A region's padding pushes every edge out. */
 export const POINT_KEYS = ['style', 'fill', 'depth'] as const;
@@ -830,7 +864,7 @@ export interface IconStmt {
   line: number;
 }
 
-export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt | PointStmt | RegionStmt;
+export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt | PointStmt | RegionStmt | BundleStmt;
 
 export interface Document {
   statements: Stmt[];

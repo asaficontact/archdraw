@@ -204,11 +204,13 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   const defaults = collectDefaults(doc.statements, styles);
   const icons = collectIcons(doc.statements, options.readIconFile);
   const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults, icons);
+  // From here on, `edge each child of a -> b` is the lines it stands for.
+  const statements = expandEach(doc.statements, byName);
 
   // Edges are resolved to nodes before anything is sized, because a labeled
   // edge claims room in the gap it crosses and so has to be in hand while the
   // gaps are being worked out. Nothing here reads geometry.
-  const edges = buildEdges(doc.statements, byName, styles, defaults);
+  const edges = buildEdges(statements, byName, styles, defaults);
 
   const named = collectNamed(doc.statements, byName);
   const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
@@ -231,9 +233,33 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
     height: Math.ceil(extent.maxY + margin),
     margin,
     marks,
-    depths: collectDepths(doc.statements, byName, named),
+    depths: collectDepths(statements, byName, named),
     guideLooks: { node: look('node'), edge: look('edge'), point: look('point'), region: look('region') },
   };
+}
+
+/**
+ * `edge each child of a -> b` as one line from each direct child of `a`, in the
+ * order they were written, so it stays true as children are added (design.org
+ * 6.6). A guide child is reference, not part of the picture, and a heading is
+ * the box's label, so neither gets a line.
+ */
+function expandEach(statements: Stmt[], byName: Map<string, LayoutNode>): Stmt[] {
+  return statements.flatMap((stmt) => {
+    if (stmt.kind !== 'edge' || stmt.each === undefined) return [stmt];
+    const name = stmt[stmt.each];
+    const said = `edge ${stmt.each === 'from' ? 'each child of ' : ''}${stmt.from} ${stmt.arrow} ${stmt.each === 'to' ? 'each child of ' : ''}${stmt.to}`;
+    const container = byName.get(name);
+    if (container === undefined) {
+      throw new SourceError(`${said}: there is no node named ${name}`, stmt.line);
+    }
+    const children = container.children.filter((child) => !child.guide && child !== container.heading);
+    if (children.length === 0) {
+      throw new SourceError(`${said}: ${name} has no children, so this draws no lines — name ${name} itself, or give it children`, stmt.line);
+    }
+    const { each: _, ...one } = stmt;
+    return children.map((child) => ({ ...one, [stmt.each!]: child.name }) as EdgeStmt);
+  });
 }
 
 // --- named points and regions ------------------------------------------------
@@ -307,9 +333,21 @@ function collectDepths(
   named: Map<string, PointStmt | RegionStmt>,
 ): DepthStatement[] {
   const depths: DepthStatement[] = [];
+  // A line is `edge <n>` in the drawing order, by its place among the edges;
+  // a leg is named with the line it belongs to.
+  const lines = new Map<string, string>();
+  const legs = new Map<string, string>();
+  let count = 0;
+  // A bundle is a line too, in its place among them.
+  for (const stmt of statements) {
+    if (stmt.kind !== 'edge' && stmt.kind !== 'bundle') continue;
+    if (stmt.name !== undefined) lines.set(stmt.name, `edge ${count}`);
+    for (const entry of stmt.via ?? []) if (entry.leg) legs.set(entry.leg.name, `edge ${count}`);
+    count += 1;
+  }
   let edge = 0;
   for (const stmt of statements) {
-    if (stmt.kind === 'edge') edge += 1;
+    if (stmt.kind === 'edge' || stmt.kind === 'bundle') edge += 1;
     if (stmt.kind !== 'node' && stmt.kind !== 'edge' && stmt.kind !== 'point' && stmt.kind !== 'region') continue;
     const written = stmt.attrs['depth'];
     if (written === undefined) continue;
@@ -317,12 +355,33 @@ function collectDepths(
     const said = stmt.kind === 'edge' ? `edge ${stmt.from} ${stmt.arrow} ${stmt.to}` : `"${stmt.name}"`;
     const clauses = written.split('; ').map((clause) => {
       const way = clause.startsWith('behind ') ? 'behind' : 'in front of';
-      const names = clause.slice(way.length + 1).split(', ');
-      for (const name of names) {
-        if (byName.has(name) || named.has(name)) continue;
-        throw new SourceError(`${said}: depth: ${way} "${name}", which does not exist`, stmt.line);
+      const shown = clause.slice(way.length + 1).split(', ');
+      const names: string[] = [];
+      const legsNamed: DepthStatement['clauses'][number]['legs'] = [];
+      for (const name of shown) {
+        if (byName.has(name) || named.has(name)) {
+          names.push(name);
+        } else if (lines.has(name)) {
+          if (lines.get(name) === subject) throw new SourceError(`${said}: depth: ${way} "${name}", which is this line`, stmt.line);
+          names.push(lines.get(name)!);
+        } else if (legs.has(name)) {
+          // A leg limits depth to where two lines cross on it, and only a line crosses one.
+          const line = legs.get(name)!;
+          if (stmt.kind !== 'edge') {
+            const owner = [...lines].find(([, key]) => key === line)?.[0];
+            throw new SourceError(
+              `${said}: depth: ${way} "${name}" — ${name} is a leg, and a leg limits depth: to where two lines cross on it; ` +
+                `${said} is not a line, so name the whole line${owner ? `, depth: ${way} ${owner}` : ''}`,
+              stmt.line,
+            );
+          }
+          if (line === subject) throw new SourceError(`${said}: depth: ${way} "${name}", which is a leg of this line`, stmt.line);
+          legsNamed.push({ leg: name, line });
+        } else {
+          throw new SourceError(`${said}: depth: ${way} "${name}", which does not exist`, stmt.line);
+        }
       }
-      return { way, names } as DepthStatement['clauses'][number];
+      return { way, names, shown, legs: legsNamed } as DepthStatement['clauses'][number];
     });
     depths.push({ subject, written: said, clauses, line: stmt.line });
   }
@@ -1041,7 +1100,7 @@ function buildEdges(
   // known before any end is looked up. A name belongs to one thing.
   const lineNames = new Map<string, number>();
   for (const stmt of statements) {
-    if (stmt.kind !== 'edge' || stmt.name === undefined) continue;
+    if ((stmt.kind !== 'edge' && stmt.kind !== 'bundle') || stmt.name === undefined) continue;
     if (byName.has(stmt.name) || lineNames.has(stmt.name)) {
       throw new SourceError(
         `line "${stmt.name}": the name is already ${byName.has(stmt.name) ? "a node's" : `the line's on line ${lineNames.get(stmt.name)}`} — a name belongs to one thing`,
@@ -1054,7 +1113,7 @@ function buildEdges(
   // Clashes between leg names and other names are refused in `lines.ts`.
   const legNames = new Map<string, number>();
   for (const stmt of statements) {
-    if (stmt.kind !== 'edge') continue;
+    if (stmt.kind !== 'edge' && stmt.kind !== 'bundle') continue;
     for (const entry of stmt.via ?? []) {
       if (entry.leg && !lineNames.has(entry.leg.name) && !byName.has(entry.leg.name)) legNames.set(entry.leg.name, stmt.line);
     }
@@ -1067,35 +1126,41 @@ function buildEdges(
     const node = byName.get(name);
     if (node) return node;
     if (!lineNames.has(name)) throw new SourceError(`edge ${which} "${name}", which does not exist`, line);
-    const point = onLines.get(name) ?? ({
-      name,
-      kind: 'none',
-      body: { kind: 'none' },
-      text: '',
-      lines: [],
-      children: [],
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-      inset: 0,
-      deckTexts: [],
-      headerHeight: 0,
-      reach: { left: 0, top: 0, right: 0, bottom: 0 },
-      banded: false,
-      textBox: { x: 0, y: 0, width: 0, height: 0 },
-      textSide: 'center',
-      textAttrs: {},
-      attrs: {},
-      appearance: {},
-      placements: [],
-      line,
-    } as LayoutNode);
+    const point = onLines.get(name) ?? placeholder(name, line);
     onLines.set(name, point);
     return point;
   };
   const pending: { edge: LayoutEdge; from?: string; to?: string }[] = [];
   for (const stmt of statements) {
+    if (stmt.kind === 'bundle') {
+      // A line with no ends: its path is its via: list, and its ends stand
+      // where that starts and finishes, so they are placeholders like an end
+      // on a line.
+      const what = `bundle ${stmt.name}`;
+      const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
+      const asEdge = { marks: {}, attrs: stmt.attrs, line: stmt.line } as unknown as EdgeStmt;
+      edges.push({
+        from: placeholder(stmt.name, stmt.line),
+        to: placeholder(stmt.name, stmt.line),
+        marks: { from: markAt('from', asEdge, appearance, what), to: markAt('to', asEdge, appearance, what) },
+        textAttrs: {},
+        arrow: '--',
+        name: stmt.name,
+        via: stmt.via,
+        look: lineLook(stmt.attrs, appearance, what, stmt.line),
+        attrs: stmt.attrs,
+        appearance,
+        // A parallel bundle's path is where its members run, not a line of its own.
+        ...(stmt.arrangement === 'parallel' ? { guide: true } : {}),
+        bundle: {
+          arrangement: stmt.arrangement,
+          gap: stmt.gap === undefined ? GAPS['tight']! : gapPixels(stmt.gap, `bundle "${stmt.name}" layout: (gap: …)`, stmt.line),
+          ...(stmt.order ? { order: stmt.order } : {}),
+        },
+        line: stmt.line,
+      });
+      continue;
+    }
     if (stmt.kind !== 'edge') continue;
     const from = endNode(stmt.from, 'from', stmt.line);
     const to = endNode(stmt.to, 'to', stmt.line);
@@ -1158,6 +1223,34 @@ function buildEdges(
   return edges;
 }
 
+/** A box of no size standing for a point on a line, which `lines.ts` puts in place once the line is drawn. */
+function placeholder(name: string, line: number): LayoutNode {
+  return ({
+      name,
+      kind: 'none',
+      body: { kind: 'none' },
+      text: '',
+      lines: [],
+      children: [],
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      inset: 0,
+      deckTexts: [],
+      headerHeight: 0,
+      reach: { left: 0, top: 0, right: 0, bottom: 0 },
+      banded: false,
+      textBox: { x: 0, y: 0, width: 0, height: 0 },
+      textSide: 'center',
+      textAttrs: {},
+      attrs: {},
+      appearance: {},
+      placements: [],
+      line,
+    } as LayoutNode);
+}
+
 /**
  * Where each `via:` stop that names something placed is, worked out by the
  * placer once everything is placed. A stop naming a line or a leg is left to
@@ -1166,12 +1259,37 @@ function buildEdges(
 function locateStops(edges: LayoutEdge[], placer: Placer, byName: Map<string, LayoutNode>, named: Map<string, PointStmt | RegionStmt>): void {
   const lineNames = new Set(edges.map((edge) => edge.name).filter((name) => name !== undefined));
   const legNames = new Set(edges.flatMap((edge) => (edge.via ?? []).map((entry) => entry.leg?.name)).filter((name) => name !== undefined));
+  const bundles = new Set(edges.filter((edge) => edge.bundle).map((edge) => edge.name!));
   for (const edge of edges) {
     if (!edge.via) continue;
-    const subject = `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    const subject = edge.bundle ? `bundle ${edge.name}` : `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
     edge.viaAt = edge.via.map((entry) => {
       const stop = entry.stop;
       if (!stop) return undefined;
+      if (stop.kind === 'place' && stop.target.point === undefined && bundles.has(stop.target.name)) {
+        // `via: trunk`: the whole of a bundle, in this line's lane (6.6).
+        const name = stop.target.name;
+        if (edge.bundle) {
+          throw new SourceError(`${subject}: "via: ${stop.written}" — a bundle's path is its own; ${name} is a bundle, and bundles don't run inside each other`, edge.line);
+        }
+        if (stop.target.part !== undefined || stop.target.fraction !== undefined || stop.mode !== 'outside') {
+          throw new SourceError(`${subject}: "via: ${stop.written}" — ${name} is a bundle, and a line joins it whole, written \`via: ${name}\``, edge.line);
+        }
+        if (stop.gap !== undefined) {
+          throw new SourceError(`${subject}: "via: ${stop.written}" — the gap between a bundle's lines is the bundle's, written \`bundle ${name}  layout: parallel (gap: ${stop.gap})\``, edge.line);
+        }
+        if (entry.leg) {
+          throw new SourceError(`${subject}: "leg ${entry.leg.name} ${stop.written}" — ${name} is a bundle, which has legs of its own; name the leg on the bundle`, edge.line);
+        }
+        entry.stop = { kind: 'bundle', bundle: name, ...(stop.order ? { order: stop.order } : {}), written: stop.written };
+        return undefined;
+      }
+      if (stop.kind === 'place' && stop.order !== undefined) {
+        throw new SourceError(
+          `${subject}: "via: ${stop.written}" — ${stop.order.way}: is a line's place in a bundle's order, and ${stop.target.name} is not a bundle`,
+          edge.line,
+        );
+      }
       if (stop.kind === 'through') {
         if (!named.has(stop.region) || named.get(stop.region)!.kind !== 'region') {
           throw new SourceError(

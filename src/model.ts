@@ -156,7 +156,19 @@ export interface DepthStatement {
   subject: string;
   /** The subject as written, for quoting back. */
   written: string;
-  clauses: { way: 'behind' | 'in front of'; names: string[] }[];
+  clauses: {
+    way: 'behind' | 'in front of';
+    /** What it moves against, as drawing-order keys: a name, or `edge <n>` for a named line. */
+    names: string[];
+    /** The same, as written, for quoting back. */
+    shown: string[];
+    /**
+     * Legs named, each with the key of the line it belongs to. A leg moves
+     * nothing in the sequence: it says which of two lines is on top where
+     * they cross on that leg, and nowhere else.
+     */
+    legs: { leg: string; line: string }[];
+  }[];
   line: number;
 }
 
@@ -193,6 +205,13 @@ export interface LayoutEdge {
   appearance: Attrs;
   /** `guide edge`: drawn only when guides are shown. */
   guide?: boolean;
+  /**
+   * A `bundle` statement: a line with no ends, whose path is its `via:` list
+   * alone, and which other lines travel along (design.org 6.6). Its `from` and
+   * `to` are placeholders named after it. A parallel bundle is drawn only with
+   * the guides; a collapsed one is drawn, as the bus.
+   */
+  bundle?: { arrangement: 'parallel' | 'collapsed'; gap: number; order?: string[] };
   line: number;
 }
 

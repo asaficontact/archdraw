@@ -16,7 +16,7 @@ import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js'
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
-import { alongLength, planLines, traceRoute, type Point, type Route } from './lines.js';
+import { alongLength, crossingPoints, planLines, traceRoute, type Point, type Route } from './lines.js';
 import { plain, type Line, type Run } from './text.js';
 
 export interface RenderOptions {
@@ -92,11 +92,28 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     .filter(({ edge }) => !hidden(edge))
     .map(({ edge, route }) => drawEdge(edge, route, theme, measurer, fontSize, layout.markup));
   placeTexts(drawn, layout.nodes);
-  // A line with a `crossing:` style is cut where it crosses an earlier one, and
-  // the jump drawn over the cut. The cut is a mask rather than a break in the
-  // path, so it works the same on a curve as on a corner, and leaves whatever
-  // lies underneath — a container's fill — showing through the gap.
-  const crossings = findCrossings(drawn);
+  // The drawing order comes first, since where two lines cross the one drawn
+  // later is on top, and `depth:` may have moved either (design.org 6.6, 8.4).
+  const keyOf = (edge: DrawnEdge): string => `edge ${edges.indexOf(edge.edge)}`;
+  const sequence = order(boxes, marks, drawn.map((edge) => ({ key: keyOf(edge), svg: '' })), layout.depths);
+  const place = new Map(sequence.map((item, index) => [item.key, index]));
+  const inOrder = [...drawn].sort((a, b) => place.get(keyOf(a))! - place.get(keyOf(b))!);
+  // `depth: in front of climb` on a line puts it on top only where it crosses the leg climb.
+  const onLeg: LegDepth[] = layout.depths.flatMap((depth) =>
+    depth.clauses.flatMap((clause) =>
+      clause.legs.map(({ leg, line }) => {
+        const subject = drawn.find((edge) => keyOf(edge) === depth.subject);
+        const owner = drawn.find((edge) => keyOf(edge) === line);
+        const trace = routes.get(layout.edges[Number(line.slice('edge '.length))]!)!.legs.get(leg)!;
+        return subject && owner ? { top: clause.way === 'in front of' ? subject : owner, pair: [subject, owner], trace } : undefined;
+      }),
+    ),
+  ).filter((one): one is LegDepth => one !== undefined);
+  // A line with a `crossing:` style is cut where it crosses a line under it,
+  // and the jump drawn over the cut. The cut is a mask rather than a break in
+  // the path, so it works the same on a curve as on a corner, and leaves
+  // whatever lies underneath — a container's fill — showing through the gap.
+  const crossings = findCrossings(inOrder, onLeg);
   const masks: { id: string; holes: Crossing[] }[] = [];
   for (const edge of drawn) {
     const found = crossings.get(edge);
@@ -114,11 +131,12 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
         edge.ink = union(edge.ink, grow(extentOfPoints([crossing.at]), crossing.reach + edge.edge.look.thickness));
       }
     }
-    lines.push({ key: `edge ${edges.indexOf(edge.edge)}`, svg: linked(parts.join('\n'), edge.edge.attrs['url']) });
+    lines.push({ key: keyOf(edge), svg: linked(parts.join('\n'), edge.edge.attrs['url']) });
     ink = union(ink, grow(edge.ink, layout.margin));
   }
-  const body = order(boxes, marks, lines, layout.depths)
-    .map((item) => item.svg)
+  const lineSvg = new Map(lines.map((line) => [line.key, line.svg]));
+  const body = sequence
+    .map((item) => lineSvg.get(item.key) ?? item.svg)
     .filter((svg) => svg.length > 0);
 
   // An edge's geometry is measured rather than solved for, so the resolver sized
@@ -531,7 +549,9 @@ function order(boxes: Drawn[], marks: { mark: LayoutMark; item: Drawn }[], lines
           );
         }
       }
-      const targets = clause.names.filter((name) => !holds(depth.subject, name) && !holds(name, depth.subject));
+      // A hidden guide line is not in the sequence: it neither moves nor is moved against.
+      if (position(depth.subject) < 0) continue;
+      const targets = clause.names.filter((name) => position(name) >= 0 && !holds(depth.subject, name) && !holds(name, depth.subject));
       if (targets.length === 0) continue;
       const moving = group(depth.subject);
       sequence = sequence.filter((drawn) => !moving.includes(drawn));
@@ -545,15 +565,17 @@ function order(boxes: Drawn[], marks: { mark: LayoutMark; item: Drawn }[], lines
   // A later move can undo an earlier one only where the file asks for a cycle.
   for (const depth of depths) {
     for (const clause of depth.clauses) {
-      for (const name of clause.names) {
+      for (const [index, name] of clause.names.entries()) {
         if (holds(depth.subject, name) || holds(name, depth.subject)) continue;
+        // A hidden guide line is not in the sequence, so nothing is in front of or behind it.
+        if (position(name) < 0 || position(depth.subject) < 0) continue;
         const holdsNow = clause.way === 'behind' ? position(depth.subject) < position(name) : position(depth.subject) > position(name);
         if (holdsNow) continue;
         const others = depths
           .filter((other) => other !== depth && (other.subject === name || other.clauses.some((c) => c.names.includes(depth.subject))))
-          .map((other) => `${other.written}'s depth: ${other.clauses.map((c) => `${c.way} ${c.names.join(', ')}`).join(', ')} (line ${other.line})`);
+          .map((other) => `${other.written}'s depth: ${other.clauses.map((c) => `${c.way} ${c.shown.join(', ')}`).join(', ')} (line ${other.line})`);
         throw new SourceError(
-          `${depth.written}: depth: ${clause.way} "${name}" can't hold together with ${others.length > 0 ? others.join(' and ') : 'the other depth: statements'} — ` +
+          `${depth.written}: depth: ${clause.way} "${clause.shown[index] ?? name}" can't hold together with ${others.length > 0 ? others.join(' and ') : 'the other depth: statements'} — ` +
             'they ask for a circle in the drawing order, so one of them has to go',
           depth.line,
         );
@@ -670,8 +692,10 @@ interface DrawnEdge {
   /** Its text, after it. */
   rest: string[];
   ink: Extent;
-  /** The line as a polyline, curves flattened, for finding where lines cross. */
+  /** The line as a polyline, curves flattened, for sliding its text along. */
   trace: Point[];
+  /** What is drawn of it, one polyline per part, for finding where lines cross: a line along a bus is two. */
+  traces: Point[][];
   color: string;
   stroke: string;
   /** Its text, placed after every line is drawn — see `placeTexts`. */
@@ -703,7 +727,22 @@ function drawEdge(
   let ink = extentOfPoints(points);
   let mid: Point;
 
-  if (route.pieces.some((piece) => 'c1' in piece)) {
+  if (route.hidden) {
+    // A line along a collapsed bundle: drawn up to where it merges and from
+    // where it splits, the bus between drawn once by the bundle (6.6). One
+    // path of several parts, so its marks stay at its own two ends.
+    const d = visibleRuns(route)
+      .map((run) => {
+        if (run.pieces.some((piece) => 'c1' in piece)) return piecesPath(run);
+        const corners = [run.start, ...run.pieces.map((piece) => piece.to)];
+        return edge.look.corners === 'rounded' && corners.length > 2 ? roundedPath(corners, arrowLength(edge.look.thickness)) : sharpPath(corners);
+      })
+      .join(' ');
+    parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
+    const trace = traceRoute(route);
+    ink = extentOfPoints(trace);
+    mid = alongLength(trace, 0.5);
+  } else if (route.pieces.some((piece) => 'c1' in piece)) {
     // A curved line is a spline through its points (design.org 6.3); a
     // straight leg of it, or a run along a side, stays straight.
     const d = piecesPath(route);
@@ -776,7 +815,8 @@ function drawEdge(
     line: line!,
     rest: [],
     ink: grow(ink, edge.look.thickness / 2),
-    trace: traceOf(line!),
+    trace: route.hidden ? traceRoute(route) : tracesOf(line!)[0]!,
+    traces: tracesOf(line!),
     color,
     stroke,
     text,
@@ -941,7 +981,24 @@ function sharpPath(points: Point[]): string {
 }
 
 /** A line's path, from its pieces. */
-function piecesPath(route: Route): string {
+/** A line's pieces with those along a collapsed bundle left out, as the runs either side of each. */
+function visibleRuns(route: Route): { start: Point; pieces: Route['pieces'] }[] {
+  const runs: { start: Point; pieces: Route['pieces'] }[] = [];
+  let run: { start: Point; pieces: Route['pieces'] } = { start: route.start, pieces: [] };
+  route.pieces.forEach((piece, index) => {
+    const hidden = route.hidden!.some(([first, past]) => index >= first && index < past);
+    if (hidden) {
+      if (run.pieces.length > 0) runs.push(run);
+      run = { start: piece.to, pieces: [] };
+    } else {
+      run.pieces.push(piece);
+    }
+  });
+  if (run.pieces.length > 0) runs.push(run);
+  return runs;
+}
+
+function piecesPath(route: { start: Point; pieces: Route['pieces'] }): string {
   return [
     `M ${round(route.start.x)} ${round(route.start.y)}`,
     ...route.pieces.map((piece) =>
@@ -953,26 +1010,32 @@ function piecesPath(route: Route): string {
 }
 
 /**
- * A drawn line's element read back as a polyline, curves flattened. Reading
- * the element rather than each drawing branch keeping its own record means the
- * crossings are found on exactly what was drawn.
+ * A drawn line's element read back as polylines, curves flattened, one for
+ * each part the path draws (a line along a bus has two). Reading the element
+ * rather than each drawing branch keeping its own record means the crossings
+ * are found on exactly what was drawn.
  */
-function traceOf(element: string): Point[] {
+function tracesOf(element: string): Point[][] {
   const line = /<line x1="([-\d.]+)" y1="([-\d.]+)" x2="([-\d.]+)" y2="([-\d.]+)"/.exec(element);
   if (line) {
-    return [
+    return [[
       { x: Number(line[1]), y: Number(line[2]) },
       { x: Number(line[3]), y: Number(line[4]) },
-    ];
+    ]];
   }
   const d = /d="([^"]*)"/.exec(element)?.[1] ?? '';
   const tokens = d.match(/[MLC]|-?\d+(?:\.\d+)?(?:e-?\d+)?/g) ?? [];
-  const points: Point[] = [];
+  const parts: Point[][] = [];
+  let points: Point[] = [];
   let command = 'M';
   for (let index = 0; index < tokens.length; ) {
     const token = tokens[index]!;
     if (/[MLC]/.test(token)) {
       command = token;
+      if (token === 'M' && points.length > 0) {
+        parts.push(points);
+        points = [];
+      }
       index += 1;
       continue;
     }
@@ -996,7 +1059,8 @@ function traceOf(element: string): Point[] {
       points.push(read());
     }
   }
-  return points;
+  if (points.length > 0) parts.push(points);
+  return parts;
 }
 
 // --- crossings ------------------------------------------------------------------
@@ -1009,49 +1073,55 @@ interface Crossing {
   reach: number;
 }
 
+/** `depth:` naming a leg: which of two lines is on top where they cross on that leg. */
+interface LegDepth {
+  top: DrawnEdge;
+  pair: [DrawnEdge, DrawnEdge];
+  trace: Point[];
+}
+
 /**
- * Where each line with a `crossing:` style crosses a line declared before it.
- * The later line is the one that jumps, so the file's order says who goes over,
- * and a line never jumps where it leaves or arrives — a crossing that close to
- * an end is two lines meeting at a box, not passing each other.
+ * Where each line with a `crossing:` style crosses a line under it. Lines come
+ * in drawing order, and the one drawn later is on top and jumps, so the file's
+ * order says who goes over unless `depth:` moved one; a `depth:` naming a leg
+ * turns over only the crossings on that leg. A line never jumps where it
+ * leaves or arrives — a crossing that close to an end is two lines meeting at
+ * a box, not passing each other.
  */
-function findCrossings(drawn: DrawnEdge[]): Map<DrawnEdge, Crossing[]> {
+function findCrossings(drawn: DrawnEdge[], onLeg: LegDepth[]): Map<DrawnEdge, Crossing[]> {
   const found = new Map<DrawnEdge, Crossing[]>();
   drawn.forEach((later, index) => {
-    if (later.edge.look.crossing === 'none') return;
-    const crossings: Crossing[] = [];
     for (const earlier of drawn.slice(0, index)) {
-      const reach = 3 + later.edge.look.thickness * 1.5 + earlier.edge.look.thickness / 2;
-      const clear = reach + arrowLength(later.edge.look.thickness);
-      const ends = [later.trace[0]!, later.trace[later.trace.length - 1]!, earlier.trace[0]!, earlier.trace[earlier.trace.length - 1]!];
-      for (let i = 1; i < later.trace.length; i += 1) {
-        const a = later.trace[i - 1]!;
-        const b = later.trace[i]!;
-        for (let j = 1; j < earlier.trace.length; j += 1) {
-          const at = intersect(a, b, earlier.trace[j - 1]!, earlier.trace[j]!);
-          if (!at) continue;
-          if (ends.some((end) => Math.hypot(end.x - at.x, end.y - at.y) < clear)) continue;
-          if (crossings.some((c) => Math.hypot(c.at.x - at.x, c.at.y - at.y) < (c.reach + reach) * 1.2)) continue;
-          const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-          crossings.push({ at, along: { x: (b.x - a.x) / length, y: (b.y - a.y) / length }, reach });
-        }
+      const turned = onLeg.filter((one) => one.pair.includes(later) && one.pair.includes(earlier));
+      const thickness = Math.max(later.edge.look.thickness, earlier.edge.look.thickness);
+      const clear = 3 + thickness * 2 + arrowLength(thickness);
+      const points = later.traces.flatMap((a) => earlier.traces.flatMap((b) => crossingPoints(a, b, clear)));
+      for (const { at, along, other } of points) {
+        const leg = turned.find((one) => nearTrace(one.trace, at));
+        const [top, under] = leg && leg.top === earlier ? [earlier, later] : [later, earlier];
+        if (top.edge.look.crossing === 'none') continue;
+        const reach = 3 + top.edge.look.thickness * 1.5 + under.edge.look.thickness / 2;
+        const crossings = found.get(top) ?? [];
+        if (crossings.some((c) => Math.hypot(c.at.x - at.x, c.at.y - at.y) < (c.reach + reach) * 1.2)) continue;
+        crossings.push({ at, along: top === later ? along : other, reach });
+        found.set(top, crossings);
       }
     }
-    if (crossings.length > 0) found.set(later, crossings);
   });
   return found;
 }
 
-/** Where two segments cross, if they do. Lines that only touch or run together do not. */
-function intersect(a: Point, b: Point, c: Point, d: Point): Point | undefined {
-  const r = { x: b.x - a.x, y: b.y - a.y };
-  const s = { x: d.x - c.x, y: d.y - c.y };
-  const denominator = r.x * s.y - r.y * s.x;
-  if (Math.abs(denominator) < 1e-9) return undefined;
-  const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / denominator;
-  const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / denominator;
-  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return undefined;
-  return { x: a.x + r.x * t, y: a.y + r.y * t };
+/** Whether a point lies on a polyline. */
+function nearTrace(trace: Point[], at: Point): boolean {
+  for (let index = 1; index < trace.length; index += 1) {
+    const a = trace[index - 1]!;
+    const b = trace[index]!;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length === 0) continue;
+    const t = Math.max(0, Math.min(1, ((at.x - a.x) * (b.x - a.x) + (at.y - a.y) * (b.y - a.y)) / (length * length)));
+    if (Math.hypot(a.x + (b.x - a.x) * t - at.x, a.y + (b.y - a.y) * t - at.y) < 1.5) return true;
+  }
+  return false;
 }
 
 /**

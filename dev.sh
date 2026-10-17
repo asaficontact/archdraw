@@ -156,6 +156,8 @@ Commands:
                                  made-up diagrams of 45 boxes and 5, 10 and 20
                                  lines, stopping at the first over its limit, in
                                  a few seconds. `full` goes on to 30 and 48 lines.
+                                 First, 150 copies of one line, which must
+                                 draw in under half a second.
                                  Run after changing how lines are routed; it
                                  builds first. Each run adds a row to
                                  stress-history.tsv (untracked): when, commit

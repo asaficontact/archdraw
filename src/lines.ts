@@ -55,6 +55,12 @@ export interface Route {
   legs: Map<string, Point[]>;
   /** Each stop the line passes, as written, and the points it put on the line: `req b top` finds its run here (4.6). */
   stops: { written: string; points: Point[] }[];
+  /**
+   * Pieces not drawn, as [first, past the last]: a member's way along a
+   * collapsed bundle, which the bus draws once (6.6). The line still travels
+   * there, so the trace and every finding include them.
+   */
+  hidden?: [number, number][];
 }
 
 /** What an end says, read from `from:` or `to:`. */
@@ -70,7 +76,9 @@ type EndSpec =
   /** `to: at 1/3`, `to: climb at 1/3`, `from: req end`: a point on a line or a leg. */
   | { kind: 'online'; line?: string; at: number | 'start' | 'end'; written: string }
   /** Nothing said, and the far end is on a line: the side facing that point, once the line is drawn. */
-  | { kind: 'facing-point' };
+  | { kind: 'facing-point' }
+  /** A bundle's end, which is wherever its path starts or finishes. */
+  | { kind: 'free' };
 
 type OrderWay = 'left of' | 'right of' | 'above' | 'below';
 
@@ -88,7 +96,15 @@ interface End {
   at?: Point;
   /** The headings it may take, pointing out of its box: one for a side, two for a bare corner, none for a straight line. */
   headings: Point[];
+  /** One of several copies of a line (6.5): which set, how many steps over, and which way "over" points along this side. */
+  copy?: { set: number; k: number; left: Point; leading: boolean };
 }
+
+/**
+ * How far apart copies of one line run, like lanes on a road (6.5). A fixed
+ * step, so adding a copy widens the set by one lane and moves no other lane.
+ */
+const FAN_STEP = 16;
 
 /** Where every line in the layout goes. */
 export function planLines(layout: Layout): Map<LayoutEdge, Route> {
@@ -109,12 +125,13 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
   const lines = new Map(layout.edges.filter((edge) => edge.name !== undefined).map((edge) => [edge.name!, edge]));
   const ends = new Map<LayoutEdge, [End, End]>();
   for (const edge of layout.edges) ends.set(edge, [endOf(edge, 'from'), endOf(edge, 'to')]);
+  const copies = copySets(layout.edges, ends);
 
   // Ends spread along a side first, since where an end lands on a shared side
   // depends on the others there.
   const sides = spreadSides([...ends.values()].flat());
   const routes = new Map<LayoutEdge, Route>();
-  const context: Context = { layout, legs, lines, ends, routes };
+  const context: Context = { layout, legs, lines, ends, routes, shapes: new Map(), lanes: new Map() };
 
   // A line others end on or pass beside is drawn before them (6.2). A loop of
   // lines each needing the next has no first line, and is refused.
@@ -136,10 +153,18 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
     for (const one of [start, end]) placeEnd(one, context);
     for (const [own, other] of [[start, end], [end, start]] as [End, End][]) faceThePoint(own, other);
     for (const [own, other] of [[start, end], [end, start]] as [End, End][]) aimCenter(own, other);
-    routes.set(edge, route(edge, start, end, context));
+    // A copy takes the first copy's shape, shifted over (6.5); the first is drawn as any line is.
+    const set = copies.get(edge);
+    const fan = set && set.lines[0] !== edge ? fanned(edge, start, end, set, context) : undefined;
+    routes.set(edge, fan ?? route(edge, start, end, context));
     done.add(edge);
   };
-  for (const edge of layout.edges) draw(edge);
+  // The first copy of each set comes first, since the others are drawn from it.
+  for (const edge of layout.edges) {
+    const set = copies.get(edge);
+    if (set) draw(set.lines[0]!);
+    draw(edge);
+  }
   // Back in the order written, which is the order lines are drawn and cross.
   return { routes: new Map(layout.edges.map((edge) => [edge, routes.get(edge)!])), sides };
 }
@@ -152,6 +177,147 @@ interface Context {
   lines: Map<string, LayoutEdge>;
   ends: Map<LayoutEdge, [End, End]>;
   routes: Map<LayoutEdge, Route>;
+  /** A line of one stretch, its shape before it was drawn: what its copies are shifted from. */
+  shapes: Map<LayoutEdge, Shape>;
+  /** Each bundle's members and their lanes, worked out once the bundle is drawn. */
+  lanes: Map<LayoutEdge, Map<LayoutEdge, number>>;
+}
+
+/** One stretch's shape: the square route, the points a curve passes through, and the way it travels at each end. */
+interface Shape {
+  square: Point[];
+  through: Point[];
+  curved: boolean;
+  out: Point;
+  arrive: Point;
+}
+
+/** A set of copies of one line, in written order; the first sets the direction they all travel in. */
+interface CopySet {
+  lines: LayoutEdge[];
+}
+
+/**
+ * Copies are lines with the same two boxes on the same sides, in either
+ * direction, with nothing stated about their path (6.5): no waypoints, no
+ * landing point, no place among a side's ends. Found by filing each line under
+ * its boxes and sides, in one pass.
+ */
+function copySets(edges: LayoutEdge[], ends: Map<LayoutEdge, [End, End]>): Map<LayoutEdge, CopySet> {
+  const filed = new Map<string, CopySet>();
+  const plain = (end: End): end is End & { spec: { kind: 'side' } } => end.spec.kind === 'side' && end.spec.after === undefined && !end.onLine;
+  const keyOf = (end: End): string => `${end.node.name}\n${(end.spec as { side: Side }).side}`;
+  for (const edge of edges) {
+    if (edge.via !== undefined || edge.straight !== undefined) continue;
+    const [start, end] = ends.get(edge)!;
+    if (!plain(start) || !plain(end)) continue;
+    const [a, b] = [keyOf(start), keyOf(end)];
+    const key = a <= b ? `${a}\n${b}` : `${b}\n${a}`;
+    const set = filed.get(key) ?? { lines: [] };
+    set.lines.push(edge);
+    filed.set(key, set);
+  }
+  const found = new Map<LayoutEdge, CopySet>();
+  for (const set of filed.values()) {
+    if (set.lines.length < 2) continue;
+    const [first] = ends.get(set.lines[0]!)!;
+    set.lines.forEach((edge, k) => {
+      found.set(edge, set);
+      const [start, end] = ends.get(edge)!;
+      // Written the same way round as the first copy, or the other way.
+      const along = keyOf(start) === keyOf(first);
+      // Copy k is k steps to the left of the way the set travels: leaving a
+      // side, left of its outward heading; arriving, left of the inward one.
+      const leaving = along ? start : end;
+      const arriving = along ? end : start;
+      const n1 = SIDE_NORMAL[(leaving.spec as { side: Side }).side];
+      const n2 = SIDE_NORMAL[(arriving.spec as { side: Side }).side];
+      const line = set.lines[0]!.line;
+      leaving.copy = { set: line, k, left: { x: n1.y, y: -n1.x }, leading: true };
+      arriving.copy = { set: line, k, left: { x: -n2.y, y: n2.x }, leading: false };
+    });
+  }
+  return found;
+}
+
+/**
+ * A copy drawn as the first copy's shape shifted k steps to its left (6.5).
+ * Each end keeps its own slot on its side, and every stretch between keeps the
+ * fixed step; on a square line the two never conflict, since a leg touching a
+ * side takes its place from the slot and the rest from the step. A straight
+ * shape has no stretch between, so the copy runs from slot to slot.
+ */
+function fanned(edge: LayoutEdge, start: End, end: End, set: CopySet, context: Context): Route | undefined {
+  const shape = context.shapes.get(set.lines[0]!);
+  if (shape === undefined) return undefined;
+  const k = set.lines.indexOf(edge);
+  // Worked out in the way the set travels, then turned round for a copy written the other way.
+  const along = start.copy!.leading;
+  const [a, b] = along ? [start.at!, end.at!] : [end.at!, start.at!];
+  const moved = shiftShape(shape, a, b, k * FAN_STEP);
+  if (moved === undefined) return undefined;
+  let { square, through } = moved;
+  let out = shape.out;
+  let arrive = shape.arrive;
+  if (!along) {
+    square = [...square].reverse();
+    through = [...through].reverse();
+    [out, arrive] = [{ x: -arrive.x, y: -arrive.y }, { x: -out.x, y: -out.y }];
+  }
+  const pieces: Piece[] = shape.curved
+    ? curve(through, out, arrive, edge.look.curve, undefined)
+    : square.slice(1).map((to) => ({ to }));
+  return { edge, start: square[0]!, pieces, points: shape.curved ? through : tidyCorners(square), legs: new Map(), stops: [] };
+}
+
+/**
+ * A square shape moved to new ends, each leg between shifted `by` to the left
+ * of the way it travels; the points a curve passes through move with the legs
+ * they lie on, at the same share of the way along. Undefined for a shape that
+ * isn't made of legs at right angles, which is drawn as it is.
+ */
+function shiftShape(shape: Shape, a: Point, b: Point, by: number): { square: Point[]; through: Point[] } | undefined {
+  const base = tidyCorners(shape.square);
+  const count = base.length - 1;
+  if (count < 1) return undefined;
+  if (count === 1) return { square: [a, b], through: [a, b] };
+  const level: boolean[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const p = base[index]!;
+    const q = base[index + 1]!;
+    const flat = Math.abs(p.y - q.y) < 0.5;
+    const upright = Math.abs(p.x - q.x) < 0.5;
+    if (flat === upright) return undefined;
+    level.push(flat);
+    if (index > 0 && level[index - 1] === flat) return undefined;
+  }
+  // Each leg's coordinate across it: the first and last from the ends' slots.
+  const across = base.slice(0, count).map((p, index) => {
+    const q = base[index + 1]!;
+    if (index === 0) return level[0] ? a.y : a.x;
+    if (index === count - 1) return level[index] ? b.y : b.x;
+    const way = level[index] ? Math.sign(q.x - p.x) : Math.sign(q.y - p.y);
+    return level[index] ? p.y - way * by : p.x + way * by;
+  });
+  const corners = across.slice(0, -1).map((value, index) =>
+    level[index] ? { x: across[index + 1]!, y: value } : { x: value, y: across[index + 1]! },
+  );
+  const square = [a, ...corners, b];
+  const through = shape.through.map((point) => {
+    for (let index = 0; index < count; index += 1) {
+      const p = base[index]!;
+      const q = base[index + 1]!;
+      const length = distance(p, q);
+      const t = length === 0 ? 0 : distance(p, point) / length;
+      const off = Math.abs((q.x - p.x) * (point.y - p.y) - (q.y - p.y) * (point.x - p.x)) / (length || 1);
+      if (off > 0.5 || t > 1 + 1e-6 || distance(q, point) > length + 0.5) continue;
+      const p2 = square[index]!;
+      const q2 = square[index + 1]!;
+      return { x: p2.x + (q2.x - p2.x) * t, y: p2.y + (q2.y - p2.y) * t };
+    }
+    return point;
+  });
+  return { square, through };
 }
 
 /** Every named leg, refusing a name used twice or already a box's or a line's. */
@@ -188,6 +354,7 @@ function needs(edge: LayoutEdge, context: Context): LayoutEdge[] {
   }
   for (const entry of edge.via ?? []) {
     const stop = entry.stop;
+    if (stop?.kind === 'bundle') found.push(context.lines.get(stop.bundle)!);
     if (stop?.kind === 'online') {
       const line = named(stop.line);
       if (line) found.push(line);
@@ -245,6 +412,7 @@ function endOf(edge: LayoutEdge, which: 'from' | 'to'): End {
   const face = faceOfNode(node);
   const written = edge.attrs[which];
   const subject = `edge ${describeEdge(edge)}`;
+  if (edge.bundle) return { edge, which, node, face, far, spec: { kind: 'free' }, headings: [] };
   if (edge.straight !== undefined && written !== undefined) {
     throw new SourceError(
       `${subject}: "straight ${edge.straight}" says where both ends are, so "${which}: ${written}" says it twice — keep one`,
@@ -767,8 +935,14 @@ function spreadSides(ends: End[]): SideEnds[] {
       return across ? center.x : center.y;
     };
     const along = (point: Point): number => (across ? point.x : point.y);
-    // Written order breaks a tie, which is what keeps two copies of one line in step at both ends.
-    const ordered = [...group].sort((a, b) => farAt(a) - farAt(b) || a.edge.line - b.edge.line);
+    // Written order breaks a tie. Copies of one line take adjacent slots, each
+    // a step further to the left of the way the set travels (6.5), which keeps
+    // them in step at both ends.
+    const axis = across ? { x: 1, y: 0 } : { x: 0, y: 1 };
+    const lane = (end: End): number => (end.copy ? end.copy.k * (end.copy.left.x * axis.x + end.copy.left.y * axis.y) : 0);
+    const ordered = [...group].sort(
+      (a, b) => farAt(a) - farAt(b) || (a.copy?.set ?? a.edge.line) - (b.copy?.set ?? b.edge.line) || lane(a) - lane(b) || a.edge.line - b.edge.line,
+    );
     // `to: top, right of z`: an end that states its place moves just past the line it names.
     for (const end of group) {
       if (end.spec.kind !== 'side' || end.spec.after === undefined) continue;
@@ -846,51 +1020,71 @@ interface Segment {
   /** A stretch is shaped as a line between two boxes is (6.3); a run goes straight along a side, a region or a leg. */
   kind: 'stretch' | 'run';
   leg?: { name: string; attrs: Attrs };
+  /** Along a collapsed bundle: the bus draws this stretch once, so the member doesn't. */
+  hidden?: boolean;
 }
 
 function route(edge: LayoutEdge, start: End, end: End, context: Context): Route {
-  const subject = `edge ${describeEdge(edge)}`;
-  const ways: Way[] = [
-    {
-      at: start.at!,
-      face: start.face,
-      ...(start.headings.length === 1 ? { dir: start.headings[0]! } : {}),
-      ...(start.headings.length > 1 ? { choices: start.headings } : {}),
-    },
-  ];
+  const subject = edge.bundle ? `bundle ${edge.name}` : `edge ${describeEdge(edge)}`;
+  // A bundle has no ends: its path is its stops alone (6.6).
+  const ways: Way[] = edge.bundle
+    ? []
+    : [
+        {
+          at: start.at!,
+          face: start.face,
+          ...(start.headings.length === 1 ? { dir: start.headings[0]! } : {}),
+          ...(start.headings.length > 1 ? { choices: start.headings } : {}),
+        },
+      ];
   const segments: Segment[] = [];
   let pending: { name: string; attrs: Attrs } | undefined;
   const pointLegs = new Map<string, Point>();
   const stops: Route['stops'] = [];
-  for (const [index, entry] of (edge.via ?? []).entries()) {
+  const entries = edge.via ?? [];
+  for (const [index, entry] of entries.entries()) {
     if (entry.leg && !entry.stop) {
       if (pending) {
         throw new SourceError(`${subject}: leg ${pending.name} and leg ${entry.leg.name} name the same stretch — keep one, or put a stop between them`, edge.line);
+      }
+      if (ways.length === 0) {
+        throw new SourceError(`${subject}: leg ${entry.leg.name} comes before the first stop, and a bundle starts there — name a stretch between two stops`, edge.line);
       }
       pending = entry.leg;
       continue;
     }
     const stop = entry.stop!;
-    const prev = ways[ways.length - 1]!.at;
-    const stopWays = expand(stop, edge.viaAt?.[index], prev, context, subject, edge.line);
-    segments.push({ kind: 'stretch', ...(pending ? { leg: pending } : {}) });
+    const prev = ways.length > 0 ? ways[ways.length - 1]!.at : firstPrev(edge, index);
+    const stopWays = stop.kind === 'bundle'
+      ? alongBundle(edge, stop, prev, context, subject)
+      : expand(stop, edge.viaAt?.[index], prev, context, subject, edge.line);
+    // A bundle's first stop is where it starts, so nothing leads into it.
+    if (ways.length > 0) segments.push({ kind: 'stretch', ...(pending ? { leg: pending } : {}) });
     pending = undefined;
     ways.push(stopWays[0]!);
+    const hidden = stop.kind === 'bundle' && context.lines.get(stop.bundle)!.bundle!.arrangement === 'collapsed';
     for (const next of stopWays.slice(1)) {
-      segments.push({ kind: 'run', ...(entry.leg ? { leg: entry.leg } : {}) });
+      segments.push({ kind: 'run', ...(entry.leg ? { leg: entry.leg } : {}), ...(hidden ? { hidden } : {}) });
       ways.push(next);
     }
     if (entry.leg && stopWays.length === 1) pointLegs.set(entry.leg.name, stopWays[0]!.at);
     stops.push({ written: stop.written, points: stopWays.map((way) => way.at) });
   }
-  segments.push({ kind: 'stretch', ...(pending ? { leg: pending } : {}) });
   const back = (heading: Point): Point => ({ x: -heading.x, y: -heading.y });
-  ways.push({
-    at: end.at!,
-    face: end.face,
-    ...(end.headings.length === 1 ? { dir: back(end.headings[0]!) } : {}),
-    ...(end.headings.length > 1 ? { choices: end.headings.map(back) } : {}),
-  });
+  if (edge.bundle) {
+    if (pending) throw new SourceError(`${subject}: leg ${pending.name} comes after the last stop, and a bundle ends there — name a stretch between two stops`, edge.line);
+    if (ways.length < 2) {
+      throw new SourceError(`${subject}: a bundle's path runs from one place to another, and via: names one point — add a stop, or pass a side or a region, such as \`via: through slot horizontal\``, edge.line);
+    }
+  } else {
+    segments.push({ kind: 'stretch', ...(pending ? { leg: pending } : {}) });
+    ways.push({
+      at: end.at!,
+      face: end.face,
+      ...(end.headings.length === 1 ? { dir: back(end.headings[0]!) } : {}),
+      ...(end.headings.length > 1 ? { choices: end.headings.map(back) } : {}),
+    });
+  }
 
   // Each segment's points, in order, and whether it is drawn curved.
   const drawn: { points: Point[]; curved: boolean; through: Point[]; segment: Segment; from: Way; to: Way }[] = [];
@@ -928,16 +1122,25 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     to.dir ??= chosen.arrive;
     arriving = chosen.arrive;
     drawn.push({ points: chosen.built.points, curved: path === 'curved', through: chosen.built.through, segment, from, to });
+    if (segments.length === 1) {
+      context.shapes.set(edge, { square: chosen.built.points, through: chosen.built.through, curved: path === 'curved', out: chosen.out, arrive: chosen.arrive });
+    }
   }
 
   // The pieces, and each named leg as drawn.
   const pieces: Piece[] = [];
   const legs = new Map<string, Point[]>();
   const points: Point[] = [ways[0]!.at];
+  const hidden: [number, number][] = [];
   for (const [index, part] of drawn.entries()) {
     const own: Piece[] = part.curved
       ? curve(part.through, part.from.dir, part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined))
       : part.points.slice(1).map((to) => ({ to }));
+    if (part.segment.hidden) {
+      const last = hidden[hidden.length - 1];
+      if (last && last[1] === pieces.length) last[1] += own.length;
+      else hidden.push([pieces.length, pieces.length + own.length]);
+    }
     pieces.push(...own);
     points.push(...(part.curved ? part.through : part.points).slice(1));
     const name = part.segment.leg?.name;
@@ -949,7 +1152,154 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     }
   }
   for (const [name, at] of pointLegs) legs.set(name, [at]);
-  return { edge, start: ways[0]!.at, pieces, points: tidyCorners(points), legs, stops };
+  return { edge, start: ways[0]!.at, pieces, points: tidyCorners(points), legs, stops, ...(hidden.length > 0 ? { hidden } : {}) };
+}
+
+/**
+ * What a bundle's first stop is measured from, having nothing before it: the
+ * far side of it from the next stop, so a run there is taken away from where
+ * the bundle goes next. With no next stop, the stop itself, which leaves a run
+ * in reading order, left or top first.
+ */
+function firstPrev(edge: LayoutEdge, index: number): Point {
+  const center = (rect: Rect): Point => ({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+  const own = edge.viaAt?.[index];
+  const here = own ? center(own) : { x: 0, y: 0 };
+  const next = edge.viaAt?.slice(index + 1).find((rect) => rect !== undefined);
+  if (next === undefined) return here;
+  const there = center(next);
+  return { x: 2 * here.x - there.x, y: 2 * here.y - there.y };
+}
+
+/**
+ * The lines through each bundle and the lane each runs in: its distance to the
+ * left of the bundle's own way of travel (6.6). Members are spread evenly about
+ * the path a gap apart, in one order read across the bundle where it starts —
+ * top to bottom on a level start, left to right on an upright one — and held
+ * round every turn. A collapsed bundle runs them all on the path itself.
+ */
+function lanesOf(bundle: LayoutEdge, context: Context): Map<LayoutEdge, number> {
+  const cached = context.lanes.get(bundle);
+  if (cached) return cached;
+  const subject = `bundle ${bundle.name}`;
+  const members = context.layout.edges.filter((edge) => (edge.via ?? []).some((entry) => entry.stop?.kind === 'bundle' && entry.stop.bundle === bundle.name));
+  const placed = (edge: LayoutEdge) => (edge.via ?? []).map((entry) => entry.stop).find((stop) => stop?.kind === 'bundle' && stop.bundle === bundle.name) as Extract<ViaStop, { kind: 'bundle' }>;
+  const named = new Map(members.filter((edge) => edge.name !== undefined).map((edge) => [edge.name!, edge]));
+  const info = bundle.bundle!;
+  let ordered: LayoutEdge[];
+  if (info.order) {
+    // The bundle's list is its whole membership (design.org 6.6).
+    for (const name of info.order) {
+      if (!named.has(name)) {
+        throw new SourceError(
+          context.lines.has(name)
+            ? `${subject}: order: lists ${name}, which doesn't pass through it — add \`via: ${bundle.name}\` to ${name}, or take it off the list`
+            : `${subject}: order: lists ${name}, which is not a line; order: names lines through the bundle`,
+          bundle.line,
+        );
+      }
+    }
+    if (new Set(info.order).size !== info.order.length) {
+      throw new SourceError(`${subject}: order: lists a line twice — each line has one place`, bundle.line);
+    }
+    for (const member of members) {
+      if (member.name === undefined || !info.order.includes(member.name)) {
+        throw new SourceError(
+          `edge ${describeEdge(member)}: passes through ${bundle.name}, whose order: lists every line through it and leaves this one out` +
+            (member.name === undefined ? ' — name the line, such as `edge x a -> b`, and add it to the list' : ` — add ${member.name} to the list`),
+          member.line,
+        );
+      }
+    }
+    ordered = info.order.map((name) => named.get(name)!);
+  } else {
+    ordered = [...members];
+  }
+  // `via: trunk (after: z)`: one line placing itself, as the terms of order: say.
+  for (const member of members) {
+    const stop = placed(member);
+    if (!stop.order) continue;
+    const { way, name } = stop.order;
+    const anchor = named.get(name);
+    if (anchor === undefined || anchor === member) {
+      throw new SourceError(
+        `edge ${describeEdge(member)}: "via: ${stop.written}" — ${anchor === member ? 'a line has no place relative to itself' : `${name} is not a line through ${bundle.name}`}`,
+        member.line,
+      );
+    }
+    if (info.arrangement === 'collapsed') {
+      throw new SourceError(`edge ${describeEdge(member)}: "via: ${stop.written}" — ${bundle.name} is collapsed, so its lines share one path and have no order across`, member.line);
+    }
+    if (info.order) {
+      const holds = way === 'after' ? ordered.indexOf(member) > ordered.indexOf(anchor) : ordered.indexOf(member) < ordered.indexOf(anchor);
+      if (!holds) {
+        throw new SourceError(
+          `edge ${describeEdge(member)}: "via: ${stop.written}" puts it ${way} ${name}, and ${bundle.name}'s order: (${info.order.join(', ')}) puts it ${way === 'after' ? 'before' : 'after'} — keep one`,
+          member.line,
+        );
+      }
+      continue;
+    }
+    ordered.splice(ordered.indexOf(member), 1);
+    const at = ordered.indexOf(anchor);
+    ordered.splice(way === 'after' ? at + 1 : at, 0, member);
+  }
+  const lanes = new Map<LayoutEdge, number>();
+  const trace = traceRoute(context.routes.get(bundle)!);
+  const first = unit(trace[0]!, trace[1]!);
+  // Reading order across the start: down for a level start, rightward for an upright one.
+  const reading = Math.abs(first.x) >= Math.abs(first.y) ? { x: 0, y: 1 } : { x: 1, y: 0 };
+  const left = { x: first.y, y: -first.x };
+  const sign = reading.x * left.x + reading.y * left.y;
+  const gap = info.arrangement === 'collapsed' ? 0 : info.gap;
+  ordered.forEach((member, index) => lanes.set(member, (index - (ordered.length - 1) / 2) * gap * sign));
+  context.lanes.set(bundle, lanes);
+  return lanes;
+}
+
+/**
+ * A member's way along a bundle: the whole path, shifted into its lane, entered
+ * at the end nearer where the line comes from (6.6).
+ */
+function alongBundle(edge: LayoutEdge, stop: Extract<ViaStop, { kind: 'bundle' }>, prev: Point, context: Context, subject: string): Way[] {
+  const bundle = context.lines.get(stop.bundle)!;
+  if (edge.via!.filter((entry) => entry.stop?.kind === 'bundle' && entry.stop.bundle === stop.bundle).length > 1) {
+    throw new SourceError(`${subject}: passes through ${stop.bundle} twice, and a line has one lane in a bundle — use a second bundle`, edge.line);
+  }
+  const lane = lanesOf(bundle, context).get(edge)!;
+  const path = tidyCorners(traceRoute(context.routes.get(bundle)!));
+  const shifted = offsetLine(path, lane);
+  const forward = distance(prev, shifted[0]!) <= distance(prev, shifted[shifted.length - 1]!);
+  const ordered = forward ? shifted : [...shifted].reverse();
+  return ordered.map((p, index) => {
+    const dir = unit(ordered[Math.max(0, index - 1)]!, ordered[Math.max(1, index)]!);
+    return { at: p, face: { x: p.x, y: p.y, width: 0, height: 0, round: false }, dir };
+  });
+}
+
+/**
+ * A polyline moved `by` to the left of the way it travels, each corner where
+ * its two moved neighbors meet, so the moved line keeps its distance round
+ * every turn.
+ */
+function offsetLine(points: Point[], by: number): Point[] {
+  if (by === 0) return points;
+  const normals = points.slice(1).map((point, index) => {
+    const along = unit(points[index]!, point);
+    return { x: along.y * by, y: -along.x * by };
+  });
+  return points.map((point, index) => {
+    const before = normals[index - 1];
+    const after = normals[index];
+    if (!before) return { x: point.x + after!.x, y: point.y + after!.y };
+    if (!after) return { x: point.x + before.x, y: point.y + before.y };
+    // Where the two moved legs meet: the miter, as long as the turn needs.
+    const sum = { x: before.x + after.x, y: before.y + after.y };
+    const length = Math.hypot(sum.x, sum.y);
+    if (length < 1e-9) return { x: point.x + after.x, y: point.y + after.y };
+    const scale = (by * by * 2) / (length * length);
+    return { x: point.x + sum.x * scale, y: point.y + sum.y * scale };
+  });
 }
 
 /** The way out of a point with none of its own: along the axis the line was traveling, else the longer way toward the next point. */
@@ -1037,6 +1387,8 @@ function expand(stop: ViaStop, at: Rect | undefined, prev: Point, context: Conte
     const ordered = forward ? moved : [...moved].reverse();
     return ordered.map((p, index) => point(p, unit(ordered[Math.max(0, index - 1)]!, ordered[Math.max(1, index)]!)));
   }
+  // A bundle is followed by `alongBundle`, never expanded here.
+  if (stop.kind === 'bundle') throw new Error(`bundle stop ${stop.written} reached expand`);
   // A place: a side is a run just outside it, a point on a side is passed just
   // outside it going along the side, and anything else is passed through.
   const box = at!;
@@ -1162,6 +1514,11 @@ function squareRoute(start: Way, end: Way, out: Point, back: Point, turn: number
   const aheadOfStart = (u(corner) - u(a)) * du > 0;
   const aheadOfEnd = (v(corner) - v(b)) * dv > 0;
   if (aheadOfStart && aheadOfEnd) return { points: [a, corner, b], through: [a, b] };
+  // A waypoint in line with the other end: the corner is the waypoint itself,
+  // so the line turns there rather than going round it.
+  const point = (face: Face) => face.width === 0 && face.height === 0;
+  if (aheadOfStart && point(toFace) && Math.abs(v(corner) - v(b)) < 0.5) return { points: [a, b], through: [a, b] };
+  if (aheadOfEnd && point(fromFace) && Math.abs(u(corner) - u(a)) < 0.5) return { points: [a, b], through: [a, b] };
   if (!aheadOfStart && aheadOfEnd) {
     // The far end is behind the start's side: out, across the gap on the end's
     // axis (or round, a step-out off the end where there is none), and in.
@@ -1271,6 +1628,44 @@ export function traceRoute(route: Route): Point[] {
   return tracePieces(route.start, route.pieces);
 }
 
+/**
+ * Where two drawn lines cross, with the way each runs there. Lines that only
+ * touch or run together don't cross, and nor do two lines nearer than `clear`
+ * to an end of either: that is two lines meeting at a box, not passing each
+ * other. The renderer jumps these and the `edge-crossings` finding counts
+ * them, so the two agree.
+ */
+export function crossingPoints(a: Point[], b: Point[], clear: number): { at: Point; along: Point; other: Point }[] {
+  const found: { at: Point; along: Point; other: Point }[] = [];
+  const ends = [a[0]!, a[a.length - 1]!, b[0]!, b[b.length - 1]!];
+  for (let i = 1; i < a.length; i += 1) {
+    const p = a[i - 1]!;
+    const q = a[i]!;
+    for (let j = 1; j < b.length; j += 1) {
+      const r = b[j - 1]!;
+      const s = b[j]!;
+      const at = intersect(p, q, r, s);
+      if (!at || ends.some((end) => distance(end, at) < clear)) continue;
+      if (found.some((one) => distance(one.at, at) < 1)) continue;
+      found.push({ at, along: unit(p, q), other: unit(r, s) });
+    }
+  }
+  return found;
+}
+
+/** Where two segments cross, if they do. Segments that only touch or run together do not. */
+function intersect(a: Point, b: Point, c: Point, d: Point): Point | undefined {
+  const r = { x: b.x - a.x, y: b.y - a.y };
+  const s = { x: d.x - c.x, y: d.y - c.y };
+  const denominator = r.x * s.y - r.y * s.x;
+  if (Math.abs(denominator) < 1e-9) return undefined;
+  const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / denominator;
+  const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / denominator;
+  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return undefined;
+  return { x: a.x + r.x * t, y: a.y + r.y * t };
+}
+
 export function describeEdge(edge: LayoutEdge): string {
+  if (edge.bundle) return `bundle ${edge.name}`;
   return `${edge.from.name} ${edge.arrow} ${edge.to.name}`;
 }
