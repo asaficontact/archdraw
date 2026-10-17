@@ -265,9 +265,9 @@ function fanned(edge: LayoutEdge, start: End, end: End, set: CopySet, context: C
     [out, arrive] = [{ x: -arrive.x, y: -arrive.y }, { x: -out.x, y: -out.y }];
   }
   const pieces: Piece[] = shape.curved
-    ? curve(through, out, arrive, edge.look.curve, undefined)
+    ? curve(through, out, arrive, edge.look.curve, undefined, edge.look.stepOut)
     : square.slice(1).map((to) => ({ to }));
-  return { edge, start: square[0]!, pieces, points: shape.curved ? through : tidyCorners(square), legs: new Map(), stops: [] };
+  return { edge, start: square[0]!, pieces, points: shape.curved ? tracePieces(square[0]!, pieces) : tidyCorners(square), legs: new Map(), stops: [] };
 }
 
 /**
@@ -1087,7 +1087,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
   }
 
   // Each segment's points, in order, and whether it is drawn curved.
-  const drawn: { points: Point[]; curved: boolean; through: Point[]; segment: Segment; from: Way; to: Way }[] = [];
+  const drawn: { points: Point[]; curved: boolean; through: Point[]; segment: Segment; from: Way; to: Way; step: number }[] = [];
   let arriving: Point | undefined;
   for (const [index, segment] of segments.entries()) {
     const from = ways[index]!;
@@ -1095,7 +1095,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     const attrs = segment.leg?.attrs ?? {};
     const path = (attrs['path'] ?? edge.look.path) as LayoutEdge['look']['path'];
     if (segment.kind === 'run' || path === 'straight') {
-      drawn.push({ points: [from.at, to.at], curved: false, through: [from.at, to.at], segment, from, to });
+      drawn.push({ points: [from.at, to.at], curved: false, through: [from.at, to.at], segment, from, to, step: 0 });
       arriving = segment.kind === 'run' ? unit(from.at, to.at) : undefined;
       continue;
     }
@@ -1121,7 +1121,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
     from.dir ??= chosen.out;
     to.dir ??= chosen.arrive;
     arriving = chosen.arrive;
-    drawn.push({ points: chosen.built.points, curved: path === 'curved', through: chosen.built.through, segment, from, to });
+    drawn.push({ points: chosen.built.points, curved: path === 'curved', through: chosen.built.through, segment, from, to, step });
     if (segments.length === 1) {
       context.shapes.set(edge, { square: chosen.built.points, through: chosen.built.through, curved: path === 'curved', out: chosen.out, arrive: chosen.arrive });
     }
@@ -1134,7 +1134,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
   const hidden: [number, number][] = [];
   for (const [index, part] of drawn.entries()) {
     const own: Piece[] = part.curved
-      ? curve(part.through, part.from.dir, part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined))
+      ? curve(part.through, part.from.dir, part.to.dir, edge.look.curve, (part.segment.leg?.attrs['curve'] as LayoutEdge['look']['curve'] | undefined), part.step)
       : part.points.slice(1).map((to) => ({ to }));
     if (part.segment.hidden) {
       const last = hidden[hidden.length - 1];
@@ -1142,7 +1142,7 @@ function route(edge: LayoutEdge, start: End, end: End, context: Context): Route 
       else hidden.push([pieces.length, pieces.length + own.length]);
     }
     pieces.push(...own);
-    points.push(...(part.curved ? part.through : part.points).slice(1));
+    points.push(...(part.curved ? tracePieces(part.from.at, own) : part.points).slice(1));
     const name = part.segment.leg?.name;
     if (name !== undefined) {
       const trace = tracePieces(part.points[0]!, own);
@@ -1569,35 +1569,36 @@ export function tidyCorners(points: Point[]): Point[] {
 const CURVE_REACH: Record<LayoutEdge['look']['curve'], number> = { subtle: 0.22, normal: 0.36, strong: 0.5 };
 
 /**
- * A curve through every point exactly (design.org 6.3). It leaves the first
- * point and arrives at the last in the way the line travels there, and at a
- * point between runs parallel to the line joining that point's neighbors.
- * Nothing is checked or retried.
+ * One sweep from a stretch's first point to its last (design.org 6.3),
+ * leaving and arriving in the way the line travels there. The square route's
+ * corners are not passed through: a curve forced through points a step-out
+ * apart bends sharply between them. An end that heads away from the other end
+ * reaches at least a step-out, so a line that turns back loops wide enough to
+ * read as a turn. Nothing is checked or retried.
  */
-function curve(points: Point[], first: Point | undefined, last: Point | undefined, look: LayoutEdge['look']['curve'], leg: LayoutEdge['look']['curve'] | undefined): Piece[] {
+function curve(points: Point[], first: Point | undefined, last: Point | undefined, look: LayoutEdge['look']['curve'], leg: LayoutEdge['look']['curve'] | undefined, step: number): Piece[] {
   if (leg !== undefined && !(leg in CURVE_REACH)) leg = undefined;
   const reach = CURVE_REACH[leg ?? look];
-  const tangents = points.map((point, index) => {
-    if (index === 0 && first) return first;
-    if (index === points.length - 1 && last) return last;
-    const before = points[Math.max(0, index - 1)]!;
-    const after = points[Math.min(points.length - 1, index + 1)]!;
-    return unit(before, after);
-  });
-  const pieces: Piece[] = [];
-  for (let index = 1; index < points.length; index += 1) {
-    const a = points[index - 1]!;
-    const b = points[index]!;
-    const length = distance(a, b);
-    const ta = tangents[index - 1]!;
-    const tb = tangents[index]!;
-    pieces.push({
-      c1: { x: a.x + ta.x * length * reach, y: a.y + ta.y * length * reach },
-      c2: { x: b.x - tb.x * length * reach, y: b.y - tb.y * length * reach },
+  const a = points[0]!;
+  const b = points[points.length - 1]!;
+  const length = distance(a, b);
+  const chord = unit(a, b);
+  const ta = first ?? chord;
+  const tb = last ?? chord;
+  // How far each handle reaches: a share of the chord, more as the end turns away from it.
+  const handle = (t: Point): number => {
+    const ahead = t.x * chord.x + t.y * chord.y;
+    return Math.max(length * reach, step * Math.max(0, 1 - ahead));
+  };
+  const ha = handle(ta);
+  const hb = handle(tb);
+  return [
+    {
+      c1: { x: a.x + ta.x * ha, y: a.y + ta.y * ha },
+      c2: { x: b.x - tb.x * hb, y: b.y - tb.y * hb },
       to: b,
-    });
-  }
-  return pieces;
+    },
+  ];
 }
 
 /** Pieces from a starting point, as a polyline: a cubic flattened, a straight piece as it is. */

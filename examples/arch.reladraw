@@ -70,10 +70,14 @@ edge server.deploy -> server.docker  "compose up"
 edge server.docker.db1 -> dumps.db1  from: right  to: left
 edge server.docker.db2 -> dumps.db2  from: right  to: left
 
-// The rclone lines run up the channel between the two left-hand machines, so
-// the dumps arrive through the middle of the cluster rather than across one.
-edge dumps.db1 -> cluster.hub  "rclone"  from: right  to: left  via: cluster.laptop1 top (gap: wide)
-edge dumps.db2 -> cluster.hub  "rclone"  from: right  to: left  via: cluster.laptop1 top
+// The rclone lines travel together through the channel between the two
+// left-hand machines, so the dumps arrive through the middle of the cluster
+// rather than across one. Each rises from its dump into the bundle and runs
+// level beside the other into the hub.
+guide region channel  between cluster.desktop1 and cluster.laptop1
+bundle rclone  via: through channel horizontal  order: one, two
+edge one dumps.db1 -> cluster.hub  "rclone"  from: right  to: left  via: rclone
+edge two dumps.db2 -> cluster.hub  "rclone"  from: right  to: left  via: rclone
 
 edge cluster.desktop1.files -> server.mirror  "backup script"  style: backup  from: left  to: right
 edge cluster.desktop1.files -> server.deploy  "deploy script"                 from: left  to: right
