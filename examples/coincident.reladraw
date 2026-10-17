@@ -17,18 +17,19 @@ edge a -> b  "third"   via: ab
 
 // A perfect diagonal, where the single line would leave through the corner
 // exactly. The two copies run either side of it, one end on each of the
-// sides meeting there, written in either direction.
+// sides meeting there, written in either direction. Copies a gap apart have
+// no room for a text between them, so each text sits beside its own line.
 node low  "Low"   16 below a  left of a  style: plain
 node high "High"  above low (gap: wide)  right of low (gap: wide)  style: plain
-edge low -> high   "up"
-edge high -> low   "down"
+edge low -> high   "up" (left of edge)
+edge high -> low   "down" (right of edge)
 
 // A near diagonal, where the lines cross the border on one side, close to
 // the corner.
 node near "Near"  below low (gap: wide)  style: plain
 node far  "Far"   right of near (gap: wide)  above near (gap: wide)  style: plain
-edge near -> far  "one"
-edge near -> far  "two"
+edge near -> far  "one" (left of edge)
+edge near -> far  "two" (right of edge)
 
 // A lone edge has nothing to share the way with, and runs center to center.
 node solo  "Solo"   below near (gap: wide)  style: plain

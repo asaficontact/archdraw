@@ -537,6 +537,41 @@ export const MARK_GLYPHS: Record<'from' | 'to', Record<string, Mark>> = {
   to: { '>': 'arrow', '|>': 'oarrow', '*': 'dot', o: 'odot', '|': 'bar' },
 };
 
+/** A side of something, as a text's bracket names it: `above s1`, `right of edge`. */
+export type TextSide = 'above' | 'below' | 'left of' | 'right of';
+
+/**
+ * Where one text on a line sits, as its bracket says (design.org 7.3). Every
+ * field is optional: with nothing said the text shares the line with the
+ * other unplaced texts, spread evenly.
+ */
+export interface EdgeTextPlace {
+  /** `at: 1/4`, `at: 0.25`, `at: start`, `at: end`: a spot along the line, or along the leg `on` names. */
+  at?: number | 'start' | 'end';
+  /** `on: rise`: the named leg the text sits on. */
+  on?: string;
+  /** `straight right from c`: where a line that way from c's middle first meets this one. */
+  straight?: { way: Way; target: PlacementTarget; written: string };
+  /** `above s1`: a gap from the box, where the line first reaches that height or position across. */
+  by?: { side: TextSide; target: PlacementTarget; written: string };
+  /** `right of edge`: moved clear of the part of the line it landed on. */
+  beside?: TextSide;
+  /** `gap:` — from the node, for `at: start`/`end` and a text placed by a box. */
+  gap?: string;
+  /** `edge-gap:` — off the line, for a text beside it. */
+  edgeGap?: string;
+  /** `reads: up`, `down` or `along`. */
+  reads?: 'up' | 'down' | 'along';
+}
+
+/** One text on a line: what it says, how it looks, where it sits. */
+export interface EdgeTextStmt {
+  text: string;
+  /** `color:`, `size:`, `wrap:` from its bracket. */
+  textAttrs: Attrs;
+  place: EdgeTextPlace;
+}
+
 /** The marks written in an edge's arrow, by end. An end with none written is absent. */
 export interface EdgeMarks {
   from?: Mark;
@@ -552,9 +587,8 @@ export interface EdgeStmt {
   arrow: string;
   /** The marks the arrow writes at each end: `->` is an arrow at `to`, `<-` one at `from`. */
   marks: EdgeMarks;
-  text?: string;
-  /** The text's bracketed modifiers, as written. Usually empty. */
-  textAttrs: Attrs;
+  /** `"1" (at: start) "places" "many" (at: end)`: each text in written order, with its own bracket (design.org 7.3). */
+  texts: EdgeTextStmt[];
   /** `between desktop1 and laptop1` — the gap the line passes through. */
   between?: Passage;
   /**

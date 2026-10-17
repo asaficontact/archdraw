@@ -1,4 +1,4 @@
-import type { Attrs, Kind, Mark, Placement, ViaEntry, Way } from './ast.js';
+import type { Attrs, EdgeTextPlace, Kind, Mark, Placement, ViaEntry, Way } from './ast.js';
 
 /** A rectangle on the page; a side or a point has no size on one axis or both. */
 export interface Rect {
@@ -172,16 +172,29 @@ export interface DepthStatement {
   line: number;
 }
 
+/** One text on a line, measured, with what its bracket says about where it sits. */
+export interface LayoutEdgeText {
+  text: string;
+  /** The text split into the lines that will be drawn, each as its runs. */
+  lines: Line[];
+  /** Its bracket's look, with a style's `text: (…)` underneath. */
+  textAttrs: Attrs;
+  place: EdgeTextPlace;
+  /** Its font size, and the size of its lines unturned. */
+  size: number;
+  width: number;
+  height: number;
+  /** Where the box a `straight … from` or a box relation names is, once placed. */
+  target?: Rect;
+}
+
 export interface LayoutEdge {
   from: LayoutNode;
   to: LayoutNode;
   /** What is drawn at each end, settled: the arrow, then the edge's own attributes, then its style. */
   marks: { from: Mark; to: Mark };
-  text?: string;
-  /** The text split into the lines that will be drawn, each as its runs. */
-  lines?: Line[];
-  /** The text's bracketed modifiers, with a style's `text: (…)` underneath. */
-  textAttrs: Attrs;
+  /** Its texts in written order, measured; where each goes is worked out once the line is drawn (`linetexts.ts`). */
+  texts: LayoutEdgeText[];
   /** The arrow as written, for quoting the edge back: `a -> b`. */
   arrow: string;
   /** `edge req client -> api`: the line's own name, for other statements to refer to. */

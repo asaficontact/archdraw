@@ -17,7 +17,8 @@ import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js'
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
-import { alongLength, crossingPoints, planLines, traceRoute, type Point, type Route } from './lines.js';
+import { crossingPoints, planLines, traceRoute, type Point, type Route } from './lines.js';
+import { KNOCKOUT_PAD, placeLineTexts } from './linetexts.js';
 import { plain, type Line, type Run } from './text.js';
 
 export interface RenderOptions {
@@ -92,7 +93,6 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     // A hidden guide line takes its place among the ends on a side, but draws nothing.
     .filter(({ edge }) => !hidden(edge))
     .map(({ edge, route }) => drawEdge(edge, route, theme, measurer, fontSize, layout.markup));
-  placeTexts(drawn, layout.nodes);
   // The drawing order comes first, since where two lines cross the one drawn
   // later is on top, and `depth:` may have moved either (design.org 6.6, 8.4).
   const keyOf = (edge: DrawnEdge): string => `edge ${edges.indexOf(edge.edge)}`;
@@ -701,8 +701,6 @@ interface DrawnEdge {
   traces: Point[][];
   color: string;
   stroke: string;
-  /** Its text, placed after every line is drawn — see `placeTexts`. */
-  text?: EdgeText;
 }
 
 function drawEdge(
@@ -728,7 +726,6 @@ function drawEdge(
   // line stepping out of a `top` side rides above every box in the drawing,
   // and the node bounds know nothing about it.
   let ink = extentOfPoints(points);
-  let mid: Point;
 
   if (route.hidden) {
     // A line along a collapsed bundle: drawn up to where it merges and from
@@ -742,73 +739,56 @@ function drawEdge(
       })
       .join(' ');
     parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
-    const trace = traceRoute(route);
-    ink = extentOfPoints(trace);
-    mid = alongLength(trace, 0.5);
+    ink = extentOfPoints(traceRoute(route));
   } else if (route.pieces.some((piece) => 'c1' in piece)) {
     // A curved line is a spline through its points (design.org 6.3); a
     // straight leg of it, or a run along a side, stays straight.
     const d = piecesPath(route);
     parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
-    const trace = traceRoute(route);
-    ink = extentOfPoints(trace);
-    mid = alongLength(trace, 0.5);
+    ink = extentOfPoints(traceRoute(route));
   } else if (points.length > 2) {
-    const textWidth =
-      edge.lines === undefined
-        ? 0
-        : widestLine(edge.lines, measurer, fontSizeFor('edge', edge.textAttrs, fontSize, edge.line));
     const d =
       edge.look.corners === 'rounded' ? roundedPath(points, arrowLength(edge.look.thickness)) : sharpPath(points);
     parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
-    mid = textSpot(points, textWidth);
   } else {
     parts.push(
       `  <line x1="${round(start.x)}" y1="${round(start.y)}" x2="${round(end.x)}" y2="${round(end.y)}"${stroke}${markerEnd}${markerStart}/>`,
     );
-    mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
   }
-  const midX = mid.x;
-  const midY = mid.y;
 
-  let text: EdgeText | undefined;
-  if (edge.text !== undefined) {
-    // An edge text breaks on ` / ` exactly as a box text does, so a two-line
-    // caption on an arrow needs no vocabulary of its own. The block is centered
-    // on the midpoint, which keeps a one-line text where it has always been.
-    const size = fontSizeFor('edge', edge.textAttrs, fontSize, edge.line);
-    const textHeight = measurer.lineHeight(size);
-    const lines = edge.lines!;
-    const width = widestLine(lines, measurer, size);
-    const height = lines.length * textHeight;
-    text = {
-      at: { x: midX, y: midY },
-      width: width + 10,
-      height,
-      draw: ({ x, y }) => {
-        const top = y - height / 2;
-        return [
-          // The text knocks a hole in whatever it lands on rather than sitting
-          // in a chip of its own: an outlined box reads as a node, which is the
-          // one thing a text on a line is not.
-          `  <rect x="${round(x - width / 2 - 5)}" y="${round(top)}" width="${round(width + 10)}" height="${round(height)}" fill="${theme.background}"/>`,
-          sized(
-            textBlock(lines, x - width / 2, top, textHeight, size,
-              { x: 0, y: 0, width, height },
-              {
-                // A colored edge carries its meaning into its text; an uncolored
-                // one leaves the words to read as ordinary text.
-                color: textColorOf(edge.textAttrs, theme, lineOf(edge.appearance, theme, theme.text)),
-                align: 'middle',
-                ink: (run, own) => runInk(run, own, markup, theme),
-              },
-            ),
-            size,
-            fontSize,
-          ),
-        ];
-      },
-    };
+  // Each text is a measurement on the drawn line (design.org 7.3). A text
+  // breaks on ` / ` exactly as a box text does, so a two-line caption on an
+  // arrow needs no vocabulary of its own.
+  const rest: string[] = [];
+  for (const placed of placeLineTexts(edge, route)) {
+    const { text, center, angle } = placed;
+    const lineHeight = measurer.lineHeight(text.size);
+    const { width, height } = text;
+    const top = center.y - height / 2;
+    const turn = angle === 0 ? '' : ` transform="rotate(${round(angle)} ${round(center.x)} ${round(center.y)})"`;
+    rest.push(
+      ...(turn ? ['  <g' + turn + '>'] : []),
+      // The text knocks a hole in whatever it lands on rather than sitting in
+      // a chip of its own: an outlined box reads as a node, which is the one
+      // thing a text on a line is not.
+      `  <rect x="${round(center.x - width / 2 - KNOCKOUT_PAD)}" y="${round(top)}" width="${round(width + KNOCKOUT_PAD * 2)}" height="${round(height)}" fill="${theme.background}"/>`,
+      sized(
+        textBlock(text.lines, center.x - width / 2, top, lineHeight, text.size,
+          { x: 0, y: 0, width, height },
+          {
+            // A colored edge carries its meaning into its text; an uncolored
+            // one leaves the words to read as ordinary text.
+            color: textColorOf(text.textAttrs, theme, lineOf(edge.appearance, theme, theme.text)),
+            align: 'middle',
+            ink: (run, own) => runInk(run, own, markup, theme),
+          },
+        ),
+        text.size,
+        fontSize,
+      ),
+      ...(turn ? ['  </g>'] : []),
+    );
+    ink = union(ink, placed.box);
   }
 
   // The stroke straddles the path, so half of it lies outside the geometry.
@@ -816,115 +796,13 @@ function drawEdge(
   return {
     edge,
     line: line!,
-    rest: [],
+    rest,
     ink: grow(ink, edge.look.thickness / 2),
     trace: route.hidden ? traceRoute(route) : tracesOf(line!)[0]!,
     traces: tracesOf(line!),
     color,
     stroke,
-    text,
   };
-}
-
-/** The space a text moved off another keeps from it. */
-const TEXT_AIR = 6;
-
-/** An edge's text, not yet drawn: where it would go, how much room it takes, and how to draw it at a point. */
-interface EdgeText {
-  at: Point;
-  width: number;
-  height: number;
-  draw: (at: Point) => string[];
-}
-
-/**
- * Put every edge's text where it goes. A text sits where its line put it unless
- * that lands on a text placed before it; then it slides along its own line to
- * the nearest spot clear of the other texts and of every box. The line never
- * moves for it. With no clear spot anywhere along the line, it stays put.
- */
-function placeTexts(drawn: DrawnEdge[], nodes: LayoutNode[]): void {
-  const placed: Extent[] = [];
-  const boxAt = (at: Point, text: EdgeText): Extent => ({
-    minX: at.x - text.width / 2,
-    minY: at.y - text.height / 2,
-    maxX: at.x + text.width / 2,
-    maxY: at.y + text.height / 2,
-  });
-  const overlaps = (a: Extent, b: Extent): boolean =>
-    Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX) > 0.5 &&
-    Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY) > 0.5;
-  // A box the text is inside, drawn round it, is a container it rides across,
-  // not something it lands on.
-  const onBox = (area: Extent, at: Point): boolean =>
-    nodes.some((node) => {
-      const box = extentOfBox(faceOf(node));
-      const holds = holdsContents(node) &&
-        box.minX < at.x && at.x < box.maxX && box.minY < at.y && at.y < box.maxY;
-      return !holds && overlaps(area, box);
-    });
-
-  for (const edge of drawn) {
-    const text = edge.text;
-    if (!text) continue;
-    let at = text.at;
-    if (placed.some((other) => overlaps(other, boxAt(at, text)))) {
-      // Moved, it keeps a little air from the others rather than touching them.
-      const free = (point: Point): boolean => {
-        const area = boxAt(point, text);
-        return !placed.some((other) => overlaps(grow(other, TEXT_AIR), area)) && !onBox(area, point);
-      };
-      at = slideAlong(edge.trace, text.at, free) ?? at;
-    }
-    const area = boxAt(at, text);
-    placed.push(area);
-    edge.rest = text.draw(at);
-    // Grown by half the stroke as the line's own ink is, so a text at the edge
-    // of the page sizes it exactly as it always did.
-    edge.ink = union(edge.ink, grow(area, edge.edge.look.thickness / 2));
-  }
-}
-
-/**
- * The point on a polyline nearest `from`, measured along the line, that `free`
- * accepts: tried a few pixels at a time in both directions, nearer first.
- * Undefined when no point along it is accepted.
- */
-function slideAlong(trace: Point[], from: Point, free: (point: Point) => boolean): Point | undefined {
-  const lengths = [0];
-  for (let index = 1; index < trace.length; index += 1) {
-    const [a, b] = [trace[index - 1]!, trace[index]!];
-    lengths.push(lengths[index - 1]! + Math.hypot(b.x - a.x, b.y - a.y));
-  }
-  const total = lengths[lengths.length - 1]!;
-  const pointAt = (s: number): Point => {
-    let index = 1;
-    while (index < trace.length - 1 && lengths[index]! < s) index += 1;
-    const [a, b] = [trace[index - 1]!, trace[index]!];
-    const piece = lengths[index]! - lengths[index - 1]!;
-    const t = piece === 0 ? 0 : (s - lengths[index - 1]!) / piece;
-    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-  };
-  // Where along the line the text started.
-  let start = 0;
-  let nearest = Infinity;
-  for (let s = 0; s <= total; s += 1) {
-    const p = pointAt(s);
-    const off = Math.hypot(p.x - from.x, p.y - from.y);
-    if (off < nearest) {
-      nearest = off;
-      start = s;
-    }
-  }
-  const step = 4;
-  for (let offset = step; offset <= total; offset += step) {
-    for (const s of [start + offset, start - offset]) {
-      if (s < 0 || s > total) continue;
-      const p = pointAt(s);
-      if (free(p)) return p;
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -943,40 +821,6 @@ function strokeOf(color: string, look: LineLook): string {
     'dash-dot': ` stroke-dasharray="${round(w * 5)} ${round(w * 3)} 0 ${round(w * 3)}" stroke-linecap="round"`,
   };
   return ` stroke="${color}" stroke-width="${w}"${dashes[look.pattern]}`;
-}
-
-function extentOfBox(box: Box): Extent {
-  return { minX: box.x, minY: box.y, maxX: box.x + box.width, maxY: box.y + box.height };
-}
-
-/**
- * Where a jointed line's text rides: the middle of its longest level piece, if
- * one is long enough to hold the text with line showing either side, and the
- * middle of its longest piece otherwise. A level piece comes first because a
- * text knocks a hole as wide as itself, which on an upright piece is a hole far
- * wider than the line — and lines grouped on one side sit a text's height apart
- * on their level pieces, never a text's width apart on their upright ones.
- */
-function textSpot(points: Point[], textWidth: number): Point {
-  let best = { x: (points[0]!.x + points[points.length - 1]!.x) / 2, y: (points[0]!.y + points[points.length - 1]!.y) / 2 };
-  let level: Point | undefined;
-  let longest = -1;
-  let longestLevel = -1;
-  for (let index = 1; index < points.length; index += 1) {
-    const a = points[index - 1]!;
-    const b = points[index]!;
-    const here = Math.hypot(b.x - a.x, b.y - a.y);
-    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    if (here > longest + 0.5) {
-      longest = here;
-      best = middle;
-    }
-    if (Math.abs(b.y - a.y) < 0.5 && here >= textWidth + ARROW_LENGTH * 2 && here > longestLevel + 0.5) {
-      longestLevel = here;
-      level = middle;
-    }
-  }
-  return level ?? best;
 }
 
 function sharpPath(points: Point[]): string {

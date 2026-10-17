@@ -11,6 +11,9 @@ import type {
   Document,
   EdgeMarks,
   EdgeStmt,
+  EdgeTextPlace,
+  EdgeTextStmt,
+  TextSide,
   IconStmt,
   Mark,
   Part,
@@ -838,8 +841,167 @@ function attrsOnly(tokens: Token[], start: number, line: number, subject: string
   return attrs;
 }
 
-/** Everything a text takes, less the one word that needs a box to sit in. */
-const EDGE_TEXT_KEYS = TEXT_KEYS.filter((key) => key !== 'at');
+/** How a text on a line looks, which is a node text's keys less the two that place it in a box. */
+const EDGE_TEXT_LOOK = TEXT_KEYS.filter((key) => key !== 'at' && key !== 'align');
+/** Where a text on a line sits (design.org 7.3). */
+const EDGE_TEXT_PLACE = ['at', 'on', 'gap', 'edge-gap', 'reads'] as const;
+const EDGE_TEXT_KEYS = [...EDGE_TEXT_LOOK, ...EDGE_TEXT_PLACE];
+
+/**
+ * The bracket after one text on a line: `(at: start, above edge, gap: tight)`,
+ * `(on: rise, straight right from c)`, `(above s1, left of edge)`. Keys say how
+ * it looks and where along the line it sits; the relations say where it sits
+ * by a box, or beside its line. Everything is checked here that the words
+ * alone can settle; what needs the drawn line is checked when it is drawn.
+ */
+function readEdgeTextBracket(
+  tokens: Token[],
+  start: number,
+  subject: string,
+  text: string,
+  line: number,
+): { attrs: Attrs; place: EdgeTextPlace; next: number } {
+  const attrs: Attrs = {};
+  const place: EdgeTextPlace = {};
+  if (!follows(tokens, start, '(')) return { attrs, place, next: start };
+  const about = `${subject}: the text "${text}"`;
+  const plain = (token: Token | undefined): string | undefined =>
+    token && !token.quoted ? token.text.replace(/(.),$/, '$1') : undefined;
+  const seen = new Set<string>();
+  let atWritten = '';
+  const once = (what: string, written: string): void => {
+    if (seen.has(what)) throw new SourceError(`${about} says ${written === what ? what : `${what} (${written})`} twice — keep one`, line);
+    seen.add(what);
+  };
+  let i = start + 1;
+  while (!follows(tokens, i, ')')) {
+    const token = tokens[i];
+    if (!token) throw new SourceError(`${about} opens a "(" and never closes it`, line);
+    if (token.quoted) throw new SourceError(`${about} has a quoted "${token.text}" in its brackets — a second text goes after the ")"`, line);
+    if (isAttrKey(token)) {
+      const key = token.text.slice(0, -1);
+      if (key === 'align') {
+        throw new SourceError(
+          `${about}: a text on a line has no align: — it is placed along the line with at: or on:, ` +
+            'by a box with a relation such as `above s1`, and beside the line with `right of edge` and the rest',
+          line,
+        );
+      }
+      if (!(EDGE_TEXT_KEYS as readonly string[]).includes(key)) {
+        throw new SourceError(`a text on a line has no "${key}" — it takes ${EDGE_TEXT_KEYS.join(', ')}, and relations such as \`above s1\` or \`right of edge\``, line);
+      }
+      const value = plain(tokens[i + 1]);
+      if (value === undefined || isAttrKey(tokens[i + 1]!) || value === ')') {
+        throw new SourceError(`${about}: "${key}" has no value`, line);
+      }
+      once(key, key);
+      i += 2;
+      if (key === 'color') checkColorWord(value, subject, line);
+      if (key === 'at') {
+        const fraction = /^(\d+)\/(\d+)$/.exec(value);
+        const at =
+          value === 'start' || value === 'end'
+            ? value
+            : fraction
+              ? Number(fraction[1]) / Number(fraction[2])
+              : /^\d*\.?\d+$/.test(value)
+                ? Number(value)
+                : NaN;
+        if (typeof at === 'number' && !(at >= 0 && at <= 1)) {
+          throw new SourceError(`${about}: "at: ${value}" — at: takes a fraction along the line, such as 1/4 or 0.25, or start or end`, line);
+        }
+        place.at = at;
+        atWritten = value;
+      } else if (key === 'on') {
+        place.on = value;
+      } else if (key === 'gap') {
+        place.gap = value;
+      } else if (key === 'edge-gap') {
+        place.edgeGap = value;
+      } else if (key === 'reads') {
+        if (value !== 'up' && value !== 'down' && value !== 'along') {
+          throw new SourceError(`${about}: "reads: ${value}" — a text reads up, down or along`, line);
+        }
+        place.reads = value;
+      } else {
+        attrs[key] = value;
+      }
+      continue;
+    }
+    const word = plain(token)!;
+    const from = i;
+    let relation: 'straight' | TextSide;
+    if (word === 'straight') {
+      const way = plain(tokens[i + 1]);
+      if (!(WAYS as readonly string[]).includes(way ?? '') || plain(tokens[i + 2]) !== 'from') {
+        throw new SourceError(`${about}: "straight" is followed by a way and the box it starts from, such as \`straight right from c\``, line);
+      }
+      relation = 'straight';
+      i += 3;
+    } else if (word === 'above' || word === 'below') {
+      relation = word;
+      i += 1;
+    } else if ((word === 'left' || word === 'right') && plain(tokens[i + 1]) === 'of') {
+      relation = `${word} of`;
+      i += 2;
+    } else {
+      throw new SourceError(
+        `${about}: "${word}" in its brackets is not something a text on a line takes — it takes ` +
+          `${EDGE_TEXT_KEYS.join(':, ')}:, and relations such as \`above s1\`, \`straight right from c\` or \`right of edge\``,
+        line,
+      );
+    }
+    const besideIt = relation !== 'straight' && plain(tokens[i]) === 'edge';
+    if (besideIt) {
+      once('a side of the line', `${relation} edge`);
+      place.beside = relation as TextSide;
+      i += 1;
+    } else {
+      if (!tokens[i] || plain(tokens[i]) === ')' || isAttrKey(tokens[i]!)) {
+        throw new SourceError(`${about}: "${tokens.slice(from, i).map((t) => t.text).join(' ')}" names nothing — name a box, or \`edge\` for the line itself`, line);
+      }
+      const read = readOneTarget(tokens, i, subject, line);
+      const written = tokens.slice(from, read.next).map((t) => t.text).join(' ').replace(/,$/, '');
+      if (place.straight || place.by) {
+        throw new SourceError(`${about} is placed by a box twice (${place.straight?.written ?? place.by!.written}, ${written}) — keep one`, line);
+      }
+      if (relation === 'straight') {
+        place.straight = { way: plain(tokens[from + 1]) as Way, target: read.target, written };
+      } else {
+        place.by = { side: relation, target: read.target, written };
+      }
+      i = read.next;
+    }
+    if (follows(tokens, i, '(')) {
+      const said = tokens.slice(from, i).map((t) => t.text).join(' ');
+      throw new SourceError(
+        besideIt
+          ? `${about}: "${said} (…)" — the distance off the line is written in the text's own bracket, \`edge-gap: tight\``
+          : relation === 'straight'
+            ? `${about}: "${said} (…)" — a text placed straight from a box sits where the way across meets the line, so it takes no distance`
+            : `${about}: "${said} (…)" — the distance from the box is written in the text's own bracket, \`gap: tight\``,
+        line,
+      );
+    }
+  }
+  if (place.at !== undefined && (place.straight || place.by)) {
+    throw new SourceError(
+      `${about}: "at: ${atWritten}" and "${(place.straight ?? place.by)!.written}" both say where along the line it sits — keep one`,
+      line,
+    );
+  }
+  if (place.gap !== undefined && place.at !== 'start' && place.at !== 'end' && !place.by) {
+    throw new SourceError(
+      `${about}: gap: is the distance from a box, which only \`at: start\`, \`at: end\` and a box relation such as \`above s1\` have` +
+        (place.beside ? ' — the distance off the line is edge-gap:' : ''),
+      line,
+    );
+  }
+  if (place.edgeGap !== undefined && !place.beside) {
+    throw new SourceError(`${about}: edge-gap: is the distance off the line for a text beside it, and it says no side — add \`right of edge\` or another`, line);
+  }
+  return { attrs, place, next: i + 1 };
+}
 
 /**
  * `text:` is how a *style* says something about the text of whatever wears it,
@@ -1173,21 +1335,20 @@ function parseEdgeEnds(head: Token[], line: number): EdgeStmt {
       line,
     );
   }
-  const textToken = head[at]?.quoted ? head[at] : undefined;
-  if (textToken) at += 1;
-
   const subject = `edge ${left} ${arrow.text} ${rightToken.text}`;
-  // An edge's text takes the same bracket a node's does, less `at:`: a node's
-  // text sits somewhere in a box and an edge's rides at the middle of its line,
-  // so there is no position to name until a diagram asks for one.
-  const bracket = readBracket(head, at, EDGE_TEXT_KEYS, {
-    subject,
-    what: 'the text',
-    kind: "an edge's text",
-    example: 'color: theme-muted',
-    line,
-  });
-  at = bracket.next;
+  // Several texts are written one after another, each with its own bracket,
+  // so one text is written exactly as it always was (design.org 7.3).
+  const texts: EdgeTextStmt[] = [];
+  while (head[at]?.quoted) {
+    const text = head[at]!.text;
+    const bracketed = follows(head, at + 1, '(');
+    const read = readEdgeTextBracket(head, at + 1, subject, text, line);
+    texts.push({ text, textAttrs: read.attrs, place: read.place });
+    at = read.next;
+    if (bracketed && follows(head, at, '(')) {
+      throw new SourceError(`${subject}: the text "${text}" has two brackets — everything about one text goes in one`, line);
+    }
+  }
 
   // An edge is not placed, so its tail holds only attributes. The clauses that
   // once said what a line keeps clear of, `between c and d` and `below b`, are
@@ -1249,12 +1410,11 @@ function parseEdgeEnds(head: Token[], line: number): EdgeStmt {
 
   return {
     kind: 'edge',
-    textAttrs: bracket.values,
+    texts,
     from: left,
     to: rightToken.text,
     arrow: arrow.text,
     marks: arrow.marks,
-    ...(textToken ? { text: textToken.text } : {}),
     ...(straight !== undefined ? { straight } : {}),
     attrs: tail.attrs,
     line,

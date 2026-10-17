@@ -8,30 +8,31 @@ style plain  fill: theme-fill  border: theme-border
 // along Gateway's bottom is further down Queue's left.
 node gateway "Gateway"  style: plain
 node queue   "Queue"    5 below gateway  22 right of gateway  style: plain
-edge gateway -> queue  "publishes"  from: bottom  to: left  line: (path: square, corners: rounded)
-edge queue -> gateway  "receives"   from: left    to: bottom  line: (path: square, corners: rounded)
+edge gateway -> queue  "publishes" (at: 2/3)  from: bottom  to: left  line: (path: square, corners: rounded)
+edge queue -> gateway  "receives" (at: 2/3)   from: left    to: bottom  line: (path: square, corners: rounded)
 
 // Two lines facing each other, where the order runs the same way at both ends.
 node client "Client"  below queue (gap: wide)  left even with gateway  style: plain
 node server "Server"  10 right of client  style: plain
-edge client -> server  "request"   from: right  to: left
-edge server -> client  "response"  from: left   to: right
+edge client -> server  "request" (below edge)   from: right  to: left
+edge server -> client  "response" (above edge)  from: left   to: right
 
-// Five copies down a vertical run, spread evenly along the two sides.
+// Five copies down a vertical run, spread evenly along the two sides. The
+// texts read along their lines, since level they would be wider than a lane.
 node fan  "Fan of five, spread wide"  below client (gap: wide)  left even with gateway  style: plain
 node hub  "Hub of the same five"     below fan (gap: wide)  style: plain
-edge fan -> hub  "one"    from: bottom  to: top
-edge fan -> hub  "two"    from: bottom  to: top
-edge fan -> hub  "three"  from: bottom  to: top
-edge fan -> hub  "four"   from: bottom  to: top
-edge fan -> hub  "five"   from: bottom  to: top
+edge fan -> hub  "one" (reads: along)    from: bottom  to: top
+edge fan -> hub  "two" (reads: along)    from: bottom  to: top
+edge fan -> hub  "three" (reads: along)  from: bottom  to: top
+edge fan -> hub  "four" (reads: along)   from: bottom  to: top
+edge fan -> hub  "five" (reads: along)   from: bottom  to: top
 
 // Two lines pointing the same way. Nothing tells them apart, so the order they
 // are written in decides. Swap these two lines and the texts swap lanes.
 node left_wall  "Producer"  below hub (gap: wide)  left even with gateway  style: plain
 node right_wall "Consumer"  9 right of left_wall  style: plain
-edge left_wall -> right_wall  "bulk"     from: right  to: left
-edge left_wall -> right_wall  "control"  from: right  to: left
+edge left_wall -> right_wall  "bulk" (below edge)     from: right  to: left
+edge left_wall -> right_wall  "control" (above edge)  from: right  to: left
 
 // Sharing one side only doesn't make copies. The far ends differ, and their
 // order along the side decides which end is which.

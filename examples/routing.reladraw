@@ -18,13 +18,13 @@ edge parser -> renderer  "Hacker News"  from: left  to: right  via: parser top, 
 // steps out and comes round.
 node p "P"  below parser  (gap: wide)
 node q "Q"  below p  (gap: 7)
-edge p -> q  "issue #2"  from: bottom  to: left
+edge p -> q  "issue #2" (left of edge)  from: bottom  to: left
 
 // GitHub issue #2: both ends on the same side, one node behind the other. The
 // line went straight through the node behind.
 node r "R"  right of p  (gap: wide)
 node s "S"  right of r  (gap: 19)
-edge r -> s  "issue #2, same side"  from: left  to: left  via: r top
+edge r -> s  "issue #2, same side" (above edge)  from: left  to: left  via: r top
 
 node v "V"  right of s  (gap: wide)
 node w "W"  below v
@@ -54,7 +54,7 @@ edge web -> db  "cache case"  from: bottom  to: bottom  via: cache bottom
 node e "E"  below a  (gap: 22)
 node f "F"  right of e  (gap: 16)
 node g "G"  below e and f
-edge g -> e  "round the side"  from: left  to: left
+edge g -> e  "round the side" (left of edge)  from: left  to: left
 
 // Two lines into one box, 2026-09-27. The longer one's curve swung across
 // the other's twice. The longer one now comes in from above.
@@ -69,7 +69,7 @@ edge x1 -> b1  from: right  to: top
 node x "X"  right of f  (gap: wide)
 node y "Y"  right of x
 node z "Z"  right of y
-edge x -> z  "no sides named"  via: y top
+edge x -> z  "no sides named" (above edge)  via: y top
 
 // Three lines told the same thing, 2026-09-27. They were drawn on one path,
 // so the three read as one line with three arrowheads. Copies of one line now

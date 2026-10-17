@@ -261,7 +261,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   // Edges are resolved to nodes before anything is sized, because a labeled
   // edge claims room in the gap it crosses and so has to be in hand while the
   // gaps are being worked out. Nothing here reads geometry.
-  const edges = buildEdges(statements, byName, styles, defaults);
+  const edges = buildEdges(statements, byName, styles, defaults, measurer, fontSize);
 
   const named = collectNamed(doc.statements, byName);
   const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
@@ -269,7 +269,11 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   placer.run();
   const marks = buildMarks(named, placer.placeNamed(), styles);
   locateStops(edges, placer, byName, named);
-  normalize(nodes, marks, margin, edges.flatMap((edge) => (edge.viaAt ?? []).filter((at) => at !== undefined)));
+  locateTextTargets(edges, placer);
+  normalize(nodes, marks, margin, [
+    ...edges.flatMap((edge) => (edge.viaAt ?? []).filter((at) => at !== undefined)),
+    ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.target ? [text.target] : []))),
+  ]);
 
   const extent = bounds(nodes, marks);
   const look = (kind: 'node' | 'edge' | 'point' | 'region') => defaults.get(`guide ${kind}`) ?? {};
@@ -1145,6 +1149,8 @@ function buildEdges(
   byName: Map<string, LayoutNode>,
   styles: Map<string, Attrs>,
   defaults: Map<DefaultTarget, Attrs>,
+  measurer: Measurer,
+  fontSize: number,
 ): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
   // A line's name is used before or after it is written, so every name is
@@ -1202,7 +1208,7 @@ function buildEdges(
         from: placeholder(stmt.name, stmt.line),
         to: placeholder(stmt.name, stmt.line),
         marks: { from: markAt('from', asEdge, appearance, what), to: markAt('to', asEdge, appearance, what) },
-        textAttrs: {},
+        texts: [],
         arrow: '--',
         name: stmt.name,
         ...(stmt.via !== undefined ? { via: stmt.via } : {}),
@@ -1230,7 +1236,7 @@ function buildEdges(
     const what = `${stmt.from} ${stmt.arrow} ${stmt.to}`;
     checkAttrs('edge', what, stmt.attrs, stmt.line);
     checkStyleUse('edge', what, stmt.attrs, styles, stmt.line);
-    if (stmt.attrs['url'] !== undefined && stmt.text === undefined) {
+    if (stmt.attrs['url'] !== undefined && stmt.texts.length === 0) {
       // Wrapping the line works, and `LINE_WIDTH` is 1.5 — a destination that
       // technically has a target and practically has none. That is the silent
       // defect shape the language refuses everywhere else, so it is refused
@@ -1241,7 +1247,20 @@ function buildEdges(
         stmt.line,
       );
     }
-    const textAttrs = { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    const texts = stmt.texts.map(({ text, textAttrs: own, place }) => {
+      const textAttrs = { ...bracketOf('text', appearance), ...own };
+      const lines = linesFor(text, textAttrs, `edge ${what}`, stmt.line);
+      const size = fontSizeFor('edge', textAttrs, fontSize, stmt.line);
+      return {
+        text,
+        lines,
+        textAttrs,
+        place,
+        size,
+        width: widestLine(lines, measurer, size),
+        height: lines.length * measurer.lineHeight(size),
+      };
+    });
     edges.push({
       from,
       to,
@@ -1249,10 +1268,7 @@ function buildEdges(
         from: markAt('from', stmt, appearance, what),
         to: markAt('to', stmt, appearance, what),
       },
-      textAttrs,
-      ...(stmt.text !== undefined
-        ? { text: stmt.text, lines: linesFor(stmt.text, textAttrs, `edge ${what}`, stmt.line) }
-        : {}),
+      texts,
       arrow: stmt.arrow,
       ...(stmt.name !== undefined ? { name: stmt.name } : {}),
       ...(stmt.via !== undefined ? { via: stmt.via } : {}),
@@ -1311,6 +1327,30 @@ function placeholder(name: string, line: number): LayoutNode {
       placements: [],
       line,
     } as LayoutNode);
+}
+
+/**
+ * Where the box each text on a line is placed by sits: `straight right from c`,
+ * `above s1`. And a text's `on:` must name one of its own line's legs, since a
+ * leg is part of one line (design.org 7.3).
+ */
+function locateTextTargets(edges: LayoutEdge[], placer: Placer): void {
+  for (const edge of edges) {
+    const subject = `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    const legs = (edge.via ?? []).map((entry) => entry.leg?.name).filter((name) => name !== undefined);
+    for (const text of edge.texts) {
+      const on = text.place.on;
+      if (on !== undefined && !legs.includes(on)) {
+        throw new SourceError(
+          `${subject}: the text "${text.text}" is on: ${on}, and ${on} is not a leg of this line — ` +
+            (legs.length > 0 ? `its legs are ${legs.join(', ')}` : 'a leg is named in via:, such as `via: 2 below b bottom, leg rise`'),
+          edge.line,
+        );
+      }
+      const by = text.place.straight ?? text.place.by;
+      if (by) text.target = placer.locate(by.target, subject, edge.line);
+    }
+  }
 }
 
 /**
@@ -1512,7 +1552,7 @@ function markupColors(
   const used: Array<{ lines: Line[]; what: string; line: number }> = [
     ...nodes.map((node) => ({ lines: node.lines, what: `"${node.name}"`, line: node.line })),
     ...edges.flatMap((edge) =>
-      edge.lines ? [{ lines: edge.lines, what: `edge ${edge.from.name} -> ${edge.to.name}`, line: edge.line }] : [],
+      edge.texts.map((text) => ({ lines: text.lines, what: `edge ${edge.from.name} -> ${edge.to.name}`, line: edge.line })),
     ),
   ];
   for (const { lines, what, line } of used) {

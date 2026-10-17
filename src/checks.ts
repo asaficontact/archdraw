@@ -7,9 +7,10 @@
  * anything: the picture is drawn as written, and this says where it may not
  * read as the writer meant.
  */
-import type { Layout, LayoutEdge, LayoutNode } from './model.js';
+import { joinedToText, type Layout, type LayoutEdge, type LayoutNode } from './model.js';
 import { UNIT, arrowLength } from './constants.js';
 import { crossingPoints, describeEdge, planSides, traceRoute, type Route, type SideEnds } from './lines.js';
+import { placeLineTexts, type PlacedText } from './linetexts.js';
 
 /**
  * The kinds of finding, each with whether it is on when nothing says. Named in
@@ -105,12 +106,13 @@ export function findings(layout: Layout, checks: Checks): Finding[] {
   const found: Finding[] = [];
   if (checks['node-overlap']) found.push(...nodeOverlaps(layout));
   if (checks['text-overflow']) found.push(...textOverflows(layout));
-  if (checks['edge-node-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends'] || checks['edge-crossings']) {
+  if (checks['edge-node-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends'] || checks['edge-crossings'] || checks['text-overlap']) {
     const plan = planSides(layout);
     if (checks['edge-node-overlap']) found.push(...edgeNodeOverlaps(layout, plan.routes));
     if (checks['edge-no-length']) found.push(...edgesWithNoLength(layout, plan.routes));
     if (checks['crowded-edge-ends']) found.push(...crowdedEnds(plan.sides));
     if (checks['edge-crossings']) found.push(...edgeCrossings(layout, plan.routes));
+    if (checks['text-overlap']) found.push(...textOverlaps(layout, plan.routes));
   }
   return found.sort((a, b) => a.line - b.line);
 }
@@ -441,6 +443,107 @@ function textOverflows(layout: Layout): Finding[] {
 }
 
 /**
+ * A text on a line that lands on another such text, or on a node it doesn't
+ * belong to, or one placed beside its line that the line still runs through
+ * (design.org 7.3, 10.1). A text never moves to get clear, so this is how the
+ * writer hears of it. A text belongs to no node, but riding across a
+ * container that holds it is what a line inside a container does, so that
+ * container doesn't count; what is inside it does.
+ *
+ * Found with a sweep across the page, as node overlaps are.
+ */
+function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
+  type Item = { box: Box; text?: PlacedText; node?: LayoutNode; line: number };
+  const items: Item[] = [];
+  const found: Finding[] = [];
+  for (const edge of layout.edges) {
+    if (edge.guide) continue;
+    const route = routes.get(edge)!;
+    for (const placed of placeLineTexts(edge, route)) {
+      const box = boxOf(placed.box);
+      items.push({ box, text: placed, line: edge.line });
+      if (placed.beside && acrossLine(traceRoute(route), placed.box)) {
+        found.push(
+          new Finding(
+            'text-overlap',
+            `text "${placed.text.text}" is placed ${placed.text.place.beside} edge, and its line still runs through it — ` +
+              'the part it landed on has no room beside it; try the other side, or place it along the line with at:',
+            edge.line,
+          ),
+        );
+      }
+    }
+  }
+  if (items.length === 0) return found;
+  for (const node of layout.nodes) {
+    if (node.guide || node.body.kind === 'none') continue;
+    items.push({ box: { x: node.x, y: node.y, width: node.width, height: node.height }, node, line: node.line });
+  }
+  const holds = (node: LayoutNode, box: Box): boolean => {
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    return (
+      node.children.some((child) => child !== node.heading && !joinedToText(child)) &&
+      node.x < cx && cx < node.x + node.width && node.y < cy && cy < node.y + node.height
+    );
+  };
+  const sorted = [...items].sort((a, b) => a.box.x - b.box.x);
+  let active: Item[] = [];
+  for (const item of sorted) {
+    active = active.filter((other) => other.box.x + other.box.width > item.box.x + EPSILON);
+    for (const other of active) {
+      if (!item.text && !other.text) continue;
+      const width = Math.min(item.box.x + item.box.width, other.box.x + other.box.width) - Math.max(item.box.x, other.box.x);
+      const height = Math.min(item.box.y + item.box.height, other.box.y + other.box.height) - Math.max(item.box.y, other.box.y);
+      if (width <= EPSILON || height <= EPSILON) continue;
+      if (item.text && other.text) {
+        const [earlier, later] = other.line <= item.line ? [other, item] : [item, other];
+        found.push(
+          new Finding(
+            'text-overlap',
+            `text "${later.text!.text.text}" covers ${coveredPart(earlier.box, later.box)}text "${earlier.text!.text.text}"; ${size(width, height)}`,
+            later.line,
+          ),
+        );
+        continue;
+      }
+      const [text, node] = item.text ? [item, other] : [other, item];
+      if (holds(node.node!, text.box)) continue;
+      found.push(
+        new Finding(
+          'text-overlap',
+          `text "${text.text!.text.text}" covers ${coveredPart(node.box, text.box)}node ${node.node!.name}; ${size(width, height)}`,
+          text.line,
+        ),
+      );
+    }
+    active.push(item);
+  }
+  return found;
+}
+
+interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function boxOf(extent: { minX: number; minY: number; maxX: number; maxY: number }): Box {
+  return { x: extent.minX, y: extent.minY, width: extent.maxX - extent.minX, height: extent.maxY - extent.minY };
+}
+
+/** Whether a polyline passes through the inside of a box, not merely along its edge. */
+function acrossLine(trace: { x: number; y: number }[], extent: { minX: number; minY: number; maxX: number; maxY: number }): boolean {
+  const inner = { x: extent.minX + 1, y: extent.minY + 1, width: extent.maxX - extent.minX - 2, height: extent.maxY - extent.minY - 2 };
+  if (inner.width <= 0 || inner.height <= 0) return false;
+  for (let index = 1; index < trace.length; index += 1) {
+    if (clipSegment(trace[index - 1]!, trace[index]!, inner) !== undefined) return true;
+  }
+  return false;
+}
+
+/**
  * Two nodes on one spot that nothing accounts for. A node and what it holds
  * overlap by being nested; one placed `on` or `inside` another overlaps it
  * because the file said so; `overlap: allow` says so for every pair a node is
@@ -533,7 +636,7 @@ function saysOverlapAllowed(node: LayoutNode): boolean {
  * edge and not the far one, the far end the other way round, and the middle
  * otherwise.
  */
-function coveredPart(under: LayoutNode, over: LayoutNode): string {
+function coveredPart(under: Box, over: Box): string {
   const along = (start: number, extent: number, overStart: number, overExtent: number) => {
     const near = overStart <= start + EPSILON;
     const far = overStart + overExtent >= start + extent - EPSILON;

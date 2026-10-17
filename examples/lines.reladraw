@@ -23,7 +23,7 @@ edge c1 -> d1  "rounded"  from: bottom  to: left  line: (path: square, corners: 
 
 node c2 "C"  right of c1  (gap: 18)
 node d2 "D"  right of c2  below c2  (gap: wide)
-edge c2 -> d2  "no sides"  line: (path: square)
+edge c2 -> d2  "no sides" (at: 1/5, right of edge)  line: (path: square)
 
 // A stop: the line runs along Middle's bottom. Square turns where its shape
 // says; straight joins the stop's two ends to its own with straight pieces.
