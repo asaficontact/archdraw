@@ -57,6 +57,30 @@ function measured(points: Point[]): Measured {
   return { points, lengths, total: lengths[lengths.length - 1]! };
 }
 
+/**
+ * `on: longest level`: the line's longest straight run left to right, level
+ * pieces in a row at one height counted as one, the first of two the same
+ * length. A curve has no straight pieces, so a curved line has none, and
+ * asking for it there is refused rather than falling back to the middle.
+ */
+function longestLevel(route: Route, about: string): Measured {
+  let best: Point[] = [];
+  let run: Point[] = [];
+  let from = route.start;
+  for (const piece of route.pieces) {
+    const level = !('c1' in piece) && Math.abs(piece.to.y - from.y) < 0.5 && Math.abs(piece.to.x - from.x) >= 0.5;
+    if (!level) run = [];
+    else if (run.length > 0 && Math.abs(run[0]!.y - from.y) < 0.5) run.push(piece.to);
+    else run = [from, piece.to];
+    if (run.length > 0 && Math.abs(run[run.length - 1]!.x - run[0]!.x) > Math.abs((best[best.length - 1]?.x ?? 0) - (best[0]?.x ?? 0)) + 0.5) best = [...run];
+    from = piece.to;
+  }
+  if (best.length === 0) {
+    throw new SourceError(`${about} is on: longest level, and this line has no level piece — place the text along it with at:`, route.edge.line);
+  }
+  return measured(best);
+}
+
 /** The piece of a polyline that holds the spot `s` along it, never one of no length if another will do. */
 function pieceHolding(line: Measured, s: number): number {
   let index = 1;
@@ -246,9 +270,13 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
   const landing: (number | undefined)[] = edge.texts.map((text) => {
     const place = text.place;
     const about = `${subject}: the text "${text.text}"`;
-    const on = place.on === undefined ? whole : measured(route.legs.get(place.on) ?? []);
-    const onLeg = place.on === undefined ? '' : ` (leg ${place.on})`;
-    const toWhole = (s: number) => (place.on === undefined ? s : distanceTo(whole, spotAlong(on, s)));
+    const on = place.longestLevel
+      ? longestLevel(route, about)
+      : place.on === undefined
+        ? whole
+        : measured(route.legs.get(place.on) ?? []);
+    const onLeg = place.longestLevel ? ' (its longest level piece)' : place.on === undefined ? '' : ` (leg ${place.on})`;
+    const toWhole = (s: number) => (on === whole ? s : distanceTo(whole, spotAlong(on, s)));
     if (typeof place.at === 'number') return toWhole(place.at * on.total);
     if (place.at === 'start' || place.at === 'end') {
       // A gap along the line from the end, clear of a mark there, however long the line.
@@ -256,7 +284,7 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
       const heading = headingAlong(on, fromEnd ? 0 : on.total);
       const size = turned(text.width, text.height, angleOf(text, heading));
       const half = (size.width / 2) * Math.abs(heading.x) + (size.height / 2) * Math.abs(heading.y);
-      const mark = place.on === undefined && edge.marks[fromEnd ? 'from' : 'to'] !== 'none' ? arrowLength(edge.look.thickness) : 0;
+      const mark = on === whole && edge.marks[fromEnd ? 'from' : 'to'] !== 'none' ? arrowLength(edge.look.thickness) : 0;
       const gap = place.gap === undefined ? TEXT_GAP : gapPixels(place.gap, `${about}: gap:`, edge.line);
       const s = Math.min(on.total, mark + gap + half);
       return toWhole(fromEnd ? s : on.total - s);
@@ -288,7 +316,7 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
       }
       return toWhole(s);
     }
-    if (place.on !== undefined) return toWhole(on.total / 2);
+    if (on !== whole) return toWhole(on.total / 2);
     return undefined;
   });
 

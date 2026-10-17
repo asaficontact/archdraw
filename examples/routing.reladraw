@@ -18,7 +18,7 @@ edge parser -> renderer  "Hacker News"  from: left  to: right  via: parser top, 
 // steps out and comes round.
 node p "P"  below parser  (gap: wide)
 node q "Q"  below p  (gap: 7)
-edge p -> q  "issue #2" (left of edge)  from: bottom  to: left
+edge p -> q  "issue #2" (at: 5/8, left of edge)  from: bottom  to: left
 
 // GitHub issue #2: both ends on the same side, one node behind the other. The
 // line went straight through the node behind.
@@ -37,7 +37,7 @@ node a "A"  below q  (gap: wide)
 node c "C"  right of a  (gap: wide)
 node b "B"  above c  (gap: 1)
 node d "D"  below c  (gap: 1)
-edge a -> b  "fan"  from: right-center  to: left
+edge a -> b  "fan" (at: start, above edge)  from: right-center  to: left
 edge a -> c  from: right-center  to: left
 edge a -> d  from: right-center  to: left
 
@@ -54,7 +54,7 @@ edge web -> db  "cache case"  from: bottom  to: bottom  via: cache bottom
 node e "E"  below a  (gap: 22)
 node f "F"  right of e  (gap: 16)
 node g "G"  below e and f
-edge g -> e  "round the side" (left of edge)  from: left  to: left
+edge g -> e  "round the side" (at: 1/4)  from: left  to: left
 
 // Two lines into one box, 2026-09-27. The longer one's curve swung across
 // the other's twice. The longer one now comes in from above.

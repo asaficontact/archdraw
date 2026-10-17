@@ -550,6 +550,8 @@ export interface EdgeTextPlace {
   at?: number | 'start' | 'end';
   /** `on: rise`: the named leg the text sits on. */
   on?: string;
+  /** `on: longest level`: the line's longest piece running left to right, the first of two the same length. */
+  longestLevel?: boolean;
   /** `straight right from c`: where a line that way from c's middle first meets this one. */
   straight?: { way: Way; target: PlacementTarget; written: string };
   /** `above s1`: a gap from the box, where the line first reaches that height or position across. */

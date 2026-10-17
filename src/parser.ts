@@ -912,6 +912,12 @@ function readEdgeTextBracket(
         }
         place.at = at;
         atWritten = value;
+      } else if (key === 'on' && value === 'longest') {
+        if (plain(tokens[i]) !== 'level') {
+          throw new SourceError(`${about}: "on: longest" — the longest piece a text can sit on is the longest level one: \`on: longest level\``, line);
+        }
+        place.longestLevel = true;
+        i += 1;
       } else if (key === 'on') {
         place.on = value;
       } else if (key === 'gap') {
@@ -2511,6 +2517,9 @@ function readVia(tokens: Token[], start: number, subject: string, line: number):
       }
       listed = nameToken.text.endsWith(',');
       const name = listed ? nameToken.text.slice(0, -1) : nameToken.text;
+      if (name === 'longest') {
+        throw new SourceError(`${subject}: a leg can't be named "longest" — a text's \`on: longest level\` already means the line's longest level piece`, line);
+      }
       i += 2;
       let attrs: Attrs = {};
       if (!listed && follows(tokens, i, '(')) {

@@ -1,6 +1,6 @@
 // Texts on lines. With nothing said a text sits at the middle of its line,
 // on it, and several spread evenly. Its bracket says where else: a fraction
-// along the line or along one named leg, a gap from either end, where a way
+// along the line, along one named leg or along its longest level piece, a gap from either end, where a way
 // straight out from a box meets the line, a gap off a box, or beside the
 // line on a stated side. The line is drawn first and never moves for a text.
 
@@ -33,3 +33,9 @@ edge top -> bottom  "ten units" (left of edge, reads: up)
 node low "Low"  right of top (gap: wide)  8 below top  style: plain
 node high "High"  right of low (gap: 12)  above low (gap: 4)  style: plain
 edge low -> high  "climbing" (reads: along)
+
+// On the longest level piece: the middle of this line would land by the
+// corner, where the text would stand off in open space.
+node ask "Ask"  below service (gap: 12)  style: plain
+node answer "Answer"  below ask (gap: tight)  right of ask (gap: 10)  style: plain
+edge answer -> ask  "retry" (on: longest level)  from: left  to: left  line: (path: square, corners: rounded)

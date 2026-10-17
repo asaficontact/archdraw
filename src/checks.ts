@@ -474,6 +474,22 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
       }
     }
   }
+  // Another line drawn through a text: the text knocks a hole only in its own line.
+  const traces = layout.edges.filter((edge) => !edge.guide).map((edge) => ({ edge, trace: traceRoute(routes.get(edge)!) }));
+  for (const item of items) {
+    const own = item.text!.text;
+    for (const { edge, trace } of traces) {
+      if (edge.texts.includes(own) || !acrossLine(trace, item.text!.box)) continue;
+      found.push(
+        new Finding(
+          'text-overlap',
+          `text "${own.text}" has the line ${edge.from.name} ${edge.arrow} ${edge.to.name} drawn through it — ` +
+            'a text breaks only its own line; place it clear of the other with at: or a side such as above edge',
+          item.line,
+        ),
+      );
+    }
+  }
   if (items.length === 0) return found;
   for (const node of layout.nodes) {
     if (node.guide || node.body.kind === 'none') continue;

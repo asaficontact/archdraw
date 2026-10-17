@@ -18,7 +18,7 @@ edge a -> b  "over the top"  from: top  to: top
 edge b -> c  from: top  to: top
 
 // Out the left and back into the left, so the loop hangs off the left edge.
-edge d -> a  "round the side" (left of edge)  from: left  to: left
+edge d -> a  "round the side" (at: 1/4)  from: left  to: left
 
 // Out the right and round into the bottom, under the bottom row.
 edge c -> d  "under" (at: 2/3)  from: right  to: bottom
