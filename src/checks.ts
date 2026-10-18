@@ -177,12 +177,41 @@ function dropInner(found: Finding[], layout: Layout): Finding[] {
   });
 }
 
-/** Whether a node is one of the line's ends, or holds one: the line starts or ends inside it. */
+/**
+ * Whether a node is one of the line's ends, or holds one: the line starts or
+ * ends inside it. A venn's set holds what is in the overlap too.
+ */
 function holdsEnd(node: LayoutNode, edge: LayoutEdge): boolean {
   for (const end of [edge.from, edge.to]) {
     for (let at = end.parent; at; at = at.parent) if (at === node) return true;
+    if (inVennOverlapOf(end, node)) return true;
   }
   return false;
+}
+
+/** Which part of a venn a node is: 0 the left set, 1 the overlap, 2 the right set. */
+function vennPart(node: LayoutNode): number | undefined {
+  const venn = node.parent;
+  if (!venn || venn.appearance['layout'] !== 'venn') return undefined;
+  const index = venn.children.filter((child) => child !== venn.heading && !joinedToText(child)).indexOf(node);
+  return index === -1 ? undefined : index;
+}
+
+/** Whether `node` is inside the overlap of the venn that `set` is a set of. */
+function inVennOverlapOf(node: LayoutNode, set: LayoutNode): boolean {
+  const part = vennPart(set);
+  if (part !== 0 && part !== 2) return false;
+  for (let at = node.parent; at; at = at.parent) if (at.parent === set.parent && vennPart(at) === 1) return true;
+  return false;
+}
+
+/**
+ * Overlap a venn states (design.org 5.x): its parts crossing each other, and
+ * what is in the overlap sitting inside both sets.
+ */
+function vennStates(a: LayoutNode, b: LayoutNode): boolean {
+  if (a.parent === b.parent && vennPart(a) !== undefined && vennPart(b) !== undefined) return true;
+  return inVennOverlapOf(a, b) || inVennOverlapOf(b, a);
 }
 
 /**
@@ -698,6 +727,7 @@ function nodeOverlaps(layout: Layout): Finding[] {
     const upA = lineage(a);
     const upB = lineage(b);
     if (upA.includes(b) || upB.includes(a)) return true;
+    if (vennStates(a, b)) return true;
     if (upA.some(saysOverlapAllowed) || upB.some(saysOverlapAllowed)) return true;
     const placedOn = (over: LayoutNode[], under: LayoutNode[]) =>
       over.some((node) => under.some((target) => stated.get(node)?.has(target)));

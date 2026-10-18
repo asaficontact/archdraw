@@ -108,6 +108,13 @@ export interface Layout {
   align: 'start' | 'center' | 'end';
 }
 
+/** What `layout: venn` said: its three parts in order, and whether the two sets share a height. */
+export interface Venn {
+  heights: 'natural' | 'equal';
+  /** The left set, the overlap, the right set. */
+  parts: [LayoutNode, LayoutNode, LayoutNode];
+}
+
 /** What the tree pass settled about each node before anything is placed. */
 export interface NodeFacts {
   /** The size the node's own contents give it: a leaf's text and padding, a picture. Zero for a container. */
@@ -122,6 +129,7 @@ export interface NodeFacts {
   charWidth: number;
   title: TitlePlace;
   layout?: Layout;
+  venn?: Venn;
   circle: boolean;
   /** Where `gather-children:` puts the children in the box's spare room, on each axis. */
   gather: Record<Axis, 'start' | 'center' | 'end'>;
@@ -185,6 +193,8 @@ export class Placer {
   private readonly owns = new Map<string, number>();
   /** A layout's child's position and size on each axis, worked out for the whole layout at once. */
   private readonly laid = new Map<string, { start: number; size?: number }>();
+  /** Where each of a venn's parts' frames sits in the venn's, on each axis. */
+  private readonly vennPlans = new Map<string, [number, number, number]>();
   /** The band a laid-out container's children are aligned in, across its layout. */
   private readonly bands = new Map<string, number>();
   /** Where a node joined to its container's text starts, measured from the text's start. */
@@ -282,7 +292,9 @@ export class Placer {
     const key = `${node.name}\n${axis}`;
     const known = this.frames.get(key);
     if (known) return known;
-    const worked = this.guard(`frame\n${key}`, node, axis, undefined, () => this.fit(node, axis));
+    const worked = this.guard(`frame\n${key}`, node, axis, undefined, () =>
+      this.vennPart(node) === 1 ? this.stripFrame(node, axis) : this.fit(node, axis),
+    );
     this.frames.set(key, worked);
     return worked;
   }
@@ -376,6 +388,7 @@ export class Placer {
     if (parent && parent.heading === node) return this.frame(parent, axis).titleStart;
     // Joined to the text: wherever the text goes, the same distance from it.
     if (parent && joinedToText(node)) return this.frame(parent, axis).textStart + this.unitStart(node, axis);
+    if (this.vennPart(node) !== undefined) return this.vennStart(node, axis);
     if (parent && this.facts.get(parent)!.layout) return this.inLayout(node, axis).start;
     if (node.placements.length === 0) {
       // The anchor of its frame. A container's title, when something is
@@ -888,7 +901,7 @@ export class Placer {
   /** A child placed against its own container's box, which it does not grow. */
   framed(node: LayoutNode): boolean {
     const parent = node.parent;
-    if (!parent || this.facts.get(parent)!.layout) return false;
+    if (!parent || this.facts.get(parent)!.layout || this.facts.get(parent)!.venn) return false;
     return node.placements.some((placement) =>
       placement.targets.some((target) => target.name === parent.name && target.part !== 'text'),
     );
@@ -995,6 +1008,7 @@ export class Placer {
    * beside pins or a stretching layout is refused.
    */
   private workOutSize(node: LayoutNode, axis: Axis): number {
+    if (this.vennPart(node) !== undefined) return this.vennSize(node, axis);
     const pinned = this.pins(node, axis);
     if (pinned) {
       const keys = sizeKeysOn(node, axis);
@@ -1173,6 +1187,12 @@ export class Placer {
       const reach = this.reachOf(child, axis);
       low = Math.min(low, start - reach.low);
       high = Math.max(high, start + this.size(child, axis) + reach.high);
+    }
+    // A venn's set wraps the overlap as well as its own children.
+    const shared = this.vennPhantom(node, axis);
+    if (shared) {
+      low = Math.min(low, shared.start);
+      high = Math.max(high, shared.start + shared.size);
     }
     const empty = low > high;
     if (empty) {
@@ -1501,6 +1521,146 @@ export class Placer {
     return this.laid.get(key)!;
   }
 
+  // --- venn ----------------------------------------------------------------
+
+  /** Which part of a venn a node is: 0 the left set, 1 the overlap, 2 the right set. */
+  private vennPart(node: LayoutNode): 0 | 1 | 2 | undefined {
+    const venn = node.parent ? this.facts.get(node.parent)!.venn : undefined;
+    if (!venn) return undefined;
+    const index = venn.parts.indexOf(node);
+    return index === -1 ? undefined : (index as 0 | 1 | 2);
+  }
+
+  /** The outline of what a venn's part holds, in its own frame. The overlap's includes its title's width. */
+  private partContent(node: LayoutNode, axis: Axis): Extent {
+    let low = Infinity;
+    let high = -Infinity;
+    for (const child of this.contentOf(node)) {
+      const start = this.start(child, axis);
+      const reach = this.reachOf(child, axis);
+      low = Math.min(low, start - reach.low);
+      high = Math.max(high, start + this.size(child, axis) + reach.high);
+    }
+    if (axis === 'x' && this.vennPart(node) === 1 && this.hasTitle(node)) {
+      const title = this.titleSize(node, 'x');
+      if (title > high - low) {
+        const middle = (low + high) / 2;
+        low = middle - title / 2;
+        high = middle + title / 2;
+      }
+    }
+    return { start: low, size: high - low };
+  }
+
+  /**
+   * Where each part's own frame sits in the venn's: what to add to a part's
+   * coordinates. Across, the left set's contents, the overlap's and the right
+   * set's in that order. The border between a pair is the crossing set's
+   * padding from what is inside it, and a normal gap from what is outside it,
+   * as a box beside a container would be. Up and down, all three centered on one line,
+   * unless a set lines its top or bottom up with the other's.
+   */
+  private vennPlan(venn: LayoutNode, axis: Axis): [number, number, number] {
+    const key = `venn\n${venn.name}\n${axis}`;
+    const known = this.vennPlans.get(key);
+    if (known) return known;
+    const [left, shared, right] = this.facts.get(venn)!.venn!.parts;
+    const [l, o, r] = [left, shared, right].map((part) => this.partContent(part, axis)) as [Extent, Extent, Extent];
+    let plan: [number, number, number];
+    if (axis === 'x') {
+      const between = GAPS['normal']!;
+      const dl = -l.start;
+      const dO = dl + l.start + l.size + between + this.facts.get(right)!.padding - o.start;
+      const dr = dO + o.start + o.size + this.facts.get(left)!.padding + between - r.start;
+      plan = [dl, dO, dr];
+    } else {
+      const middle = (extent: Extent) => -(extent.start + extent.size / 2);
+      plan = [middle(l), middle(o), middle(r)];
+      for (const index of [0, 2] as const) {
+        const set = index === 0 ? left : right;
+        const [placement] = set.placements;
+        if (placement?.kind !== 'align') continue;
+        const side = sideAlong(placement.side);
+        if (side === 'center') continue;
+        const own = index === 0 ? l : r;
+        const other = index === 0 ? r : l;
+        const otherShift = plan[2 - index]!;
+        // The other set's box holds its own children and the overlap, so its
+        // edge is the further of the two; this set's children go even with that.
+        const low = Math.min(other.start + otherShift, o.start + plan[1]);
+        const high = Math.max(other.start + other.size + otherShift, o.start + o.size + plan[1]);
+        plan[index] = side === 'start' ? low - own.start : high - own.start - own.size;
+      }
+    }
+    this.vennPlans.set(key, plan);
+    return plan;
+  }
+
+  /** The overlap's contents in a set's own frame, which the set's box wraps as well as its own. */
+  private vennPhantom(node: LayoutNode, axis: Axis): Extent | undefined {
+    const part = this.vennPart(node);
+    if (part === undefined || part === 1) return undefined;
+    const venn = node.parent!;
+    const plan = this.vennPlan(venn, axis);
+    const shared = this.partContent(this.facts.get(venn)!.venn!.parts[1], axis);
+    return { start: shared.start + plan[1] - plan[part], size: shared.size };
+  }
+
+  /** Where a venn's part starts in the venn's frame. */
+  private vennStart(node: LayoutNode, axis: Axis): number {
+    const part = this.vennPart(node)!;
+    if (part === 1) return this.strip(node.parent!, axis).start;
+    return this.frame(node, axis).boxStart + this.vennPlan(node.parent!, axis)[part];
+  }
+
+  /** A venn's part's size: a set wraps what it holds, or takes the taller set's height; the overlap is where they cross. */
+  private vennSize(node: LayoutNode, axis: Axis): number {
+    const venn = node.parent!;
+    const facts = this.facts.get(venn)!.venn!;
+    if (this.vennPart(node) === 1) return this.strip(venn, axis).size;
+    if (axis === 'y' && facts.heights === 'equal') {
+      return Math.max(this.ownSize(facts.parts[0], 'y'), this.ownSize(facts.parts[2], 'y'));
+    }
+    return this.ownSize(node, axis);
+  }
+
+  /** Where a venn's two sets cross, in the venn's frame. */
+  private strip(venn: LayoutNode, axis: Axis): Extent {
+    const [left, , right] = this.facts.get(venn)!.venn!.parts;
+    const leftStart = this.start(left, axis);
+    const rightStart = this.start(right, axis);
+    const leftEnd = leftStart + this.size(left, axis);
+    const rightEnd = rightStart + this.size(right, axis);
+    if (axis === 'x') return { start: rightStart, size: leftEnd - rightStart };
+    const start = Math.max(leftStart, rightStart);
+    return { start, size: Math.min(leftEnd, rightEnd) - start };
+  }
+
+  /**
+   * The overlap's frame: the strip where the sets cross, with no border of its
+   * own. Its title is centered across the strip, on the row of the title of
+   * the set whose top is lower, so the strip's contents start below it.
+   */
+  private stripFrame(node: LayoutNode, axis: Axis): FrameAxis {
+    const venn = node.parent!;
+    const [left, , right] = this.facts.get(venn)!.venn!.parts;
+    const plan = this.vennPlan(venn, axis);
+    const strip = this.strip(venn, axis);
+    const boxStart = strip.start - plan[1];
+    const titleSize = this.titleSize(node, axis);
+    let titleStart: number;
+    if (axis === 'x') {
+      titleStart = boxStart + (strip.size - titleSize) / 2;
+    } else {
+      const lower = this.start(left, 'y') >= this.start(right, 'y') ? 0 : 2;
+      const set = lower === 0 ? left : right;
+      titleStart = this.hasTitle(set)
+        ? this.frame(set, 'y').titleStart + plan[lower] - plan[1]
+        : boxStart + this.facts.get(node)!.padding;
+    }
+    return { boxStart, boxSize: strip.size, natural: strip.size, titleStart, titleSize, textStart: titleStart, textSize: titleSize };
+  }
+
   // --- anchors -------------------------------------------------------------
 
   /**
@@ -1513,7 +1673,40 @@ export class Placer {
     // pass refused any placement on it. What is joined to the text goes with
     // the title, placed against the text.
     const members = all.filter((member) => member !== parent?.heading && !(parent && joinedToText(member)));
-    if (parent && this.facts.get(parent)!.layout) {
+    const venn = parent ? this.facts.get(parent)!.venn : undefined;
+    if (parent && venn) {
+      // The venn places its three parts. A set may line its top or bottom up
+      // with the other set's instead of being centered on it, and nothing else.
+      const [left, shared, right] = venn.parts;
+      for (const child of members) {
+        const other = child === left ? right : child === right ? left : undefined;
+        for (const placement of child.placements) {
+          const [target] = placement.targets;
+          const lines = other !== undefined && placement.kind === 'align' && placement.axis === 'y' &&
+            placement.targets.length === 1 && target!.name === other.name && target!.part === undefined &&
+            target!.fraction === undefined && target!.point === undefined;
+          if (lines && child.placements.length === 1) continue;
+          throw new SourceError(
+            child === shared
+              ? `"${child.name}" places itself ("${describePlacement(placement)}"), but it is the overlap of venn "${parent.name}", ` +
+                  'which goes where the two sets cross — drop the placement'
+              : other === undefined
+                ? `"${child.name}" places itself ("${describePlacement(placement)}"), but "${parent.name}" has layout: venn, ` +
+                    'which places each of its parts — drop the placement'
+                : `"${child.name}" places itself ("${describePlacement(placement)}"), but it is a set of venn "${parent.name}", ` +
+                    `which sets it beside the other and centers it — the one thing a set may say is top even with ${other.name} ` +
+                    `or bottom even with ${other.name}`,
+            placement.line,
+          );
+        }
+      }
+      if (left.placements.length > 0 && right.placements.length > 0) {
+        throw new SourceError(
+          `"${left.name}" and "${right.name}" are each lined up with the other — say it on one of them`,
+          right.placements[0]!.line,
+        );
+      }
+    } else if (parent && this.facts.get(parent)!.layout) {
       for (const child of members) {
         const [placement] = child.placements;
         if (placement) {

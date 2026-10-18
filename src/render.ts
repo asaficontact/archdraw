@@ -16,7 +16,7 @@ import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
-import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
+import { DARK_THEME, THEMES, overlapFill, textOnFill, themeColor, type Theme } from './themes.js';
 import { crossingPoints, planLines, traceRoute, visibleRuns, type Point, type Route } from './lines.js';
 import { KNOCKOUT_PAD, placeLineTexts } from './linetexts.js';
 import { plain, type Line, type Run } from './text.js';
@@ -313,10 +313,61 @@ function drawNode(
     );
     if (node.body.kind === 'icon') own = [`  <g opacity="0.5">`, ...own, '  </g>'];
   }
+  if (node.appearance['layout'] === 'venn' && !node.guide) return drawVenn(node, theme, measurer, fontSize, markup, guides, url);
   return [
     { key: node.name, node, svg: linked(own.join('\n'), url) },
     ...node.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
   ];
+}
+
+/**
+ * A venn (design.org 5.x): no box of its own unless it states one, and its
+ * three parts drawn as one picture. The two sets' fills go down first, then
+ * the overlap's over where they cross, then both sets' borders over all three
+ * fills, so each border shows whole; then everything the parts hold. Each part
+ * has a different fill unless it states its own: the left set the theme's
+ * primary-subtle, the right its secondary-subtle, the overlap the two stacked.
+ */
+function drawVenn(
+  node: LayoutNode,
+  theme: Theme,
+  measurer: Measurer,
+  fontSize: number,
+  markup: Record<string, string>,
+  guides: Guides,
+  url: string | undefined,
+): Drawn[] {
+  const plain = (part: LayoutNode, fill: string): LayoutNode => ({ ...part, appearance: { ...part.appearance, fill, border: 'none' } });
+  const own = nodeSvg(plain(node, node.appearance['fill'] ?? 'none'), theme, measurer, fontSize, markup);
+  if (node.appearance['border'] !== undefined) own.push(borderSvg(node, theme));
+  const [left, shared, right] = node.children.filter((child) => child !== node.heading && !joinedToText(child)) as [LayoutNode, LayoutNode, LayoutNode];
+  const leftFill = left.appearance['fill'] ?? 'theme-primary-subtle';
+  const rightFill = right.appearance['fill'] ?? 'theme-secondary-subtle';
+  const sharedFill = shared.appearance['fill'] ?? overlapFill(themeColor(leftFill, theme), theme);
+  const item = (part: LayoutNode, key: string, svg: string[]): Drawn => ({ key, node: part, svg: linked(svg.join('\n'), part.attrs['url'] ?? url) });
+  const rest = (part: LayoutNode) => part.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, part.attrs['url'] ?? url));
+  return [
+    { key: node.name, node, svg: linked(own.join('\n'), url) },
+    item(left, left.name, nodeSvg(plain(left, leftFill), theme, measurer, fontSize, markup)),
+    item(right, right.name, nodeSvg(plain(right, rightFill), theme, measurer, fontSize, markup)),
+    item(shared, shared.name, nodeSvg(plain(shared, sharedFill), theme, measurer, fontSize, markup)),
+    item(left, `${left.name} border`, [borderSvg(left, theme)]),
+    item(right, `${right.name} border`, [borderSvg(right, theme)]),
+    ...rest(left),
+    ...rest(shared),
+    ...rest(right),
+    ...node.children
+      .filter((child) => child !== left && child !== shared && child !== right)
+      .flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
+  ];
+}
+
+/** A container's border alone, unfilled. */
+function borderSvg(node: LayoutNode, theme: Theme): string {
+  if (node.body.kind !== 'shape') return '';
+  const face = faceOf(node);
+  const border = borderOf(node.appearance, theme, theme.containerStroke);
+  return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners)}" fill="none" stroke="${border}"/>`;
 }
 
 /** What a node draws of its own, without its children, which are drawn as items of their own. */

@@ -54,6 +54,17 @@ function accent(color: string, page: string, on: string, subtle = mix(color, pag
   return { color, subtle, on };
 }
 
+/**
+ * A venn's overlap when it states no fill: the theme's secondary at its subtle
+ * strength laid over the left set's fill, so the shared part reads as both
+ * sets at once. A left fill that can't be measured is taken as the theme's
+ * primary-subtle, the left set's default.
+ */
+export function overlapFill(under: string, theme: Theme): string {
+  const base = /^#[0-9a-f]{6}$/i.test(under) ? under : theme.primary.subtle;
+  return mix(theme.secondary.color, base, SUBTLE);
+}
+
 /** `amount` of `color` over `page`, both `#rrggbb`. */
 function mix(color: string, page: string, amount: number): string {
   const channel = (hex: string, at: number) => parseInt(hex.slice(at, at + 2), 16);

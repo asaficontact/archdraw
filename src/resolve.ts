@@ -11,6 +11,7 @@ import {
   CHILD_ALIGNMENTS,
   GATHER_PLACES,
   CONTENT_WIDTHS,
+  SIZE_KEY_NAMES,
   LINE_VALUES,
   NODE_CORNERS,
   type NodeCorners,
@@ -35,7 +36,7 @@ import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
-import { gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace } from './place.js';
+import { gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace, type Venn } from './place.js';
 
 /**
  * What a node's own contents make of it, before anything is placed: a leaf's
@@ -57,6 +58,7 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   const glyphSide = ICON_LINES * lineHeight;
   const title = titlePlaceOf(node);
   const layout = layoutOf(node);
+  const venn = vennOf(node);
   const circle = isCircle(node);
   const padding =
     node.body.kind === 'none'
@@ -116,6 +118,7 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
     ...measures,
     title,
     ...(layout ? { layout } : {}),
+    ...(venn ? { venn } : {}),
     circle,
   };
 }
@@ -188,11 +191,18 @@ function gatherOf(node: LayoutNode): NodeFacts['gather'] {
 /** `layout: column (gap: 0, widths: match, align-children: left)`, read and checked. */
 function layoutOf(node: LayoutNode): ChildLayout | undefined {
   const kind = node.appearance['layout'];
-  if (kind === undefined) return undefined;
+  if (kind === undefined || kind === 'venn') return undefined;
   if (kind !== 'column' && kind !== 'row') {
-    throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row`, node.line);
+    throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row, venn`, node.line);
   }
   const bracket = bracketOf('layout', node.appearance);
+  if (bracket['heights'] !== undefined) {
+    throw new SourceError(
+      `"${node.name}" has layout: ${kind} (heights: ${bracket['heights']}), and heights: belongs to layout: venn — ` +
+        'a column or row sizes its children with widths:',
+      node.line,
+    );
+  }
   const widths = bracket['widths'] ?? 'natural';
   if (!(CONTENT_WIDTHS as readonly string[]).includes(widths)) {
     throw new SourceError(`"${node.name}" has layout: (widths: ${widths}), which is not one of ${CONTENT_WIDTHS.join(', ')}`, node.line);
@@ -231,6 +241,55 @@ function layoutOf(node: LayoutNode): ChildLayout | undefined {
   }
   const gap = bracket['gap'] === undefined ? PAD : gapPixels(bracket['gap'], `"${node.name}" layout: (gap: …)`, node.line);
   return { kind, gap, widths, align } as ChildLayout;
+}
+
+/**
+ * `layout: venn (heights: equal)`, read and checked: two sets and the overlap
+ * between them, as three children in written order (design.org 5.x).
+ */
+function vennOf(node: LayoutNode): Venn | undefined {
+  if (node.appearance['layout'] !== 'venn') return undefined;
+  const bracket = bracketOf('layout', node.appearance);
+  for (const key of Object.keys(bracket)) {
+    if (key === 'heights') continue;
+    throw new SourceError(
+      `"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights: equal in its bracket`,
+      node.line,
+    );
+  }
+  const heights = bracket['heights'] ?? 'natural';
+  if (heights !== 'natural' && heights !== 'equal') {
+    throw new SourceError(
+      `"${node.name}" has layout: venn (heights: ${heights}) — write heights: equal to give both sets the taller one's height, or leave it out`,
+      node.line,
+    );
+  }
+  const parts = node.children.filter((child) => child !== node.heading && !joinedToText(child));
+  if (parts.length !== 3) {
+    throw new SourceError(
+      `"${node.name}" has layout: venn and ${parts.length} ${parts.length === 1 ? 'child' : 'children'} — a venn has exactly three, ` +
+        'in order: the left set, the overlap, and the right set',
+      node.line,
+    );
+  }
+  for (const [index, part] of parts.entries()) {
+    const role = ['the left set', 'the overlap', 'the right set'][index]!;
+    if (part.children.length === 0) {
+      throw new SourceError(
+        `"${part.name}" is ${role} of venn "${node.name}" and holds nothing — put what belongs there inside it, such as node ${part.name}.a "A"`,
+        part.line,
+      );
+    }
+    const sizes = SIZE_KEY_NAMES.filter((key) => part.appearance[key] !== undefined);
+    if (sizes.length > 0) {
+      throw new SourceError(
+        `"${part.name}" states ${sizes.map((key) => `${key}:`).join(' ')}, but it is ${role} of venn "${node.name}", which wraps each part round what it holds — drop it` +
+          (sizes.includes('height') ? ', or give the venn (heights: equal)' : ''),
+        part.line,
+      );
+    }
+  }
+  return { heights, parts: parts as [LayoutNode, LayoutNode, LayoutNode] };
 }
 
 export interface ResolveOptions {

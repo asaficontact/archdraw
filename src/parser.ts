@@ -650,7 +650,7 @@ function readAttr(
     // `centers: 5 apart` reads its last word as part of the value.
     const value = tokens[at + 1];
     if (!value || value.quoted || isAttrKey(value) || value.text === '(') {
-      throw new SourceError(`${subject}: layout: names an arrangement — column or row`, line);
+      throw new SourceError(`${subject}: layout: names an arrangement — column, row or venn`, line);
     }
     setOnce(attrs, 'layout', value.text, subject, line);
     let next = at + 2;

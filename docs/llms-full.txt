@@ -607,6 +607,25 @@ The layout's bracket takes:
 
 `centers:` beside `gap:` is refused as said twice. `layout:` on a node with no children is refused. The bare `align:` in a layout is refused, naming `align-children:` and `gather-children:`, so `align:` means one thing everywhere: where along a side.
 
+### Two sets that overlap: `layout: venn`
+
+A thing that belongs to two groups at once goes in the strip where they overlap. `layout: venn` takes exactly three children, in written order: the left set, the overlap, and the right set. Each keeps one parent and one dotted name, so the shared box is a child of the overlap.
+
+```
+node phases ""  layout: venn
+node phases.design  "Design time"
+node phases.both    ""
+node phases.runtime "Runtime"
+
+node phases.design.editor  "Editor"
+node phases.both.template  "PDF template"
+node phases.runtime.python "Python Lib"
+```
+
+Each set wraps its own children and the overlap's, and the two cross over the overlap. Inside each part, children are placed by hand as in any container, against their own siblings. A shorter set is centered on the taller; `top even with phases.design` (or `bottom even with`) on the other set lines them up instead, and is the only placement a part may have. `layout: venn (heights: equal)` gives both sets the taller one's height.
+
+The overlap has no border of its own. Its title follows every container's rule: drawn if it has one, nothing for `""`, and it sits centered at the top of the strip. The venn itself draws no box unless it states a fill or border. Each part gets a different fill unless it states one: the left set the theme's primary-subtle, the right its secondary-subtle, and the overlap the two laid over each other. A venn's sets crossing, and what is in the overlap sitting inside both, is never reported.
+
 ### Where the children sit
 
 `gather-children:` on the box says where the group of its children sits when the box has spare room, from a stated size or a title wider than they are: against a side (`left`, `right`, `top`, `bottom`), in a corner (`top-left` and the others), or in the middle (`center`, the default). It works on any container, laid out or hand-placed; hand-placed children move as one piece.
@@ -1253,7 +1272,6 @@ Not on this list: saying more about where something goes. A statement that lets 
 
 Designed and absent from the code.
 
-- **`layout: venn`**, two containers overlapping over the children they share.
 - **A line joining or leaving a bundle partway.**
 - **Several marks at one end of a line**, such as a database's crow's feet.
 - **Attributes, templates and functions**: definitions of your own that add placements, nodes and lines.

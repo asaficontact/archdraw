@@ -353,7 +353,7 @@ export const CONTENTS_KEYS = ['widths', 'align'] as const;
  * `align` is read only to be refused by name: it now means where along a side,
  * and lining the children up is `align-children`.
  */
-export const LAYOUT_KEYS = ['gap', 'widths', 'align-children', 'align', 'centers'] as const;
+export const LAYOUT_KEYS = ['gap', 'widths', 'align-children', 'align', 'centers', 'heights'] as const;
 
 /**
  * Where `gather-children:` puts a container's children in its spare room: a
@@ -892,7 +892,7 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
  *   an edge is not placed — it joins two things that are.
  */
 /** The keys that state a size; `size.ts` reads their values. */
-const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
+export const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
   shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
