@@ -453,7 +453,8 @@ function textOverflows(layout: Layout): Finding[] {
  * Found with a sweep across the page, as node overlaps are.
  */
 function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
-  type Item = { box: Box; text?: PlacedText; node?: LayoutNode; line: number };
+  // `words` is any text's content: a line's, or a point's or region's (design.org 7.4).
+  type Item = { box: Box; text?: PlacedText; words?: string; node?: LayoutNode; line: number };
   const items: Item[] = [];
   const found: Finding[] = [];
   for (const edge of layout.edges) {
@@ -461,7 +462,7 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
     const route = routes.get(edge)!;
     for (const placed of placeLineTexts(edge, route)) {
       const box = boxOf(placed.box);
-      items.push({ box, text: placed, line: edge.line });
+      items.push({ box, text: placed, words: placed.text.text, line: edge.line });
       if (placed.beside && acrossLine(traceRoute(route), placed.box)) {
         found.push(
           new Finding(
@@ -474,17 +475,25 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
       }
     }
   }
-  // Another line drawn through a text: the text knocks a hole only in its own line.
+  for (const mark of layout.marks) {
+    if (mark.guide || !mark.text) continue;
+    items.push({ box: mark.text.box, words: mark.text.lines.map((line) => line.map((run) => run.text).join('')).join(' '), line: mark.line });
+  }
+  // Another line drawn through a text: the text knocks a hole only in its own
+  // line, and a point's or a region's text has none.
   const traces = layout.edges.filter((edge) => !edge.guide).map((edge) => ({ edge, trace: traceRoute(routes.get(edge)!) }));
   for (const item of items) {
-    const own = item.text!.text;
+    const own = item.text?.text;
+    const extent = { minX: item.box.x, minY: item.box.y, maxX: item.box.x + item.box.width, maxY: item.box.y + item.box.height };
     for (const { edge, trace } of traces) {
-      if (edge.texts.includes(own) || !acrossLine(trace, item.text!.box)) continue;
+      if ((own && edge.texts.includes(own)) || !acrossLine(trace, extent)) continue;
       found.push(
         new Finding(
           'text-overlap',
-          `text "${own.text}" has the line ${edge.from.name} ${edge.arrow} ${edge.to.name} drawn through it — ` +
-            'a text breaks only its own line; place it clear of the other with at: or a side such as above edge',
+          `text "${item.words}" has the line ${edge.from.name} ${edge.arrow} ${edge.to.name} drawn through it — ` +
+            (own
+              ? 'a text breaks only its own line; place it clear of the other with at: or a side such as above edge'
+              : 'place it clear of the line, such as (below) or (above-left)'),
           item.line,
         ),
       );
@@ -508,27 +517,27 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
   for (const item of sorted) {
     active = active.filter((other) => other.box.x + other.box.width > item.box.x + EPSILON);
     for (const other of active) {
-      if (!item.text && !other.text) continue;
+      if (item.words === undefined && other.words === undefined) continue;
       const width = Math.min(item.box.x + item.box.width, other.box.x + other.box.width) - Math.max(item.box.x, other.box.x);
       const height = Math.min(item.box.y + item.box.height, other.box.y + other.box.height) - Math.max(item.box.y, other.box.y);
       if (width <= EPSILON || height <= EPSILON) continue;
-      if (item.text && other.text) {
+      if (item.words !== undefined && other.words !== undefined) {
         const [earlier, later] = other.line <= item.line ? [other, item] : [item, other];
         found.push(
           new Finding(
             'text-overlap',
-            `text "${later.text!.text.text}" covers ${coveredPart(earlier.box, later.box)}text "${earlier.text!.text.text}"; ${size(width, height)}`,
+            `text "${later.words}" covers ${coveredPart(earlier.box, later.box)}text "${earlier.words}"; ${size(width, height)}`,
             later.line,
           ),
         );
         continue;
       }
-      const [text, node] = item.text ? [item, other] : [other, item];
+      const [text, node] = item.words !== undefined ? [item, other] : [other, item];
       if (holds(node.node!, text.box)) continue;
       found.push(
         new Finding(
           'text-overlap',
-          `text "${text.text!.text.text}" covers ${coveredPart(node.box, text.box)}node ${node.node!.name}; ${size(width, height)}`,
+          `text "${text.words}" covers ${coveredPart(node.box, text.box)}node ${node.node!.name}; ${size(width, height)}`,
           text.line,
         ),
       );

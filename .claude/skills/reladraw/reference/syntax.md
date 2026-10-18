@@ -352,6 +352,29 @@ node db   "DB"   below api
 region trust  web top-left to db bottom-right  padding: 1
 ```
 
+### A point's and a region's text
+
+A point or a region may have a text, quoted after its name, with a bracket like any text's.
+
+**A point's text sits above its dot** unless its bracket says which way: `(below)`, `(left)`, `(right)`, or a corner, `(above-right)`, `(above-left)`, `(below-right)`, `(below-left)`. There is no target, since a point's text has nothing else to sit beside. A side centers the text on the dot; a corner puts the text's nearest corner off the dot diagonally. `gap:` is the distance from the dot, half a unit unless it says.
+
+```
+node a  "A"
+node b  "B"  right of a (gap: 14)
+point mid "halfway" (above-right, gap: 1)  between a and b
+```
+
+**A region's text takes a container title's words**: `inside`, `on` or `outside` a side, `align:` along it, and `gap:` for its distance from the region. With nothing said it sits above the region, outside it, centered. Inside, the region makes room for it, as a container does for its title: it grows a band on that side to hold the text, and widens if the text is wider. Nothing it spans moves, but its own edges do, so whatever is placed against that side of the region moves with them. `(center)` is refused, since a region holds nothing and its middle is whatever it covers.
+
+```
+node web  "Web"
+node api  "API"  right of web
+node db   "DB"   below api
+region trust "trust boundary" (inside top, align: left)  web top-left to db bottom-right  padding: 1
+```
+
+Both start one step smaller than a box's text, as bare text does, and take `color:`, `size:`, `wrap:`, `align:` and `reads: up` or `down`.
+
 ## Containers
 
 A node is a container when it has children, named with a dot. **A container is the bounding box of its children, plus padding.** The children are arranged in one of two ways, never by inference.
@@ -517,6 +540,14 @@ node legend.a "solid: synced"  shape: none
 node r "Deployment" (right even with r.d, top even with r.a)
 node r.a "north-west"
 node r.d "south-east"  below-right of r.a
+```
+
+**`reads: up` and `reads: down`** turn a node's text a quarter turn, on a leaf or a title. A turned title on a left or right side takes a column one line wide rather than one word wide. The side and `align:` words still name directions on the page, so `(outside left, reads: up, align: top)` is a turned title against the upper end of the box's left side.
+
+```
+node rack "Rack 1" (inside left, reads: up)  layout: column
+node rack.a "web-1"
+node rack.b "web-2"
 ```
 
 `at:` on a node's text is refused by name, quoting the side form, or for `at: center`, quoting `(center)` on a container and saying to write nothing on a leaf.
@@ -986,8 +1017,6 @@ Not on this list: saying more about where something goes. A statement that lets 
 
 Designed and absent from the code.
 
-- **A point's and a region's text.** A point's text would sit above it and a region's just above its top-left corner, outside it. `point p "mid" …` and `region r "zone" …` are refused today.
-- **`reads:` on a node's title**, for a title turned along a left or right side: `(outside left, reads: up, align: top)`. Refused today; `reads:` works on a line's text.
 - **`layout: venn`**, two containers overlapping over the children they share.
 - **A line joining or leaving a bundle partway.**
 - **Several marks at one end of a line**, such as a database's crow's feet.
@@ -1062,7 +1091,8 @@ New:
 - **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down x`), and a part of the target (`top even with x bottom`).
 - **Sizes**: `width:`, `height:` and the four limits, from numbers, measurements of other boxes, sums, spans and `larger of`.
 - **Layouts**: `layout: column` and `row`, with `gap:`, `widths:`, `align-children:` and `centers:`; `gather-children:` on any container.
-- **Titles placed** against any side, inside, on or outside the border, or against the box's own children; `heading:`; `join-with:`.
+- **Titles placed** against any side, inside, on or outside the border, or against the box's own children, and turned with `reads:`; `heading:`; `join-with:`.
+- **A point's and a region's text**: `point mid "halfway" (above-right)`, `region trust "trust boundary" (inside top)`.
 - **Invisible containers**: `shape: none` with children.
 - **`padding:`** on a box or region.
 - **Guides**: `guide` before any node, line, point or region, shown with `--guides` or `diagram guides: show`.

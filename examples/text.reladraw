@@ -55,3 +55,9 @@ node literal "sizes \[small, normal, large]"  below aside (gap: tight)  shape: n
 // An edge's text takes the same brackets. A size may be a multiple of normal,
 // such as 1.2, or pixels, such as 12px, as well as a name.
 edge tall -> aside  "carried" (color: theme-muted, size: 12px)  from: right  to: left
+
+// `reads: up` or `down` turns a text a quarter turn, so a title on a left or
+// right side takes a column one line wide rather than one word wide.
+node rack "Rack" (inside left, reads: up)  right of aside (gap: wide)  top even with tall  layout: column (gap: tight)  style: plain
+node rack.web "web"  style: plain
+node rack.db  "db"   style: plain

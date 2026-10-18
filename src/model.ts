@@ -147,7 +147,18 @@ export interface LayoutMark {
   names: string[];
   appearance: Attrs;
   guide: boolean;
+  /** Its text, if it has one, and where that sits on the page (design.org 7.4). */
+  text?: MarkTextBox;
   line: number;
+}
+
+/** A point's or a region's text, measured and placed. `box` is the turned ink when it reads up or down. */
+export interface MarkTextBox {
+  lines: Line[];
+  textAttrs: Attrs;
+  size: number;
+  lineHeight: number;
+  box: Rect;
 }
 
 /** `depth: behind b, in front of c` on one thing, read into its clauses (design.org 8.4). */

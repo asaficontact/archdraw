@@ -16,6 +16,7 @@ import type {
   TextSide,
   IconStmt,
   Mark,
+  MarkText,
   Part,
   PlacementTarget,
   PointExpr,
@@ -44,6 +45,8 @@ import {
   SIDE_AXIS,
   SIDES,
   TEXT_KEYS,
+  MARK_TEXT_KEYS,
+  POINT_TEXT_SIDES,
   LINE_KEYS,
   LINE_VALUES,
   CONTENTS_KEYS,
@@ -632,6 +635,7 @@ function readAttr(
       kind: BRACKET_ABOUT[key]!.kind,
       example: BRACKET_ABOUT[key]!.example,
       line,
+      ...(key === 'text' ? { listed: TEXT_KEYS.filter((word) => word !== 'at') } : {}),
     });
     if (Object.keys(read.values).length === 0) {
       throw new SourceError(`${subject}: \`${key}:\` opens empty brackets`, line);
@@ -1150,13 +1154,15 @@ function parseNode(head: Token[], line: number): NodeStmt {
   head = taken.tokens;
   const place = taken.place;
   const titlePlacements = taken.placements;
-  const bracket = readBracket(head, open, TEXT_KEYS, {
+  const bracket = readBracket(head, open, NODE_TEXT_KEYS, {
     subject,
     what: 'the text',
     kind: 'a text',
-    example: 'at: bottom',
+    example: 'size: small',
     line,
+    listed: NODE_TEXT_LISTED,
   });
+  refuseNodeReads(bracket.values['reads'], subject, line);
   const tail = parseTail(head, bracket.next, line, subject);
   refuseTextKey(tail.attrs, subject, 'after the name', line);
   return {
@@ -1169,6 +1175,105 @@ function parseNode(head: Token[], line: number): NodeStmt {
     placements: tail.placements,
     attrs: tail.attrs,
     line,
+  };
+}
+
+/**
+ * A node's text takes the look keys and `reads:` (design.org 7.2). `at` is
+ * read only to be refused with the side form, so it isn't listed as one it takes.
+ */
+const NODE_TEXT_KEYS = [...TEXT_KEYS, 'reads'] as const;
+const NODE_TEXT_LISTED = NODE_TEXT_KEYS.filter((key) => key !== 'at');
+
+/** A node's text turns a quarter turn; `along` follows a line, and a box has none. */
+function refuseNodeReads(reads: string | undefined, subject: string, line: number, whose = "a node's text"): void {
+  if (reads === undefined || reads === 'up' || reads === 'down') return;
+  throw new SourceError(
+    reads === 'along'
+      ? `${subject}: reads: along follows a line's angle, and ${whose} has no line — write reads: up or reads: down`
+      : `${subject}: reads: ${reads} is not one of up, down`,
+    line,
+  );
+}
+
+/**
+ * `point p "merge" (above-right, gap: 1)` or `region r "trust" (inside top)`:
+ * the text after a point's or a region's name, and its bracket (design.org
+ * 7.4). A point's text says which way from the dot, with no target, since it
+ * has nothing else to sit beside; a region's takes a container title's side
+ * words. Returns where the rest of the statement starts.
+ */
+function readMarkText(
+  head: Token[],
+  kind: 'point' | 'region',
+  subject: string,
+  line: number,
+): { text?: MarkText; tokens: Token[]; next: number } {
+  const written = head[2];
+  if (!written?.quoted) return { tokens: head, next: 2 };
+  let tokens = head;
+  let place: string | undefined;
+  if (kind === 'point') {
+    if (follows(tokens, 3, '(')) {
+      const first = tokens[4];
+      const word = first && !first.quoted ? first.text.replace(/,$/, '') : undefined;
+      if (word !== undefined && (POINT_TEXT_SIDES as readonly string[]).includes(word)) {
+        const after = tokens[5]?.text;
+        if ((word === 'left' || word === 'right') && after === 'of') {
+          throw new SourceError(`${subject}: a point's text has nothing else to sit beside, so it's (${word}), not (${word} of …)`, line);
+        }
+        if (!first!.text.endsWith(',') && after !== undefined && after !== ')' && after !== ',' && !isAttrKey(tokens[5]!)) {
+          throw new SourceError(
+            `${subject}: a point's text has nothing else to sit beside, so it's (${word}) alone — found "${after}" after it`,
+            line,
+          );
+        }
+        place = word;
+        tokens = [...tokens.slice(0, 4), ...tokens.slice(5)];
+      } else if (word !== undefined && !isAttrKey(first!)) {
+        throw new SourceError(
+          `${subject}: a point's text sits ${POINT_TEXT_SIDES.slice(0, 4).join(', ')} or at a corner such as above-right, not "${word}"`,
+          line,
+        );
+      }
+    }
+  } else {
+    const taken = takeTitlePlace(tokens, 3, subject, line);
+    if (taken.placements.length > 0) {
+      throw new SourceError(`${subject}: a region's text is placed against a side of it, such as (outside top) — a region holds nothing to place it against`, line);
+    }
+    if (taken.place === 'center') {
+      throw new SourceError(
+        `${subject}: a region's text goes against a side, such as (inside top) — a region holds nothing, so its middle is whatever it covers`,
+        line,
+      );
+    }
+    tokens = taken.tokens;
+    place = taken.place;
+  }
+  const bracket = readBracket(tokens, 3, MARK_TEXT_KEYS, {
+    subject,
+    what: 'the text',
+    kind: `a ${kind}'s text`,
+    example: kind === 'point' ? 'gap: 1' : 'align: left',
+    line,
+  });
+  const values = bracket.values;
+  refuseNodeReads(values['reads'], subject, line, `a ${kind}'s text`);
+  const across = place === undefined || /top|bottom/.test(place);
+  const words = kind === 'point' || across ? ['left', 'center', 'right'] : ['top', 'center', 'bottom'];
+  if (values['align'] !== undefined && !words.includes(values['align'])) {
+    throw new SourceError(
+      kind === 'point'
+        ? `${subject}: align: lines up a point's text's own lines, ${words.join(', ')} — not ${values['align']}`
+        : `${subject}: a text on the ${place?.split(' ')[1] ?? 'top'} side takes align: ${words.join(', ')} — not ${values['align']}`,
+      line,
+    );
+  }
+  return {
+    text: { text: written.text, textAttrs: place === undefined ? values : { ...values, place } },
+    tokens,
+    next: bracket.next,
   };
 }
 
@@ -1562,28 +1667,34 @@ function parseBundle(head: Token[], line: number): BundleStmt {
 function parsePoint(head: Token[], line: number): PointStmt {
   const name = requireName(head[1], 'point', line);
   const subject = `point "${name}"`;
-  if (!head[2] || isAttrKey(head[2])) {
+  const marked = readMarkText(head, 'point', subject, line);
+  head = marked.tokens;
+  const start = marked.next;
+  if (!head[start] || isAttrKey(head[start])) {
     throw new SourceError(`${subject} says where it is, such as \`point ${name}  between a and b\``, line);
   }
-  const read = readOneTarget(head, 2, subject, line, true);
+  const read = readOneTarget(head, start, subject, line, true);
   if (read.listed) throw new SourceError(`${subject} is one point, so it takes no list`, line);
   refuseSpan(read.target, subject, line);
   const attrs = attrsOnly(head, read.next, line, subject);
   refuseKeys(attrs, POINT_KEYS, subject, 'a point', line);
-  return { kind: 'point', name, point: read.target, attrs, line };
+  return { kind: 'point', name, point: read.target, ...(marked.text ? { text: marked.text } : {}), attrs, line };
 }
 
 /** `region r  c bottom-left to d top-right`, or `region r  between a and b (span: both)` */
 function parseRegion(head: Token[], line: number): RegionStmt {
   const name = requireName(head[1], 'region', line);
   const subject = `region "${name}"`;
-  if (!head[2] || isAttrKey(head[2])) {
+  const marked = readMarkText(head, 'region', subject, line);
+  head = marked.tokens;
+  const start = marked.next;
+  if (!head[start] || isAttrKey(head[start])) {
     throw new SourceError(
       `${subject} says what it covers: two corners, \`region ${name}  a top-left to b bottom-right\`, or \`region ${name}  between a and b\``,
       line,
     );
   }
-  const first = readOneTarget(head, 2, subject, line, true);
+  const first = readOneTarget(head, start, subject, line, true);
   if (first.listed) throw new SourceError(`${subject}: a region runs from one point to another, written with "to", not a list`, line);
   let corners: RegionStmt['corners'];
   let next = first.next;
@@ -1605,7 +1716,7 @@ function parseRegion(head: Token[], line: number): RegionStmt {
   }
   const attrs = attrsOnly(head, next, line, subject);
   refuseKeys(attrs, REGION_KEYS, subject, 'a region', line);
-  return { kind: 'region', name, corners, attrs, line };
+  return { kind: 'region', name, corners, ...(marked.text ? { text: marked.text } : {}), attrs, line };
 }
 
 /** Refuse what a point or a region has no use for, by name. */
@@ -2212,7 +2323,7 @@ function readBracket(
   tokens: Token[],
   start: number,
   keys: readonly string[],
-  about: { subject: string; what: string; kind: string; example: string; line: number },
+  about: { subject: string; what: string; kind: string; example: string; line: number; listed?: readonly string[] },
 ): { values: Record<string, string>; next: number } {
   if (!follows(tokens, start, '(')) return { values: {}, next: start };
 
@@ -2235,7 +2346,7 @@ function readBracket(
     }
     const key = keyToken.text.slice(0, -1);
     if (!keys.includes(key)) {
-      throw new SourceError(`${about.kind} has no "${key}" — it takes ${keys.join(', ')}`, about.line);
+      throw new SourceError(`${about.kind} has no "${key}" — it takes ${(about.listed ?? keys).join(', ')}`, about.line);
     }
     const valueToken = tokens[i + 1];
     if (!valueToken || valueToken.quoted || isAttrKey(valueToken) || valueToken.text === ')') {

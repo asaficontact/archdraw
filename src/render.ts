@@ -81,7 +81,7 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   const hidden = (edge: LayoutEdge) => edge.guide === true && !guides.shown;
 
   const boxes = layout.roots.flatMap((root) => drawNode(root, theme, measurer, fontSize, layout.markup, guides));
-  const marks = layout.marks.map((mark) => ({ mark, item: { key: mark.name, svg: markSvg(mark, theme, guides) } }));
+  const marks = layout.marks.map((mark) => ({ mark, item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize) } }));
   const lines: Drawn[] = [];
   // Everything the boxes cover. Edges are added to it as they are drawn.
   let ink: Extent = { minX: 0, minY: 0, maxX: layout.width, maxY: layout.height };
@@ -349,6 +349,7 @@ function nodeSvg(
         color: textColorOf(node.textAttrs, theme, onFill ?? theme.text),
         align: style.align,
         ink,
+        reads: node.textAttrs['reads'],
       }),
       size,
       fontSize,
@@ -371,6 +372,7 @@ function nodeSvg(
             color: textColorOf(node.textAttrs, theme, theme.text),
             align: style.align,
             ink,
+            reads: node.textAttrs['reads'],
           }),
           size,
           fontSize,
@@ -464,6 +466,7 @@ function nodeSvg(
         color: text,
         align: textStyle.align,
         ink,
+        reads: node.textAttrs['reads'],
       }),
       size,
       fontSize,
@@ -478,13 +481,14 @@ function nodeSvg(
  * primary color; a point is a dot. A guide is drawn only when guides are
  * shown, dashed and unfilled in the guide color.
  */
-function markSvg(mark: LayoutMark, theme: Theme, guides: Guides): string {
+function markSvg(mark: LayoutMark, theme: Theme, guides: Guides, markup: Record<string, string>, fontSize: number): string {
   const said = (key: string) => mark.appearance[key] ?? (mark.guide ? guides.looks[mark.kind][key] : undefined);
   if (mark.guide && !guides.shown) return '';
   const color = (value: string | undefined) => (value === undefined ? undefined : themeColor(value, theme));
+  const label = markTextSvg(mark, theme, mark.guide ? guides.color : theme.text, markup, fontSize);
   if (mark.kind === 'point') {
     const fill = color(said('fill')) ?? (mark.guide ? guides.color : theme.edge);
-    return `  <circle cx="${round(mark.x)}" cy="${round(mark.y)}" r="3" fill="${fill}"/>`;
+    return `  <circle cx="${round(mark.x)}" cy="${round(mark.y)}" r="3" fill="${fill}"/>${label}`;
   }
   // A region with no height or no width, such as one between two corners on
   // a line, is drawn as that line: a rectangle of no size draws nothing.
@@ -493,17 +497,41 @@ function markSvg(mark: LayoutMark, theme: Theme, guides: Guides): string {
     ? `d="M${round(mark.x)} ${round(mark.y)}L${round(mark.x + mark.width)} ${round(mark.y + mark.height)}"`
     : `x="${round(mark.x)}" y="${round(mark.y)}" width="${round(mark.width)}" height="${round(mark.height)}" rx="4"`;
   const shape = flat ? 'path' : 'rect';
+  // A text on the border breaks it, as a title on a box's border does.
+  const hole = mark.text && mark.text.textAttrs['place']?.startsWith('on ') ? mark.text.box : undefined;
+  const id = `region-${mark.name.replace(/[^\w.-]/g, '_')}`;
+  const masked = hole
+    ? `  <mask id="${id}" maskUnits="userSpaceOnUse" x="${round(mark.x - PAD)}" y="${round(mark.y - PAD)}" width="${round(mark.width + PAD * 2)}" height="${round(mark.height + PAD * 2)}">\n` +
+      `    <rect x="${round(mark.x - PAD)}" y="${round(mark.y - PAD)}" width="${round(mark.width + PAD * 2)}" height="${round(mark.height + PAD * 2)}" fill="white"/>\n` +
+      `    <rect x="${round(hole.x - PAD / 2)}" y="${round(hole.y)}" width="${round(hole.width + PAD)}" height="${round(hole.height)}" fill="black"/>\n` +
+      '  </mask>\n'
+    : '';
+  const mask = hole ? ` mask="url(#${id})"` : '';
   if (mark.guide) {
     const fill = color(said('fill')) ?? 'none';
     const border = color(said('border')) ?? guides.color;
-    return `  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"/>`;
+    return `${masked}  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
   }
   const fill = color(said('fill'));
   const border = color(said('border'));
   return (
-    `  <${shape} ${box} fill="${fill ?? theme.primary.color}"${fill === undefined ? ' fill-opacity="0.12"' : ''}` +
-    ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"/>`
+    `${masked}  <${shape} ${box} fill="${fill ?? theme.primary.color}"${fill === undefined ? ' fill-opacity="0.12"' : ''}` +
+    ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"${mask}/>${label}`
   );
+}
+
+/** A point's or a region's text (design.org 7.4), on a line of its own after the mark. */
+function markTextSvg(mark: LayoutMark, theme: Theme, fallback: string, markup: Record<string, string>, fontSize: number): string {
+  const text = mark.text;
+  if (!text) return '';
+  const align = text.textAttrs['align'];
+  const block = textBlock(text.lines, 0, 0, text.lineHeight, text.size, text.box, {
+    color: textColorOf(text.textAttrs, theme, fallback),
+    align: align === 'left' || align === 'top' ? 'start' : align === 'right' || align === 'bottom' ? 'end' : 'middle',
+    ink: (run, own) => runInk(run, own, markup, theme),
+    reads: text.textAttrs['reads'],
+  });
+  return `\n${sized(block, text.size, fontSize)}`;
 }
 
 /**
@@ -1178,8 +1206,18 @@ function textBlock(
     color: string;
     align: 'start' | 'middle' | 'end';
     ink: (run: Run, own: string) => string;
+    /** `reads: up` or `down` (design.org 7.2): the block is laid out level and turned about its middle. */
+    reads?: string;
   },
 ): string {
+  if (style.reads === 'up' || style.reads === 'down') {
+    // `box` is the turned ink, so the level block is the same box on its side.
+    const cx = x + box.x + box.width / 2;
+    const cy = y + box.y + box.height / 2;
+    const level = { x: cx - box.height / 2, y: cy - box.width / 2, width: box.height, height: box.width };
+    const inner = textBlock(lines, 0, 0, lineHeight, fontSize, level, { ...style, reads: undefined });
+    return `  <g transform="rotate(${style.reads === 'up' ? -90 : 90} ${round(cx)} ${round(cy)})">\n${inner}\n  </g>`;
+  }
   // `box` is the ink the text occupies, worked out by the resolver — the one
   // place that decides where a text sits, because `hub text` is a placement
   // target and the answer has to be a number before anything is solved.

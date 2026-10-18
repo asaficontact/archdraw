@@ -1,4 +1,5 @@
-import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, PlacementTarget, PointStmt, RegionStmt, Stmt } from './ast.js';
+import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, PlacementTarget, POINT_TEXT_SIDES, PointStmt, RegionStmt, Stmt } from './ast.js';
+import { TEXT_GAP } from './linetexts.js';
 import {
   POINT_KEYS,
   REGION_KEYS,
@@ -32,7 +33,7 @@ import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
-import { gapPixels, Placer, type Layout as ChildLayout, type NodeFacts, type TitlePlace } from './place.js';
+import { gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace } from './place.js';
 
 /**
  * What a node's own contents make of it, before anything is placed: a leaf's
@@ -44,8 +45,13 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   const textSize = fontSizeFor(node.kind, node.textAttrs, fontSize, node.line);
   const lineHeight = measurer.lineHeight(textSize);
   const hasText = node.lines.some((line) => plain(line).length > 0);
-  const textWidth = hasText ? widestLine(node.lines, measurer, textSize) : 0;
-  const textHeight = hasText ? node.lines.length * lineHeight : 0;
+  const across = hasText ? widestLine(node.lines, measurer, textSize) : 0;
+  const tall = hasText ? node.lines.length * lineHeight : 0;
+  // A turned text (design.org 7.2) takes the room of its turned ink: as wide
+  // as its lines are tall, as tall as its widest line.
+  const turned = node.textAttrs['reads'] !== undefined;
+  const textWidth = turned ? tall : across;
+  const textHeight = turned ? across : tall;
   const glyphSide = ICON_LINES * lineHeight;
   const title = titlePlaceOf(node);
   const layout = layoutOf(node);
@@ -270,9 +276,11 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
 
   const named = collectNamed(doc.statements, byName);
   const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
-  const placer = new Placer(roots, byName, facts, named);
+  const markTexts = measureMarkTexts(named, measurer, fontSize);
+  const regionTexts = new Map([...markTexts].flatMap(([name, text]) => (text.region ? [[name, text.region] as const] : [])));
+  const placer = new Placer(roots, byName, facts, named, regionTexts);
   placer.run();
-  const marks = buildMarks(named, placer.placeNamed(), styles);
+  const marks = buildMarks(named, placer.placeNamed(), styles, markTexts);
   locateStops(edges, placer, byName, named);
   locateTextTargets(edges, placer);
   normalize(nodes, marks, margin, [
@@ -287,7 +295,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
     nodes,
     roots,
     edges,
-    markup: markupColors(nodes, edges, styles),
+    markup: markupColors(nodes, edges, styles, marks),
     diagram: collectDiagram(doc.statements),
     width: Math.ceil(extent.maxX + margin),
     height: Math.ceil(extent.maxY + margin),
@@ -361,10 +369,76 @@ function namesIn(target: PlacementTarget, named: Map<string, PointStmt | RegionS
   return found;
 }
 
+/** A point's or a region's text, measured; for a region, what the placer needs to make room for it. */
+interface MeasuredMarkText {
+  lines: Line[];
+  textAttrs: Attrs;
+  size: number;
+  lineHeight: number;
+  width: number;
+  height: number;
+  gap: number;
+  /** A point's direction from its dot. */
+  side?: (typeof POINT_TEXT_SIDES)[number];
+  region?: RegionTextFacts;
+}
+
+/**
+ * Every point's and region's text, measured before anything is placed, since
+ * an inside text grows its region (design.org 7.4). Set small, as an aside is:
+ * it labels a spot or an area rather than being a thing in the diagram.
+ */
+function measureMarkTexts(named: Map<string, PointStmt | RegionStmt>, measurer: Measurer, fontSize: number): Map<string, MeasuredMarkText> {
+  const measured = new Map<string, MeasuredMarkText>();
+  for (const [name, stmt] of named) {
+    if (!stmt.text) continue;
+    const { text, textAttrs } = stmt.text;
+    const subject = `${stmt.kind} "${name}"`;
+    const lines = linesFor(text, textAttrs, subject, stmt.line);
+    const size = fontSizeFor('none', textAttrs, fontSize, stmt.line);
+    const lineHeight = measurer.lineHeight(size);
+    const across = widestLine(lines, measurer, size);
+    const tall = lines.length * lineHeight;
+    const turned = textAttrs['reads'] !== undefined;
+    const width = turned ? tall : across;
+    const height = turned ? across : tall;
+    const gap = textAttrs['gap'] === undefined ? TEXT_GAP : gapPixels(textAttrs['gap'], `${subject}: gap:`, stmt.line);
+    const place = textAttrs['place'];
+    const base = { lines, textAttrs, size, lineHeight, width, height, gap };
+    if (stmt.kind === 'point') {
+      measured.set(name, { ...base, side: (place ?? 'above') as MeasuredMarkText['side'] });
+      continue;
+    }
+    const [how, side] = (place ?? 'outside top').split(' ') as [RegionTextFacts['how'], RegionTextFacts['side']];
+    const align = textAttrs['align'];
+    const along = align === 'left' || align === 'top' ? 'start' : align === 'right' || align === 'bottom' ? 'end' : 'center';
+    measured.set(name, { ...base, region: { width, height, gap, how, side, along } });
+  }
+  return measured;
+}
+
+/** The dot's radius, which a point's text keeps its gap from. */
+const DOT_RADIUS = 3;
+
+/**
+ * Where a point's text sits: a gap off the dot's edge the stated way, centered
+ * across on a side; at a corner, its nearest corner off the dot diagonally.
+ */
+function pointTextBox(x: number, y: number, text: MeasuredMarkText): Rect {
+  const side = text.side ?? 'above';
+  const straight = DOT_RADIUS + text.gap;
+  const diagonal = DOT_RADIUS * Math.SQRT1_2 + text.gap;
+  const off = side.includes('-') ? diagonal : straight;
+  const left = side.endsWith('left') ? x - off - text.width : side.endsWith('right') ? x + off : x - text.width / 2;
+  const top = side.startsWith('above') ? y - off - text.height : side.startsWith('below') ? y + off : y - text.height / 2;
+  return { x: left, y: top, width: text.width, height: text.height };
+}
+
 function buildMarks(
   named: Map<string, PointStmt | RegionStmt>,
   placed: Map<string, { x: number; y: number; width: number; height: number }>,
   styles: Map<string, Attrs>,
+  texts: Map<string, MeasuredMarkText> = new Map(),
 ): LayoutMark[] {
   const marks: LayoutMark[] = [];
   for (const [name, stmt] of named) {
@@ -381,7 +455,25 @@ function buildMarks(
     }
     const targets = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
     const names = [...new Set(targets.flatMap((target) => namesIn(target, named)))];
-    marks.push({ kind: stmt.kind, name, ...at, names, appearance, guide: stmt.guide === true, line: stmt.line });
+    const text = texts.get(name);
+    let box: Rect | undefined;
+    if (text?.region) {
+      const x = regionTextAt({ start: at.x, size: at.width }, text.region, 'x');
+      const y = regionTextAt({ start: at.y, size: at.height }, text.region, 'y');
+      box = { x: x.start, y: y.start, width: x.size, height: y.size };
+    } else if (text) {
+      box = pointTextBox(at.x, at.y, text);
+    }
+    marks.push({
+      kind: stmt.kind,
+      name,
+      ...at,
+      names,
+      appearance,
+      guide: stmt.guide === true,
+      ...(text && box ? { text: { lines: text.lines, textAttrs: text.textAttrs, size: text.size, lineHeight: text.lineHeight, box } } : {}),
+      line: stmt.line,
+    });
   }
   return marks;
 }
@@ -1554,6 +1646,7 @@ function markupColors(
   nodes: LayoutNode[],
   edges: LayoutEdge[],
   styles: Map<string, Attrs>,
+  marks: LayoutMark[] = [],
 ): Record<string, string> {
   const colors: Record<string, string> = {};
   const used: Array<{ lines: Line[]; what: string; line: number }> = [
@@ -1561,6 +1654,7 @@ function markupColors(
     ...edges.flatMap((edge) =>
       edge.texts.map((text) => ({ lines: text.lines, what: `edge ${edge.from.name} -> ${edge.to.name}`, line: edge.line })),
     ),
+    ...marks.flatMap((mark) => (mark.text ? [{ lines: mark.text.lines, what: `${mark.kind} "${mark.name}"`, line: mark.line }] : [])),
   ];
   for (const { lines, what, line } of used) {
     for (const name of markupStyles(lines)) {
@@ -1616,7 +1710,7 @@ function bounds(nodes: LayoutNode[], marks: LayoutMark[]) {
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const box of [...nodes, ...marks]) {
+  for (const box of [...nodes, ...marks, ...marks.flatMap((mark) => (mark.text ? [mark.text.box] : []))]) {
     minX = Math.min(minX, box.x);
     minY = Math.min(minY, box.y);
     maxX = Math.max(maxX, box.x + box.width);
@@ -1632,7 +1726,7 @@ function normalize(nodes: LayoutNode[], marks: LayoutMark[], margin: number, sto
   const dy = margin - minY;
   // A line's stops move with everything else, but don't widen the page: the
   // renderer grows it to hold whatever the lines reach.
-  for (const box of [...nodes, ...marks, ...stops]) {
+  for (const box of [...nodes, ...marks, ...marks.flatMap((mark) => (mark.text ? [mark.text.box] : [])), ...stops]) {
     box.x += dx;
     box.y += dy;
   }

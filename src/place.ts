@@ -40,6 +40,62 @@ export interface TitlePlace {
   along: 'start' | 'center' | 'end';
 }
 
+/** A region's text as the placer needs it: its turned size, its gap, and where it sits. */
+export interface RegionTextFacts {
+  width: number;
+  height: number;
+  gap: number;
+  how: 'inside' | 'on' | 'outside';
+  side: 'top' | 'bottom' | 'left' | 'right';
+  along: 'start' | 'center' | 'end';
+}
+
+/**
+ * How a region grows to hold its text, on one axis (design.org 7.4). Inside,
+ * it gains a band on that side as tall as the text and its gap, as a container
+ * makes room for its title; inside or on the border, it widens to hold the
+ * text along the side, from the end the text is aligned to. Outside, nothing.
+ */
+export function regionGrown(extent: Extent, text: RegionTextFacts, axis: Axis): Extent {
+  const across = text.side === 'top' || text.side === 'bottom' ? 'x' : 'y';
+  const size = (on: Axis) => (on === 'x' ? text.width : text.height);
+  if (axis !== across) {
+    if (text.how !== 'inside') return extent;
+    const band = size(axis) + text.gap;
+    return text.side === 'top' || text.side === 'left'
+      ? { start: extent.start - band, size: extent.size + band }
+      : { start: extent.start, size: extent.size + band };
+  }
+  const needed = size(axis) + text.gap * 2;
+  if (text.how === 'outside' || extent.size >= needed) return extent;
+  const more = needed - extent.size;
+  const start = text.along === 'start' ? extent.start : text.along === 'end' ? extent.start - more : extent.start - more / 2;
+  return { start, size: needed };
+}
+
+/**
+ * Where a region's text sits on one axis, against the region as drawn (already
+ * grown): a gap inside or outside the side, or across the border; along the
+ * side, at its start, middle or end, held off the corner by the gap except
+ * outside, where its end is even with the region's edge, as a title's is.
+ */
+export function regionTextAt(region: Extent, text: RegionTextFacts, axis: Axis): Extent {
+  const across = text.side === 'top' || text.side === 'bottom' ? 'x' : 'y';
+  const size = axis === 'x' ? text.width : text.height;
+  const end = region.start + region.size;
+  if (axis === across) {
+    const inset = text.how === 'outside' ? 0 : text.gap;
+    const start =
+      text.along === 'start' ? region.start + inset : text.along === 'end' ? end - inset - size : region.start + region.size / 2 - size / 2;
+    return { start, size };
+  }
+  const low = text.side === 'top' || text.side === 'left';
+  const edge = low ? region.start : end;
+  if (text.how === 'on') return { start: edge - size / 2, size };
+  const inward = text.how === 'inside' === low;
+  return { start: inward ? edge + text.gap : edge - text.gap - size, size };
+}
+
 /** What `layout:` said, read and checked. */
 export interface Layout {
   kind: 'column' | 'row';
@@ -145,6 +201,8 @@ export class Placer {
     private readonly facts: Map<LayoutNode, NodeFacts>,
     /** Named points and regions (design.org 4.5), worked out wherever they are used. */
     private readonly named: Map<string, PointStmt | RegionStmt> = new Map(),
+    /** A region's text, which may grow the region to hold it (design.org 7.4). */
+    private readonly regionTexts: Map<string, RegionTextFacts> = new Map(),
   ) {}
 
   /**
@@ -580,9 +638,12 @@ export class Placer {
         extent = { start, size: Math.max(a.start + a.size, b.start + b.size) - start };
       }
       const padding = stmt.attrs['padding'];
-      if (padding === undefined) return extent;
-      const by = gapPixels(padding, `region "${stmt.name}" padding:`, stmt.line);
-      return { start: extent.start - by, size: extent.size + by * 2 };
+      if (padding !== undefined) {
+        const by = gapPixels(padding, `region "${stmt.name}" padding:`, stmt.line);
+        extent = { start: extent.start - by, size: extent.size + by * 2 };
+      }
+      const text = this.regionTexts.get(stmt.name);
+      return text ? regionGrown(extent, text, axis) : extent;
     } finally {
       this.expanding.pop();
     }

@@ -664,10 +664,21 @@ export function describeStop(stop: ViaStop): string {
  * `point funnel  between c2 and api at 2/3` — a point with a name, so several
  * things can use it and moving it is one edit (design.org 4.5). Drawn as a dot.
  */
+/**
+ * A point's or a region's text and its bracket (design.org 7.4). `place` holds
+ * the position words: a direction from the dot (`above-right`), or a side as a
+ * title says it (`outside top`).
+ */
+export interface MarkText {
+  text: string;
+  textAttrs: Record<string, string>;
+}
+
 export interface PointStmt {
   kind: 'point';
   name: string;
   point: PlacementTarget;
+  text?: MarkText;
   attrs: Attrs;
   guide?: boolean;
   line: number;
@@ -683,6 +694,7 @@ export interface RegionStmt {
   name: string;
   /** The two corners, in either order; or one `between`, which is a region of its own. */
   corners: [PlacementTarget, PlacementTarget] | [PlacementTarget];
+  text?: MarkText;
   attrs: Attrs;
   guide?: boolean;
   line: number;
@@ -719,6 +731,10 @@ export const BUNDLE_KEYS = ['via', 'layout', 'order', 'line', 'from-mark', 'to-m
 
 /** What a point and a region may say. A region's padding pushes every edge out. */
 export const POINT_KEYS = ['style', 'fill', 'depth'] as const;
+/** Which way from its dot a point's text sits (design.org 7.4); the first is the default. */
+export const POINT_TEXT_SIDES = ['above', 'below', 'left', 'right', 'above-right', 'above-left', 'below-right', 'below-left'] as const;
+/** What a point's or a region's text takes in its bracket besides its position words. */
+export const MARK_TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'reads', 'gap'] as const;
 export const REGION_KEYS = ['style', 'fill', 'border', 'padding', 'depth'] as const;
 
 /**
