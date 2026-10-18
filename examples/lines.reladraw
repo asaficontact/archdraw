@@ -56,7 +56,7 @@ node k2 "K"  right of h2  (gap: 18)
 edge h2 -> k2  "thick"  line: (thickness: thick, color: #d2904e)
 node h3 "H"  below h2  (gap: normal)
 node k3 "K"  right of h3  (gap: 18)
-edge h3 -> k3  "4, dashed"  line: (thickness: 4, pattern: dashed)
+edge h3 -> k3  "4px, dashed"  line: (thickness: 4px, pattern: dashed)
 
 // Crossings: the later line jumps the earlier one.
 node w "W"  below f3  (gap: 12)

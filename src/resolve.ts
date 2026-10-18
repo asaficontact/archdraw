@@ -15,11 +15,13 @@ import {
   nameTarget,
 } from './ast.js';
 import {
+  DECK_STEP,
   DEFAULT_FONT_SIZE,
   DEFAULT_MARGIN,
   GAPS,
   ICON_GAP,
   ICON_LINES,
+  LINE_WIDTH,
   PAD,
   THICKNESS,
   fontSizeFor,
@@ -95,9 +97,12 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   if (layout && node.children.length === 0) {
     throw new SourceError(`"${node.name}" has layout: but no children — a node with no children is not a container`, node.line);
   }
+  // A leaf's deck hangs up and to the left of the front card, inside its box,
+  // as a container's does (`frame` in place.ts), so the copies are part of the node.
+  const deck = node.children.length === 0 ? node.deckTexts.length * DECK_STEP : 0;
   return {
-    natural: { width: textWidth + padding * 2, height: textHeight + padding * 2 },
-    textBox: { x: padding, y: padding, width: textWidth, height: textHeight },
+    natural: { width: textWidth + padding * 2 + deck, height: textHeight + padding * 2 + deck },
+    textBox: { x: padding + deck, y: padding + deck, width: textWidth, height: textHeight },
     hasText,
     padding,
     ...measures,
@@ -1437,7 +1442,7 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     if (!(LINE_VALUES[property] as readonly string[]).includes(value)) {
       throw new SourceError(
         `edge ${what}: "${property}: ${value}" is not a ${property} — use ${(property === 'thickness' ? ['thin', 'normal', 'thick'] : LINE_VALUES[property]).join(', ')}` +
-          (property === 'thickness' ? ', or a number of pixels' : ''),
+          (property === 'thickness' ? ', a multiple of normal such as 2, or pixels such as 3px' : ''),
         line,
       );
     }
@@ -1447,14 +1452,16 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
   const thickness = ((): number => {
     const value = appearance['line.thickness'];
     if (value !== undefined && /^[0-9.]/.test(value)) {
-      if (!/^\d*\.?\d+$/.test(value) || Number(value) <= 0) {
+      // A bare number is a multiple of normal; `px` fixes it in pixels (design.org 3.8).
+      const number = /^(\d*\.?\d+)(px)?$/.exec(value);
+      if (!number || Number(number[1]) <= 0) {
         throw new SourceError(
           `edge ${what}: "thickness: ${value}" — a thickness is thin, normal, thick, ` +
-            'or a plain number of pixels greater than zero, such as `thickness: 3`',
+            'a multiple of normal greater than zero such as `thickness: 2`, or pixels such as `thickness: 3px`',
           line,
         );
       }
-      return Number(value);
+      return number[2] ? Number(number[1]) : LINE_WIDTH * Number(number[1]);
     }
     return THICKNESS[word('thickness')]!;
   })();

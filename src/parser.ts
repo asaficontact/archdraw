@@ -786,11 +786,11 @@ function readAttr(
   if (key === 'align' && valueToken.text === 'widths') {
     // Removed in 0.3.0. It was a size operation wearing an alignment's name,
     // and its value set had one member — a flag in a property's clothes. Its
-    // job is `contents: (widths: match)`, and with it gone `align` means one
+    // job is a layout's `(widths: match)`, and with it gone `align` means one
     // thing everywhere.
     throw new SourceError(
-      '`align: widths` is now `contents: (widths: match)` — it is a size, not an alignment, and ' +
-        'the same brackets take `align: center` for where the contents sit when the title is wider',
+      '`align: widths` is now `layout: column (widths: match)` — it is a size, not an alignment, and ' +
+        'gather-children: center says where the children sit when the title is wider',
       line,
     );
   }

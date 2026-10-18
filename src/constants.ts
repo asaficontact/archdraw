@@ -141,9 +141,9 @@ export const DEFAULT_FONT_SIZE = 14;
 
 /**
  * The named text sizes, each a multiple of the document's own size. A plain
- * number of pixels is accepted too, as it is for a gap: nothing else in the
- * diagram moving can make it wrong. The names stay the default because they
- * follow the document's size when that is retuned, and a number does not.
+ * number is a multiple too, and `16px` a size in pixels: nothing else in the
+ * diagram moving can make either wrong. The names stay preferred because they
+ * say why one text is bigger than another.
  *
  * `small` is sampled rather than chosen. In
  * `examples/reference/arch.png` the box and container texts run 25
@@ -181,15 +181,14 @@ export function fontSizeFor(
   const named = textAttrs['size'] ?? DEFAULT_TEXT_SIZE[kind] ?? 'normal';
   const scale = TEXT_SIZES[named];
   if (scale !== undefined) return Math.round(fontSize * scale);
-  if (/^\d*\.?\d+$/.test(named) && Number(named) > 0) return Number(named);
-  const unit = named.match(/^(\d*\.?\d+)px$/);
-  const hint = unit
-    ? `; write "size: ${unit[1]}", a size's number is already in pixels`
-    : named.startsWith('-') || /^0+(\.0+)?$/.test(named)
-      ? '; a text size has to be more than zero'
-      : '';
+  // A bare number is a multiple of normal; `px` fixes it in pixels (design.org 3.8).
+  const number = /^(\d*\.?\d+)(px)?$/.exec(named);
+  if (number && Number(number[1]) > 0) {
+    return number[2] ? Number(number[1]) : Math.round(fontSize * Number(number[1]));
+  }
+  const hint = named.startsWith('-') || /^0*\.?0+(px)?$/.test(named) ? '; a text size has to be more than zero' : '';
   throw new SourceError(
-    `size takes ${Object.keys(TEXT_SIZES).join(', ')} or a number of pixels, not "${named}"${hint}`,
+    `size takes ${Object.keys(TEXT_SIZES).join(', ')}, a multiple of normal such as 1.2, or pixels such as 16px, not "${named}"${hint}`,
     line,
   );
 }

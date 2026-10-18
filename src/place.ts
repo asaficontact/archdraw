@@ -1490,6 +1490,7 @@ export class Placer {
   private finish(node: LayoutNode): void {
     const facts = this.facts.get(node)!;
     if (node.children.length === 0) {
+      node.inset = node.deckTexts.length * DECK_STEP;
       node.textBox = this.leafText(node);
       const x = this.reachOf(node, 'x');
       const y = this.reachOf(node, 'y');

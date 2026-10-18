@@ -483,7 +483,7 @@ export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'th
 
 /**
  * The words each of the line's properties takes, the default first. Thickness
- * takes a plain number of pixels as well. `turn:` takes a fraction and
+ * takes a multiple of normal (`2`) or pixels (`3px`) as well. `turn:` takes a fraction and
  * `step-out:` a distance, so neither has a list.
  */
 export const LINE_VALUES = {
