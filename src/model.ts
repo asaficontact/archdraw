@@ -1,4 +1,4 @@
-import type { Attrs, EdgeTextPlace, Kind, Mark, Placement, ViaEntry, Way } from './ast.js';
+import type { Attrs, EdgeTextPlace, Kind, Mark, NodeCorners, Placement, PlacementTarget, ViaEntry, Way } from './ast.js';
 
 /** A rectangle on the page; a side or a point has no size on one axis or both. */
 export interface Rect {
@@ -28,6 +28,11 @@ export interface LayoutNode {
    * resolver, which sizes it, and the renderer, which draws it, cannot disagree.
    */
   body: Body;
+  /**
+   * How an outline's corners are drawn, from `corners:`. Only a rectangle's and
+   * a document's are read; drawing alone depends on it, never placement.
+   */
+  corners: NodeCorners;
   /** The text as written, before line splitting. */
   text: string;
   /** The text split into the lines that will be drawn, each as its runs. */
@@ -221,6 +226,14 @@ export interface LayoutEdge {
   viaAt?: (Rect | undefined)[];
   /** `straight down`: leaving its start that way from the center, and ending where that meets the far end (6.2). */
   straight?: Way;
+  /** `to: left, even with cat1`: what each end is even with, as written (6.2). */
+  evenWith?: { from?: PlacementTarget[]; to?: PlacementTarget[] };
+  /**
+   * Where each end's `even with` thing is on the page, worked out by the
+   * placer: a box, a side, a point or the region round several. Its center
+   * gives the end's height, or its place across.
+   */
+  evenAt?: { from?: Rect; to?: Rect };
   /** An end on another line (`edge log audit -> req`): the line it is on, for that end. */
   onLine?: { from?: LayoutEdge; to?: LayoutEdge };
   /** What the line's bracket says, checked and with every default filled in. */

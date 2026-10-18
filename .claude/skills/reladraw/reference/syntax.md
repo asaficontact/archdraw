@@ -108,8 +108,8 @@ Every node has one body, the thing drawn where it is, named by one of two keys.
 
 | shape | draws |
 |---|---|
-| `rectangle` | the plain rounded box; the default |
-| `document` | the box with its top-right corner folded, for an artifact rather than a process |
+| `rectangle` | the plain box, its corners rounded unless `corners: sharp`; the default |
+| `document` | the box with its top-right corner folded, for an artifact rather than a process; its other corners follow `corners:` |
 | `circle` | a circle sized to hold its text, always round |
 | `none` | no outline, fill or padding: bare text, or an invisible container |
 
@@ -134,6 +134,14 @@ node svc  icon: cube  right of dump
 Writing both keys is an error naming both. An unknown name is refused with the whole set. A name says what a thing is, never what the picture looks like: `document`, not `folded-corner`. The exception is a picture with no single meaning, such as `circle` or `cube`.
 
 A picture can't contain anything. A `shape: none` node with children is an invisible container ([Containers](#containers)). A circle can hold other nodes, centered in it. A side of a circle is the quarter of it about that compass point, so `from: right` means the same on every shape; several line ends on one side spread round that arc, each meeting the circle square on.
+
+**Corners.** `corners: sharp` draws a box's corners square, and `corners: rounded`, the default, draws them as they always were. It is the same word and values as a line's `corners:`. It reaches every outline with corners: a rectangle, a container, and a document's three round corners, whose fold stays as it is. A circle has none, so `corners:` written on a circle is refused; from a style or a default it lands only on the nodes with corners. A picture and bare text have no outline, so they refuse it too. Like a color, it never moves anything.
+
+```
+style plain  corners: sharp
+node api "API"  style: plain
+node spec "spec"  shape: document  corners: sharp  right of api
+```
 
 **Bare text.** `shape: none` is how to write a note, a caption or a title over a diagram. Its text starts one step smaller than a box's, because an aside at full size reads as a statement; `(size: normal)` overrides that. Nothing bounds bare text the way a border bounds a box, so give a sentence-length one a `wrap:`.
 
@@ -620,7 +628,20 @@ A square or curved line heading out of a bare corner takes whichever way gives f
 
 `from: center` aims from the box's center at the far end and starts where that aim crosses the outline, so the start slides round the box as the far end moves.
 
-**Several ends on one side spread evenly**, ordered by where each far box sits along the side: on a top side, the line from the leftmost box takes the leftmost slot. A line states its own place among the others with `to: top, right of z`, where `z` is a named line ending on that side; on a left or right side the words are `above` and `below`. An end pinned to a point splits the side, so the others spread on either side of it.
+**An end may be even with another thing.** `from: right, even with cat1` is on the right side, level with `cat1`'s center; on a top or bottom side it is at `cat1`'s place across. The line heads straight out of the side, as with a bare side. The thing is anything a placement's `even with` takes: a box, a part of one (`even with cat1 top`), a fraction (`even with 3/4 down cat1`), a named point, or several (`even with a and b`, the middle of the region round them). Where that height misses the side, the end is refused, never bent. It already says where along the side, so a fraction, `, right of z` or `straight right` written with it is refused as saying it twice.
+
+```
+node bin  height: 12
+node a  left of bin  top even with bin
+node b  below a (gap: tight)
+node engine  right of bin  even with bin  height: 12
+edge a -> bin  straight right
+edge b -> bin  straight right
+edge bin -> engine  from: right, even with a  to: left, even with a
+edge bin -> engine  from: right, even with b  to: left, even with b
+```
+
+**Several ends on one side spread evenly**, ordered by where each far box sits along the side: on a top side, the line from the leftmost box takes the leftmost slot. A line states its own place among the others with `to: top, right of z`, where `z` is a named line ending on that side; on a left or right side the words are `above` and `below`. An end pinned to a point, or even with something, splits the side, so the others spread on either side of it.
 
 **An end may be on another line.** `edge audit -> req` ends on the line `req`, at its middle, and `to: at 1/3` a third of the way along it. An end may also start where another line meets the same box: on a line out of `api`, `from: req end` leaves from the point where `req` ends on `api`; naming a box the line doesn't start at is refused. Lines ending on lines must be drawable in some order, so a loop of them is refused.
 
@@ -907,6 +928,8 @@ default edge       line: #7a8a99  text: (color: #9aa5b1, size: small)
 
 A default is a style every thing of one kind wears without naming it: `node`, `leaf` (no children but those of its label), `container` (some), `edge`, and the four `default guide` kinds. The more specific word wins, all the way down: the theme, `diagram`, `default node`, `default leaf` or `default container` or `default edge`, the thing's styles in order, and what its own line says.
 
+A container inside another container is filled a shade further from the page than the one it sits in, so the two read as two backdrops. An invisible container (`shape: none`) doesn't count, and a stated `fill:` wins as always.
+
 A default takes the words a style does and may wear a style of its own (`default edge  style: quiet`), laid beneath its own words. It is strict about kind, since it names its kind: `default edge  fill: red` is refused, pointing to `line:`. `icon:` is a leaf's alone. A default carries no `url:`. Each kind is written once, and `default leaf node` is refused, naming `default leaf`.
 
 ### The diagram
@@ -984,6 +1007,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `badge` | ✓ | | | | a picture joined to the text |
 | `deck` | ✓ | | | | offset copies behind the box |
 | `fill`, `border` | ✓ | | | | colors |
+| `corners` | ✓ | | | | `sharp` or `rounded`; not on a circle. A line's go in `line: (…)` |
 | `text` | ✓ | ✓ | ✓ | ✓ | in a style only; on a statement, the bracket after the text |
 | `layout` | ✓ | | ✓ | | how the children are arranged |
 | `gather-children` | ✓ | | ✓ | | where the children sit in spare room |
@@ -1056,6 +1080,7 @@ Breaking, in how things are drawn:
 - **A line with no side named meets the side facing the other box.** It used to aim at the other box's center; `from: center` does that.
 - **A line out of a side flush against another box, or between two touching boxes, is drawn and reported**, where it used to be refused.
 - **A container's title is centered along its top.** It was at the top left; `(inside top, align: left)` keeps that.
+- **A container inside a container is a shade lighter** (darker on a light theme) than the one it sits in. It used to take the same fill, so only a faint border told them apart. `fill:` sets it as before.
 - **A badge is part of the label.** The text and its picture are placed as one unit, so a badged box with nothing else in it draws as a leaf, and `badge:` is allowed on `default leaf` and `default node`.
 - **A text's `size:` number and a line's `thickness:` number are multiples of normal.** `size: 22` used to be 22 pixels, and is now 22 times normal, with no error; write `size: 22px`. `thickness: 3` likewise; write `3px`.
 - **The command takes a verb**: `reladraw render diagram.reladraw`. The bare form is refused.
@@ -1088,6 +1113,7 @@ New:
 - **Waypoints.** `via:` lists the places a line passes: a side, a point, a box, a region, a leg of another line. Legs can be named.
 - **Square and curved routes** read off a line's own two boxes, with `turn:`, `step-out:` and `curve:`.
 - **Line ends at points**: `from: bottom-center`, `to: left 3/4 down`, `from: center`, an end on another line, `straight down`, and a line's place among others on a side, `to: top, right of z`.
+- **A line's end even with another thing**: `from: right, even with cat1` leaves the right side level with `cat1`, and heads straight out. Lines out of a tall box can each run level with a box beside it without working out fractions of its height. A height that misses the side is refused.
 - **Named lines** and points on them: `req start`, `req end`, `req at 1/3`.
 - **Bundles**, parallel, collapsed or fanned, with a stated `order:`, and `edge each child of a -> b`.
 - **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`.
@@ -1097,6 +1123,7 @@ New:
 - **Titles placed** against any side, inside, on or outside the border, or against the box's own children, and turned with `reads:`; `heading:`; `join-with:`.
 - **A point's and a region's text**: `point mid "halfway" (above-right)`, `region trust "trust boundary" (inside top)`.
 - **Invisible containers**: `shape: none` with children.
+- **Square-cornered boxes**: `corners: sharp` on a node, a style or a default draws a box's corners square, a document's too, fold aside. Boxes are still rounded unless told, so no existing diagram changes. A circle refuses it, having no corners.
 - **`padding:`** on a box or region.
 - **Guides**: `guide` before any node, line, point or region, shown with `--guides`, the playground's Guides box, or `diagram guides: show`.
 - **Drawing order**: `depth: behind x`, `depth: in front of x`.

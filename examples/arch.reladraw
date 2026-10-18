@@ -51,14 +51,14 @@ node dumps_note "Written by nightly cron job." (wrap: 30)  below dumps (gap: tig
 
 // --- The server -------------------------------------------------------------
 
-node server         "Home Server" (inside top, align: left)  left of dumps  even with cluster  badge: desktop  layout: column (widths: match, gap: normal)
-node server.mirror  "shared folder / mirror"  style: backup
-node server.deploy  "deploy dir"
+node server         "Home Server" (inside top, align: left)  left of dumps  even with cluster  badge: desktop
+node server.mirror  "shared folder / mirror"  style: backup  width: server.docker
+node server.deploy  "deploy dir"  below server.mirror  width: server.docker
 
 // The cubes are nodes rather than ornament: two of them are where the dump
 // arrows start. The lower pair is centered under the upper three by naming two
 // targets and nothing else.
-node server.docker  "Docker" (inside bottom)
+node server.docker  "Docker" (inside bottom)  below server.deploy (gap: wide)
 node server.docker.a  icon: cube
 node server.docker.b  right of server.docker.a (gap: tight)  icon: cube
 node server.docker.db1  right of server.docker.b (gap: tight)  icon: cube

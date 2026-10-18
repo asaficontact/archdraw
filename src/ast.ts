@@ -604,6 +604,8 @@ export interface EdgeStmt {
   name?: string;
   /** `straight down`: the line leaves its start that way and stops at what it meets (design.org 6.2). */
   straight?: Way;
+  /** `to: left, even with cat1`: what each end is even with, on the side its `from:`/`to:` names (6.2). */
+  evenWith?: { from?: PlacementTarget[]; to?: PlacementTarget[] };
   /** `via: b top, between c and d, leg climb`: the places the line passes, in order (design.org 6.4). */
   via?: ViaEntry[];
   /** `edge each child of a -> b`: the end whose name is a container, one line per direct child of it (design.org 6.6). */
@@ -796,12 +798,12 @@ export type DefaultTarget = (typeof DEFAULT_TARGETS)[number];
  * and a heading doesn't make a leaf a container.
  */
 export const DEFAULT_KEYS: Record<DefaultTarget, readonly string[]> = {
-  node: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
-  leaf: ['style', 'shape', 'icon', 'badge', 'fill', 'border', 'text'],
-  container: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
+  node: ['style', 'shape', 'badge', 'fill', 'border', 'corners', 'text'],
+  leaf: ['style', 'shape', 'icon', 'badge', 'fill', 'border', 'corners', 'text'],
+  container: ['style', 'shape', 'badge', 'fill', 'border', 'corners', 'text'],
   edge: ['style', 'line', 'text'],
   // A shown guide's look, one line per kind (design.org 8.2).
-  'guide node': ['style', 'fill', 'border', 'text'],
+  'guide node': ['style', 'fill', 'border', 'corners', 'text'],
   'guide edge': ['style', 'line', 'text'],
   'guide point': ['style', 'fill'],
   'guide region': ['style', 'fill', 'border'],
@@ -873,8 +875,8 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
  * The exclusions are the whole of what this table decides, and each is a place
  * the old silence hid something:
  *
- * - A node drawn as a picture, or with no body at all, takes no `fill:` or
- *   `border:`. There is no outline for either to reach.
+ * - A node drawn as a picture, or with no body at all, takes no `fill:`,
+ *   `border:` or `corners:`. There is no outline for any of them to reach.
  * - Neither of those takes `contents:` either, which says how a node's children
  *   sit, and neither may have any.
  * - `shape:` and `icon:` each name the body, so each appears only on the kind it
@@ -887,11 +889,21 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url', 'depth'],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
   icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
   none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
   edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
 };
+
+/**
+ * What a node's `corners:` takes, the default first: a box is drawn rounded
+ * unless it says otherwise. The same word and values as a line's `corners:`,
+ * whose default is the other one. It applies to every outline with corners — a
+ * rectangle and a document, whose fold stays as it is — and changes only the
+ * drawing, never where anything sits.
+ */
+export const NODE_CORNERS = ['rounded', 'sharp'] as const;
+export type NodeCorners = (typeof NODE_CORNERS)[number];
 
 /**
  * Every word that is an attribute *somewhere*, which is what separates a

@@ -11,7 +11,7 @@ import {
   textStyleFor,
   widestLine,
 } from './constants.js';
-import type { Attrs, Mark } from './ast.js';
+import type { Attrs, Mark, NodeCorners } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
@@ -391,7 +391,7 @@ function nodeSvg(
   // from contents by looking was a guess; `badge:` and `heading:` say it.
   const container = holdsContents(node);
   const border = borderOf(node.appearance, theme, container ? theme.containerStroke : theme.boxStroke);
-  const fill = fillOf(node.appearance, theme, container ? theme.containerFill : theme.boxFill);
+  const fill = fillOf(node.appearance, theme, container ? containerFillOf(node, theme) : theme.boxFill);
   // A box is the one kind with two inkable parts, which is why its text needs
   // a word of its own — `border:` cannot stand in for it. Left unsaid on a
   // theme fill, it is whatever reads on that fill: `fill: theme-primary` alone
@@ -403,7 +403,7 @@ function nodeSvg(
     const x = face.x - depth * DECK_STEP;
     const y = face.y - depth * DECK_STEP;
     parts.push(
-      `  <path d="${outlinePath(outline, x, y, face.width, face.height)}" fill="${theme.containerFill}" stroke="${border}"/>`,
+      `  <path d="${outlinePath(outline, x, y, face.width, face.height, node.corners)}" fill="${theme.containerFill}" stroke="${border}"/>`,
     );
     const copy = node.deckTexts[depth - 1];
     if (copy !== undefined) {
@@ -434,12 +434,12 @@ function nodeSvg(
       `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`,
       `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`,
       '  </mask>',
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="${fill}" stroke="none"/>`,
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="none" stroke="${border}" mask="url(#${id})"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="${fill}" stroke="none"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="none" stroke="${border}" mask="url(#${id})"/>`,
     );
   } else {
     parts.push(
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height)}" fill="${fill}" stroke="${border}"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="${fill}" stroke="${border}"/>`,
     );
   }
   for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height)) {
@@ -626,9 +626,22 @@ function order(boxes: Drawn[], marks: { mark: LayoutMark; item: Drawn }[], lines
  */
 const FOLD = CORNER * 2;
 
-/** The node's outline, as path data. */
-function outlinePath(shape: Outline, x: number, y: number, w: number, h: number): string {
+/**
+ * The node's outline, as path data. `corners: sharp` squares a rectangle's
+ * corners and a document's three round ones; the fold and the circle are as
+ * they are either way.
+ */
+function outlinePath(shape: Outline, x: number, y: number, w: number, h: number, corners: NodeCorners): string {
   const r = CORNER;
+  if (corners === 'sharp' && shape !== 'circle') {
+    return [
+      `M${round(x)} ${round(y)}`,
+      ...(shape === 'document' ? [`H${round(x + w - FOLD)}`, `L${round(x + w)} ${round(y + FOLD)}`] : [`H${round(x + w)}`]),
+      `V${round(y + h)}`,
+      `H${round(x)}`,
+      'Z',
+    ].join(' ');
+  }
   if (shape === 'circle') {
     // Two half-turns from the leftmost point, since one arc cannot close.
     const radius = w / 2;
@@ -1299,6 +1312,28 @@ function borderOf(appearance: Record<string, string>, theme: Theme, fallback: st
 function lineOf(appearance: Record<string, string>, theme: Theme, fallback: string): string {
   const value = appearance['line'];
   return value === undefined ? fallback : themeColor(value, theme);
+}
+
+/**
+ * A container's fill when it states none. A container inside another one is a
+ * step further from the page than the fill it sits on, the same step the theme
+ * takes from the page to a container, so engine inside host reads as a second
+ * backdrop rather than as host showing through. An invisible container is
+ * passed over, since nothing of it is drawn to sit on.
+ */
+function containerFillOf(node: LayoutNode, theme: Theme): string {
+  let below = node.parent;
+  while (below !== undefined && (below.body.kind === 'none' || !holdsContents(below))) below = below.parent;
+  if (below === undefined) return theme.containerFill;
+  const base = fillOf(below.appearance, theme, containerFillOf(below, theme));
+  const channel = (hex: string, at: number) => parseInt(hex.slice(at, at + 2), 16);
+  if (!/^#[0-9a-f]{6}$/i.test(base)) return theme.containerFill;
+  let out = '#';
+  for (const at of [1, 3, 5]) {
+    const step = channel(theme.containerFill, at) - channel(theme.background, at);
+    out += Math.max(0, Math.min(255, channel(base, at) + step)).toString(16).padStart(2, '0');
+  }
+  return out;
 }
 
 function fillOf(appearance: Record<string, string>, theme: Theme, fallback: string): string {

@@ -1,5 +1,6 @@
 import type {
   Attrs,
+  Axis,
   BundleStmt,
   NodeStmt,
   Side,
@@ -533,6 +534,7 @@ function readAttr(
       throw new SourceError(`${subject}: ${key}: names a side or a point, such as ${key}: top`, line);
     }
     const words = [first.text];
+    let even: PlacementTarget[] | undefined;
     let next = at + 2;
     const side = first.text.replace(/,$/, '');
     const second = tokens[at + 2];
@@ -555,15 +557,58 @@ function readAttr(
       next = at + 3;
     } else if (isSideWord(side)) {
       let listed = first.text.endsWith(',');
+      let fractionWritten: string | undefined;
       if (!listed) {
         const fraction = readFraction(tokens, next);
         if (fraction) {
           words.push(fraction.fraction.written);
           next = fraction.next;
           listed = fraction.fraction.written.endsWith(',');
+          fractionWritten = fraction.fraction.written.replace(/,$/, '');
         }
       }
-      if (listed) {
+      // An end's place along its side is said once: by a fraction, by its
+      // place among the others, or by what it is even with.
+      const twice = (one: string, other: string): never => {
+        throw new SourceError(
+          `${subject}: "${key}: ${side}, …" says where along the ${side} side twice — "${one}" and "${other}" each place the end; keep one`,
+          line,
+        );
+      };
+      if (listed && follows(tokens, next, 'even')) {
+        // `to: left, even with cat1`: on that side, level with cat1's center,
+        // or at its place across on a top or bottom side. The targets are
+        // stored beside the words, and `parseEdge` takes them out.
+        const written = `${key}: ${side}, even with`;
+        if (!follows(tokens, next + 1, 'with')) {
+          throw new SourceError(`${subject}: "${key}: ${side}, even" reads "${written} <thing>"`, line);
+        }
+        const targets: PlacementTarget[] = [];
+        let i = next + 2;
+        for (;;) {
+          const token = tokens[i];
+          if (!token || token.quoted || isAttrKey(token) || token.text === '(' || token.text === ')') {
+            throw new SourceError(`${subject}: "${written}" names nothing — write \`${written} <thing>\``, line);
+          }
+          const read = readOneTarget(tokens, i, subject, line);
+          targets.push(read.target);
+          i = read.next;
+          if (follows(tokens, i, 'and')) {
+            i += 1;
+            continue;
+          }
+          if (!read.listed) break;
+          const after = tokens[i]?.text;
+          if (after === 'above' || after === 'below' || ((after === 'left' || after === 'right') && follows(tokens, i + 1, 'of'))) {
+            twice(`even with ${listTargets(targets)}`, `${after}${after === 'left' || after === 'right' ? ' of' : ''} ${tokens[i + (after === 'left' || after === 'right' ? 2 : 1)]?.text.replace(/,$/, '') ?? '…'}`);
+          }
+        }
+        if (fractionWritten !== undefined) twice(fractionWritten, `even with ${listTargets(targets)}`);
+        checkEvenTargets(targets, side === 'left' || side === 'right' ? 'y' : 'x', written, subject, line);
+        words.push('even with', listTargets(targets));
+        even = targets;
+        next = i;
+      } else if (listed) {
         // `top, right of z`: this end's place among the others on the side.
         const way = tokens[next]?.text;
         const two = way === 'left' || way === 'right';
@@ -571,10 +616,14 @@ function readAttr(
         if (way !== undefined && name && !name.quoted) {
           words.push(two ? `${way} ${tokens[next + 1]?.text ?? ''}` : way, name.text);
           next += two ? 3 : 2;
+          if (name.text.endsWith(',') && follows(tokens, next, 'even')) {
+            twice(`${words[words.length - 2]} ${name.text.slice(0, -1)}`, `even with ${tokens[next + 2]?.text ?? '…'}`);
+          }
         }
       }
     }
     setOnce(attrs, key, words.join(' '), subject, line);
+    if (even) attrs[`${key}.even`] = JSON.stringify(even);
     return next;
   }
   if (key === 'join-with') {
@@ -1391,10 +1440,20 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     return { ...parseEdge([head[0]!, ...head.slice(2)], line), name };
   }
   const stmt = parseEdgeEnds(head, line);
-  const via = stmt.attrs['via'];
-  if (via === undefined) return stmt;
-  const { via: _, ...attrs } = stmt.attrs;
-  return { ...stmt, attrs, via: JSON.parse(via) as ViaEntry[] };
+  // `via:` and the targets of `to: left, even with cat1` were stored as JSON
+  // among the attributes; they belong to the line, so they come out here.
+  const { via, 'from.even': fromEven, 'to.even': toEven, ...attrs } = stmt.attrs;
+  if (via === undefined && fromEven === undefined && toEven === undefined) return stmt;
+  const evenWith = {
+    ...(fromEven !== undefined ? { from: JSON.parse(fromEven) as PlacementTarget[] } : {}),
+    ...(toEven !== undefined ? { to: JSON.parse(toEven) as PlacementTarget[] } : {}),
+  };
+  return {
+    ...stmt,
+    attrs,
+    ...(via !== undefined ? { via: JSON.parse(via) as ViaEntry[] } : {}),
+    ...(fromEven !== undefined || toEven !== undefined ? { evenWith } : {}),
+  };
 }
 
 /** Where `each child of` starts in an edge's head, before the attributes, once per time it is written. */
@@ -1888,6 +1947,9 @@ function defaultRefusal(kind: DefaultTarget, key: string): string {
   if (key === 'icon') {
     return 'and a picture cannot hold children, so an icon is a leaf\'s word — write `default leaf  icon:`';
   }
+  if ((kind === 'edge' || kind === 'guide edge') && key === 'corners') {
+    return "which is a node's — a line's corners go in its bracket: line: (corners: sharp)";
+  }
   if (kind === 'edge' && (key === 'fill' || key === 'border')) {
     return `which an edge does not have — an edge is colored by line: and text: (color: …)`;
   }
@@ -2038,30 +2100,7 @@ function readPlacement(
     }
     const read = readTargets(tokens, from + 2, subject, written, line);
     const axis = SIDE_AXIS[side ?? 'center'];
-    // `left even with 3/4 down x`: three quarters down names a height, which
-    // has no place across to meet.
-    for (const target of read.targets) {
-      if (!target.fraction || fractionAxis(target.fraction) === axis) continue;
-      throw new SourceError(
-        `${subject}: "${nameTarget(target)}" names a ${axis === 'x' ? 'height' : 'place across'}, so "${written}" has nothing to meet there — ` +
-          (axis === 'x' ? `write a fraction across, such as \`${written} 1/3 across ${target.name}\`` : `write a fraction down, such as \`${written} 3/4 down ${target.name}\``),
-        line,
-      );
-    }
-    for (const target of read.targets) refuseSpan(target, subject, line);
-    // `top even with server left`: the left side runs server's whole height, so
-    // it has no one height to meet, and drawing it as `server`'s top would make
-    // a second spelling of `top even with server`.
-    for (const target of read.targets) {
-      if (!target.part || !isSideWord(target.part) || SIDE_AXIS[target.part] === axis) continue;
-      const [near, far] = axis === 'y' ? ['top', 'bottom'] : ['left', 'right'];
-      throw new SourceError(
-        `${subject}: "${target.name} ${target.part}" is the whole of ${target.name}'s ${target.part} side, ` +
-          `so "${written}" has no one ${axis === 'y' ? 'height' : 'place across'} to meet there — ` +
-          `name ${target.name} ${near}, center or ${far}, or a corner such as ${target.name} ${axis === 'y' ? `${near}-${target.part}` : `${target.part}-${near}`}`,
-        line,
-      );
-    }
+    checkEvenTargets(read.targets, axis, written, subject, line);
     const modifiers = readModifiers(tokens, read.next, subject, `${written} ${listTargets(read.targets)}`, line);
     // An alignment shares a line outright, so there is no distance in it for
     // a gap to set. Refusing rather than dropping it, for the reason unknown
@@ -2138,6 +2177,38 @@ function readPlacement(
     },
     next: modifiers.next,
   };
+}
+
+/**
+ * What `even with` may line up with, on one axis: shared by a placement
+ * (`top even with x`) and a line's end (`to: left, even with x`), which name
+ * one height (axis `y`) or one place across (`x`).
+ */
+function checkEvenTargets(targets: PlacementTarget[], axis: Axis, written: string, subject: string, line: number): void {
+  // `left even with 3/4 down x`: three quarters down names a height, which
+  // has no place across to meet.
+  for (const target of targets) {
+    if (!target.fraction || fractionAxis(target.fraction) === axis) continue;
+    throw new SourceError(
+      `${subject}: "${nameTarget(target)}" names a ${axis === 'x' ? 'height' : 'place across'}, so "${written}" has nothing to meet there — ` +
+        (axis === 'x' ? `write a fraction across, such as \`${written} 1/3 across ${target.name}\`` : `write a fraction down, such as \`${written} 3/4 down ${target.name}\``),
+      line,
+    );
+  }
+  for (const target of targets) refuseSpan(target, subject, line);
+  // `top even with server left`: the left side runs server's whole height, so
+  // it has no one height to meet, and drawing it as `server`'s top would make
+  // a second spelling of `top even with server`.
+  for (const target of targets) {
+    if (!target.part || !isSideWord(target.part) || SIDE_AXIS[target.part] === axis) continue;
+    const [near, far] = axis === 'y' ? ['top', 'bottom'] : ['left', 'right'];
+    throw new SourceError(
+      `${subject}: "${target.name} ${target.part}" is the whole of ${target.name}'s ${target.part} side, ` +
+        `so "${written}" has no one ${axis === 'y' ? 'height' : 'place across'} to meet there — ` +
+        `name ${target.name} ${near}, center or ${far}, or a corner such as ${target.name} ${axis === 'y' ? `${near}-${target.part}` : `${target.part}-${near}`}`,
+      line,
+    );
+  }
 }
 
 /** `(span: both)` stretches a region; a point has nothing to stretch. */

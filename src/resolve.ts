@@ -12,6 +12,8 @@ import {
   GATHER_PLACES,
   CONTENT_WIDTHS,
   LINE_VALUES,
+  NODE_CORNERS,
+  type NodeCorners,
   describePlacement,
   nameTarget,
 } from './ast.js';
@@ -282,9 +284,11 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   placer.run();
   const marks = buildMarks(named, placer.placeNamed(), styles, markTexts);
   locateStops(edges, placer, byName, named);
+  locateEvenWith(edges, placer, byName, named);
   locateTextTargets(edges, placer);
   normalize(nodes, marks, margin, [
     ...edges.flatMap((edge) => (edge.viaAt ?? []).filter((at) => at !== undefined)),
+    ...edges.flatMap((edge) => [edge.evenAt?.from, edge.evenAt?.to].filter((at) => at !== undefined)),
     ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.target ? [text.target] : []))),
   ]);
 
@@ -730,6 +734,7 @@ function buildTree(
       name: stmt.name,
       kind,
       body,
+      corners: 'rounded',
       text,
       lines: linesFor(text, textAttrs, `"${stmt.name}"`, stmt.line),
       children: [],
@@ -755,6 +760,10 @@ function buildTree(
 
     checkAttrs(kind, node.name, stmt.attrs, stmt.line);
     checkStyleUse(kind, node.name, stmt.attrs, styles, stmt.line);
+    // A shown guide wears `default guide node` over its styles and defaults, as
+    // the renderer does for its colors; its own words beat both.
+    const guideLook = stmt.guide ? defaults.get('guide node')?.['corners'] : undefined;
+    node.corners = cornersOf(node, stmt.attrs['corners'] ?? guideLook ?? appearance['corners'], stmt.attrs['corners'] !== undefined);
 
     // `deck:` holds one text per copy, joined on a line break the source cannot
     // contain. Like a badge, only a box has an outline to repeat.
@@ -865,6 +874,7 @@ function writeOutBadge(node: LayoutNode, named: string, icons: ReadonlyMap<strin
     name: `${node.name}.badge`,
     kind: KIND_OF_BODY[body.kind],
     body,
+    corners: 'rounded',
     text: '',
     lines: linesFor('', textAttrs, `"${node.name}"`, node.line),
     children: [],
@@ -1062,6 +1072,19 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
       );
     }
 
+    // Corners belong to an outline, so what the kind is made of explains their
+    // absence, as it does a color's. A line has corners too, but they are a
+    // property of the line and go in its bracket.
+    if (key === 'corners') {
+      throw new SourceError(
+        kind === 'edge'
+          ? `"${name}" is an edge and has ${wrote}. A line's corners go in its bracket — write \`line: (corners: ${shown})\``
+          : `"${name}" is ${article(KIND_WORD[kind])} and has ${wrote}. ${capital(article(KIND_WORD[kind]))} is ${KIND_PARTS[kind]}, ` +
+              'so it has no corners — `corners:` takes a node with an outline',
+        line,
+      );
+    }
+
     // A word only the whole drawing takes, such as a theme.
     if (belongTo(key).length === 0) {
       throw new SourceError(
@@ -1081,6 +1104,33 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
       line,
     );
   }
+}
+
+/**
+ * How a node's corners are drawn. A value is checked wherever it came from — a
+ * style's `corners: sharpp` is as much a typo as a node's — but a circle refuses
+ * `corners:` only when the node itself says it, since a circle has none. From a
+ * style or a default it lands on the outlines that have corners, the way a
+ * line's `corners: rounded` from a style lands only on lines with corners. A
+ * node drawn as a picture or with no body has no outline; `checkAttrs` has
+ * already refused the word written on one, and a style's is unused.
+ */
+function cornersOf(node: LayoutNode, value: string | undefined, written: boolean): NodeCorners {
+  if (node.body.kind !== 'shape' || value === undefined) return NODE_CORNERS[0];
+  if (!(NODE_CORNERS as readonly string[]).includes(value)) {
+    throw new SourceError(
+      `"${node.name}" has corners: ${value}, which is not a way to draw corners — use ${NODE_CORNERS.join(' or ')}`,
+      node.line,
+    );
+  }
+  if (written && node.body.outline === 'circle') {
+    throw new SourceError(
+      `"${node.name}" is a circle and has corners: ${value}. A circle has no corners to make ${value} — ` +
+        '`corners:` takes a `rectangle` or a `document`',
+      node.line,
+    );
+  }
+  return value as NodeCorners;
 }
 
 /**
@@ -1376,6 +1426,7 @@ function buildEdges(
       ...(stmt.name !== undefined ? { name: stmt.name } : {}),
       ...(stmt.via !== undefined ? { via: stmt.via } : {}),
       ...(stmt.straight !== undefined ? { straight: stmt.straight } : {}),
+      ...(stmt.evenWith !== undefined ? { evenWith: stmt.evenWith } : {}),
       look: lineLook(stmt.attrs, appearance, what, stmt.line),
       attrs: stmt.attrs,
       appearance,
@@ -1410,6 +1461,7 @@ function placeholder(name: string, line: number): LayoutNode {
       name,
       kind: 'none',
       body: { kind: 'none' },
+      corners: 'rounded',
       text: '',
       lines: [],
       children: [],
@@ -1453,6 +1505,44 @@ function locateTextTargets(edges: LayoutEdge[], placer: Placer): void {
       const by = text.place.straight ?? text.place.by;
       if (by) text.target = placer.locate(by.target, subject, edge.line);
     }
+  }
+}
+
+/**
+ * Where the thing each `to: left, even with cat1` end lines up with is, once
+ * everything is placed. Several targets (`even with a and b`) are the region
+ * round them all, as in a placement.
+ */
+function locateEvenWith(edges: LayoutEdge[], placer: Placer, byName: Map<string, LayoutNode>, named: Map<string, PointStmt | RegionStmt>): void {
+  const lineNames = new Set(edges.map((edge) => edge.name).filter((name) => name !== undefined));
+  for (const edge of edges) {
+    if (!edge.evenWith) continue;
+    const subject = `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    const evenAt: { from?: Rect; to?: Rect } = {};
+    for (const which of ['from', 'to'] as const) {
+      const targets = edge.evenWith[which];
+      if (!targets) continue;
+      const rects = targets.map((target) => {
+        if (target.point === undefined && !byName.has(target.name) && !named.has(target.name)) {
+          throw new SourceError(
+            lineNames.has(target.name)
+              ? `${subject}: "${which}: ${edge.attrs[which]}" — ${target.name} is a line; an end is even with a box, a part of one, or a point`
+              : `${subject}: "${which}: ${edge.attrs[which]}" names ${target.name}, which does not exist`,
+            edge.line,
+          );
+        }
+        return placer.locate(target, subject, edge.line);
+      });
+      const x = Math.min(...rects.map((rect) => rect.x));
+      const y = Math.min(...rects.map((rect) => rect.y));
+      evenAt[which] = {
+        x,
+        y,
+        width: Math.max(...rects.map((rect) => rect.x + rect.width)) - x,
+        height: Math.max(...rects.map((rect) => rect.y + rect.height)) - y,
+      };
+    }
+    edge.evenAt = evenAt;
   }
 }
 

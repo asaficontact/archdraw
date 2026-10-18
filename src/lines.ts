@@ -69,6 +69,8 @@ type EndSpec =
   | { kind: 'point'; position: Position }
   | { kind: 'fraction'; side: Side; value: number; written: string }
   | { kind: 'center' }
+  /** `to: left, even with cat1`: on that side, level with cat1's center (or at its place across, on a top or bottom side). */
+  | { kind: 'even'; side: Side; written: string }
   /** `to: down from z3`: where the line straight down from z3's center meets this end's box or line. */
   | { kind: 'aligned'; way: WayWord; name: string; written: string }
   /** `straight down` on the edge, at its start: leaving its own box that way, from its center. */
@@ -651,8 +653,27 @@ function endOf(edge: LayoutEdge, which: 'from' | 'to'): End {
         : facingSpec(edge, which, node, far);
   }
   const end: End = { edge, which, node, face, far, spec, ...(onLine ? { onLine } : {}), headings: [] };
-  if (spec.kind === 'side' || spec.kind === 'fraction') end.headings = [SIDE_NORMAL[spec.side]];
+  if (spec.kind === 'side' || spec.kind === 'fraction' || spec.kind === 'even') end.headings = [SIDE_NORMAL[spec.side]];
   if (spec.kind === 'fraction') end.at = fractionPoint(face, spec.side, spec.value);
+  if (spec.kind === 'even') {
+    // Level with the thing's center on a left or right side, at its place
+    // across on a top or bottom one. A miss is refused, never bent (6.2).
+    const target = edge.evenAt![which]!;
+    const across = spec.side === 'top' || spec.side === 'bottom';
+    const coordinate = across ? target.x + target.width / 2 : target.y + target.height / 2;
+    const low = across ? face.x : face.y;
+    const high = across ? face.x + face.width : face.y + face.height;
+    if (coordinate < low - 0.5 || coordinate > high + 0.5) {
+      const thing = spec.written.replace(/^[^,]*,\s*even with\s+/, '');
+      const where = across ? (coordinate < low ? 'left of' : 'right of') : coordinate < low ? 'above' : 'below';
+      throw new SourceError(
+        `${subject}: "${which}: ${spec.written}" misses ${node.name}'s ${spec.side} side — ${thing} is ${where} it, ` +
+          `so no point of that side is even with ${thing}; nothing is bent to reach it`,
+        edge.line,
+      );
+    }
+    end.at = onSide(face, spec.side, coordinate);
+  }
   if (spec.kind === 'point') {
     end.at = positionPoint(face, spec.position);
     const [vertical, horizontal] = cornerSides(spec.position);
@@ -675,7 +696,7 @@ function opposite(way: WayWord): WayWord {
 
 /**
  * `top`, `left 3/4 down`, `bottom 1/4 across from right`, `top, right of z`,
- * `bottom-center`, `center`, `down from z3`, `at 1/3`, `climb at 1/3`,
+ * `left, even with cat1`, `bottom-center`, `center`, `down from z3`, `at 1/3`, `climb at 1/3`,
  * `req end`, as the parser stored them.
  */
 function readEnd(written: string, edge: LayoutEdge, which: 'from' | 'to'): EndSpec {
@@ -732,6 +753,8 @@ function readEnd(written: string, edge: LayoutEdge, which: 'from' | 'to'): EndSp
     return { kind: 'fraction', side: first, value, written: head.trim() };
   }
   if (order === undefined) return { kind: 'side', side: first, implied: false };
+  // `left, even with cat1`: the parser read the targets, and the resolver located them.
+  if (/^\s*even with /.test(order)) return { kind: 'even', side: first, written };
   // `top, right of z`: this end's place among the others on the side.
   const ways: OrderWay[] = first === 'top' || first === 'bottom' ? ['left of', 'right of'] : ['above', 'below'];
   const match = /^\s*(left of|right of|above|below)\s+(\S+)\s*$/.exec(order);
@@ -1169,6 +1192,12 @@ function spreadSides(ends: End[]): SideEnds[] {
       const at = ordered.indexOf(anchor);
       ordered.splice(before ? at : at + 1, 0, end);
     }
+    // Pinned ends keep their slots in that order but take them in the order
+    // they sit along the side, so the side is split from one end to the other
+    // even where their far boxes tie (`to: left, even with cat1` from one box).
+    const slots = ordered.flatMap((end, index) => (end.spec.kind === 'side' ? [] : [index]));
+    const pins = slots.map((index) => ordered[index]!).sort((a, b) => along(a.at!) - along(b.at!));
+    slots.forEach((index, k) => (ordered[index] = pins[k]!));
     const low = across ? face.x : face.y;
     const high = across ? face.x + face.width : face.y + face.height;
     let from = low;
@@ -1203,7 +1232,7 @@ function spreadSides(ends: End[]): SideEnds[] {
 /** The side an end lands on, for grouping: a side, a fraction along one, or a point in the middle of one. */
 function sideOf(end: End): Side | undefined {
   const spec = end.spec;
-  if (spec.kind === 'side' || spec.kind === 'fraction') return spec.side;
+  if (spec.kind === 'side' || spec.kind === 'fraction' || spec.kind === 'even') return spec.side;
   if (spec.kind === 'point') {
     const [vertical, horizontal] = cornerSides(spec.position);
     if (vertical && horizontal) return undefined;
