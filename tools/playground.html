@@ -612,10 +612,15 @@
               <code>node <i>name</i> <i>["text"]</i> <i>[placements]</i> <i>[key: value …]</i></code><br />
               <code>edge <i>a</i> -&gt; <i>b</i> <i>["text"]</i> <i>[key: value …]</i></code>
               &nbsp;<i>(<code>&lt;-</code> to write the target first, <code>&lt;-&gt;</code> for both ends)</i><br />
+              <code>point <i>name</i> <i>where</i></code> &nbsp;<code>region <i>name</i> <i>a</i> top-left to <i>b</i> bottom-right</code><br />
+              <code>bundle <i>name</i> via: <i>…</i></code> &nbsp;<i>(a path lines share)</i>
+              &nbsp;<code><b>guide</b> node|edge|point|region …</code> <i>(reference only, not drawn)</i><br />
               <code>style <i>name</i> <i>key: value …</i></code><br />
               <code>diagram theme: nord  background: #1e2229  text: (color: #e0e0e0)</code><br />
               <code>default node|leaf|container|edge <i>key: value …</i></code>
-              &nbsp;<i>(a style every one of that kind wears; the more specific wins)</i>
+              &nbsp;<i>(a style every one of that kind wears; the more specific wins)</i><br />
+              <i>The picture is drawn exactly as written: nothing is moved to make room, and lines go only
+              where they are told. Anything that overlaps is drawn as written; <code>reladraw check</code> reports it.</i>
             </dd>
 
             <dt>Labels</dt>
@@ -626,30 +631,45 @@
             </dd>
 
             <dt>Containment</dt>
-            <dd><code>node server.docker "Docker"</code> — a dotted name is a child. Declare the parent first. With no text of its own, it reads "docker".</dd>
+            <dd>
+              <code>node server.docker "Docker"</code> — a dotted name is a child. Declare the parent first. With no text of its own, it reads "docker".<br />
+              <code>layout: column</code> or <code>row</code> — the children in written order, with
+              <code>(gap: tight, widths: match, align-children: left)</code>.
+              Without a layout, one child is unplaced and the rest are placed against it.<br />
+              <code>gather-children: left</code> — where the children sit in spare room.
+              <code>shape: none</code> on a container draws no box.
+            </dd>
 
             <dt>Placement</dt>
             <dd>
               <code><b>above</b> X</code> <code><b>below</b> X</code>
               <code><b>left of</b> X</code> <code><b>right of</b> X</code>
               <code><b>above-left of</b> X</code> … <code><b>below-right of</b> X</code><br />
-              <code><b>level with</b> X</code> — share a center line;
-              <code><b>top</b>|<b>bottom</b>|<b>left</b>|<b>right</b> <b>level with</b> X</code> shares that edge.<br />
+              <code><b>even with</b> X</code> — share a center line;
+              <code><b>top</b>|<b>bottom</b>|<b>left</b>|<b>right</b> <b>even with</b> X</code> shares that edge.<br />
               <code>right of A <b>and</b> B</code> — against the box that just bounds them both.<br />
-              <code><b>on</b> X <b>at</b> top-right</code> — stamped on X's box, overlapping it.
-              The nine positions are
-              <code>top-left</code> <code>top-center</code> <code>top-right</code>
+              <code><b>inside</b> X top-right</code> <code><b>outside</b> X right</code>
+              <code><b>on</b> X bottom-left</code> — against a part of X. The parts are
+              <code>text</code>, the sides <code>top</code> <code>bottom</code> <code>left</code> <code>right</code>,
+              and <code>top-left</code> <code>top-center</code> <code>top-right</code>
               <code>left-center</code> <code>center</code> <code>right-center</code>
               <code>bottom-left</code> <code>bottom-center</code> <code>bottom-right</code>.<br />
-              <i>A node takes as many placements as it needs. One on its own binds both axes.</i>
+              <code><b>on</b> between A and B</code> <code>below down from A and left from B</code> — at a point.<br />
+              <i>One node is unplaced; every other is placed against something. One direction on its own
+              also centers on its target. Each axis is said once.</i>
             </dd>
 
             <dt>Gaps</dt>
             <dd>
-              <code>right of X <b>(gap: wide)</b></code> on the placement, or
-              <code>gap: tight</code> on the node as its default.
-              One of <code>none</code> <code>tight</code> <code>normal</code> <code>wide</code>,
-              and every one is a <i>minimum</i>.
+              <code>right of X <b>(gap: wide)</b></code> or <code><b>2</b> right of X</code>, on the placement.
+              One of <code>none</code> <code>tight</code> <code>normal</code> <code>wide</code> (0, 2, 4, 8 units),
+              or a number of units; a box is about 4 units tall. A gap is <i>exact</i>.
+            </dd>
+
+            <dt>Sizes</dt>
+            <dd>
+              <code>width: 30</code> <code>height: menu</code> <code>height: 0.5 menu height</code>
+              <code>height: a top to c bottom</code> <code>min-width: 10</code>
             </dd>
 
             <dt>Appearance</dt>
@@ -665,21 +685,13 @@
             <dt>Lines</dt>
             <dd>
               <code>line: (path: square, corners: rounded)</code> — everything about an edge's line.
-              <code>path:</code> takes <code>curved</code> <code>square</code> <code>straight</code>;
+              <code>path:</code> takes <code>straight</code> (the default) <code>square</code> <code>curved</code>;
               <code>corners:</code> <code>sharp</code> <code>rounded</code>;
-              <code>crossing:</code> <code>none</code> <code>arc</code> <code>gap</code> <code>square</code>;
+              <code>crossing:</code> <code>gap</code> <code>arc</code> <code>square</code> <code>none</code>;
               <code>pattern:</code> <code>solid</code> <code>dashed</code> <code>dotted</code> <code>dash-dot</code>;
-              <code>thickness:</code> <code>thin</code> <code>normal</code> <code>thick</code> or a number.
+              <code>thickness:</code> <code>thin</code> <code>normal</code> <code>thick</code>, a multiple, or <code>3px</code>;
+              <code>turn: 1/3</code> <code>step-out: tight</code> <code>curve: subtle</code>.
               <i><code>default edge  line: (path: square)</code> sets every edge.</i>
-            </dd>
-
-            <dt>Contents</dt>
-            <dd>
-              <code>contents: (widths: match, align: center)</code> — how a container's
-              children sit when its title is wider than they are.
-              <code>widths:</code> takes <code>natural</code> <code>match</code>
-              <code>fill</code>; <code>align:</code> takes
-              <code>left</code> <code>center</code> <code>right</code>.
             </dd>
 
             <dt>Body</dt>
@@ -687,7 +699,7 @@
               <code>shape: rectangle|document|circle|none</code> — the outline the node is drawn with;
               <code>none</code> is text with no box, which is what an annotation is.<br />
               <code>icon: <i>name</i></code> — the node <i>is</i> that picture, with no box.<br />
-              <code>badge: <i>name</i></code> — the picture sits <i>beside</i> the text and the node keeps its box.<br />
+              <code>badge: <i>name</i></code> — the picture is part of the label, beside the text, and the node keeps its box.<br />
               <code>deck: "text" <i>["text" …]</i></code> — offset copies behind the box, one per text.<br />
               Pictures: <code>disk</code> <code>desktop</code> <code>laptop</code>
               <code>package</code> <code>cubes</code> <code>cube</code> <code>database</code>.<br />
@@ -698,12 +710,12 @@
             <dt>Text</dt>
             <dd>
               Everything a text says about itself goes in brackets after it:
-              <code>"Docker" (at: bottom-center, align: center)</code>
               <code>(color: theme-muted)</code>
               <code>(size: small|normal|large)</code>
               <code>(wrap: 24)</code> <i>(characters, folds the text)</i>.
-              <code>at:</code> takes the nine positions above. In a style, which has no
-              text of its own, the bracket hangs off the key:
+              A title says which side it sits against: <code>"Server" (inside top, align: left)</code>,
+              <code>(on top)</code>, <code>(outside top)</code>, <code>(center)</code>.
+              In a style, which has no text of its own, the bracket hangs off the key:
               <code>text: (color: theme-muted)</code>.<br />
               <code>" / "</code> in any text is a line break; <code>\/</code> is a literal slash.<br />
               <code>"name / <b>[dim]</b>quieter<b>[/dim]</b>"</code> draws those words in the
@@ -712,11 +724,13 @@
 
             <dt>Links</dt>
             <dd>
-              <code>from: right</code> <code>to: left</code> name a side and curve the line.<br />
-              <code><b>between</b> a <b>and</b> b</code> sends it down the gap between two nodes,
-              with <code>vertically</code> or <code>horizontally</code> if they sit diagonally.<br />
-              <code><b>below</b> c</code> — or above, left of, right of — says which side of a node
-              the line passes, where it goes by that node.
+              A line is straight between its two boxes, through anything in between, unless told otherwise.<br />
+              <code>from: right</code> <code>to: left</code> name a side;
+              <code>to: bottom-center</code> or <code>to: left 3/4 down</code> a point on it.<br />
+              <code>via: c top, between a and b</code> — the places the line passes, in order:
+              just outside a side, a point, a box's center, <code>through <i>region</i> horizontal</code>.<br />
+              <code>"text" (at: start)</code> <code>(at: 1/4)</code> <code>(above edge)</code>
+              <code>(on: longest level)</code> — where a line's text sits; the middle by default.
             </dd>
 
             <dt>Comments</dt>
@@ -759,11 +773,11 @@
         // explaining that in advance only gets in the way.
         var SEED = [
           'node parser "Parser"',
-          'node renderer "Renderer"  right of parser',
-          'node resolver "Resolver"  right of parser  left of renderer  level with parser',
+          'node resolver "Resolver"  right of parser (gap: 12)',
+          'node renderer "Renderer"  right of resolver (gap: 12)',
           '',
-          'edge parser -> resolver    "statements"  from: right  to: left',
-          'edge resolver -> renderer  "layout"      from: right  to: left',
+          'edge parser -> resolver    "statements"',
+          'edge resolver -> renderer  "layout"',
           '',
         ].join('\n');
 
@@ -773,7 +787,7 @@
         // examples/. The template on its own has neither the library nor the
         // examples, so it is never opened directly.
         var EXAMPLES = [
-          { name: 'start', about: 'Three boxes, and the middle one holds the other two apart.', source: SEED },
+          { name: 'start', about: 'Three boxes in a row, each a stated distance from the last.', source: SEED },
         ].concat(globalThis.reladrawExamples || []);
 
         var source = document.getElementById('source');

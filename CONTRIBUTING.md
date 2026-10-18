@@ -37,7 +37,7 @@ This isn't about the quality of anyone's code. The language is still being desig
 ```
 npm install
 npm run build
-node dist/cli.js examples/arch.reladraw -o out.svg
+node dist/cli.js render examples/arch.reladraw -o out.svg
 ```
 
 No runtime dependencies; TypeScript and Node 18+ are all that is needed.
