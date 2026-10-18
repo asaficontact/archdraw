@@ -251,9 +251,9 @@ function vennOf(node: LayoutNode): Venn | undefined {
   if (node.appearance['layout'] !== 'venn') return undefined;
   const bracket = bracketOf('layout', node.appearance);
   for (const key of Object.keys(bracket)) {
-    if (key === 'heights') continue;
+    if (key === 'heights' || key === 'gap') continue;
     throw new SourceError(
-      `"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights: equal in its bracket`,
+      `"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights: and gap: in its bracket`,
       node.line,
     );
   }
@@ -289,7 +289,8 @@ function vennOf(node: LayoutNode): Venn | undefined {
       );
     }
   }
-  return { heights, parts: parts as [LayoutNode, LayoutNode, LayoutNode] };
+  const gap = bracket['gap'] === undefined ? GAPS['normal']! : gapPixels(bracket['gap'], `"${node.name}" layout: venn (gap: …)`, node.line);
+  return { heights, gap, parts: parts as [LayoutNode, LayoutNode, LayoutNode] };
 }
 
 export interface ResolveOptions {

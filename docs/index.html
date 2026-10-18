@@ -2213,6 +2213,8 @@ class Placer {
     laid = new Map();
     /** Where each of a venn's parts' frames sits in the venn's, on each axis. */
     vennPlans = new Map();
+    /** Where one venn part's frame sits in the venn's, up and down. */
+    vennShifts = new Map();
     /** The band a laid-out container's children are aligned in, across its layout. */
     bands = new Map();
     /** Where a node joined to its container's text starts, measured from the text's start. */
@@ -2380,8 +2382,9 @@ class Placer {
             return this.vennStart(node, axis);
         if (parent && this.facts.get(parent).layout)
             return this.inLayout(node, axis).start;
-        if (node.placements.length === 0) {
-            // The anchor of its frame. A container's title, when something is
+        if (node.placements.length === 0 || this.acrossParts(node)) {
+            // The anchor of its frame. One placed against a box in another part of
+            // a venn is still its part's anchor; the placement moves the part. A container's title, when something is
             // placed against it, is the anchor instead; `checkAnchors` has made sure
             // there is exactly one.
             return 0;
@@ -2826,6 +2829,13 @@ class Placer {
                     `"${node.name}" against another child`, placement.line);
             }
             whole = { start: this.start(named, axis), size: this.size(named, axis) };
+            if (target.part === 'text')
+                text = this.textOf(named, axis, whole.start);
+        }
+        else if (this.inOtherPart(node, named)) {
+            // A box in another part of the same venn, in the venn's frame: only
+            // `vennShift` asks, to find where this part goes.
+            whole = { start: this.start(named, axis) + this.vennShift(named.parent, axis), size: this.size(named, axis) };
             if (target.part === 'text')
                 text = this.textOf(named, axis, whole.start);
         }
@@ -3471,9 +3481,8 @@ class Placer {
      * Where each part's own frame sits in the venn's: what to add to a part's
      * coordinates. Across, the left set's contents, the overlap's and the right
      * set's in that order. The border between a pair is the crossing set's
-     * padding from what is inside it, and a normal gap from what is outside it,
-     * as a box beside a container would be. Up and down, all three centered on one line,
-     * unless a set lines its top or bottom up with the other's.
+     * padding from what is inside it, and the venn's gap from what is outside it,
+     * as a box beside a container would be. Up and down, see `vennShift`.
      */
     vennPlan(venn, axis) {
         const key = `venn\n${venn.name}\n${axis}`;
@@ -3481,38 +3490,76 @@ class Placer {
         if (known)
             return known;
         const [left, shared, right] = this.facts.get(venn).venn.parts;
-        const [l, o, r] = [left, shared, right].map((part) => this.partContent(part, axis));
         let plan;
         if (axis === 'x') {
-            const between = GAPS['normal'];
+            const [l, o, r] = [left, shared, right].map((part) => this.partContent(part, axis));
+            const between = this.facts.get(venn).venn.gap;
             const dl = -l.start;
             const dO = dl + l.start + l.size + between + this.facts.get(right).padding - o.start;
             const dr = dO + o.start + o.size + this.facts.get(left).padding + between - r.start;
             plan = [dl, dO, dr];
         }
         else {
-            const middle = (extent) => -(extent.start + extent.size / 2);
-            plan = [middle(l), middle(o), middle(r)];
-            for (const index of [0, 2]) {
-                const set = index === 0 ? left : right;
-                const [placement] = set.placements;
-                if (placement?.kind !== 'align')
-                    continue;
-                const side = sideAlong(placement.side);
-                if (side === 'center')
-                    continue;
-                const own = index === 0 ? l : r;
-                const other = index === 0 ? r : l;
-                const otherShift = plan[2 - index];
-                // The other set's box holds its own children and the overlap, so its
-                // edge is the further of the two; this set's children go even with that.
-                const low = Math.min(other.start + otherShift, o.start + plan[1]);
-                const high = Math.max(other.start + other.size + otherShift, o.start + o.size + plan[1]);
-                plan[index] = side === 'start' ? low - own.start : high - own.start - own.size;
-            }
+            plan = [this.vennShift(left, axis), this.vennShift(shared, axis), this.vennShift(right, axis)];
         }
         this.vennPlans.set(key, plan);
         return plan;
+    }
+    /**
+     * Where a part's frame sits in the venn's up and down. A part whose anchor
+     * is placed against a box in another part goes where that puts the anchor;
+     * a set lined up with the other set's top or bottom goes there; otherwise
+     * its contents are centered on the line every unplaced part shares.
+     */
+    vennShift(part, axis) {
+        if (axis === 'x')
+            return this.vennPlan(part.parent, axis)[this.vennPart(part)];
+        const key = `${part.name}\n${axis}`;
+        const known = this.vennShifts.get(key);
+        if (known !== undefined)
+            return known;
+        const worked = this.guard(`venn shift\n${key}`, part, axis, undefined, () => {
+            const anchor = this.contentOf(part).find((child) => this.acrossParts(child));
+            if (anchor) {
+                // The anchor sits at its frame's origin, so where its placement puts
+                // it in the venn's frame is where the frame goes.
+                return this.apply(anchor, axis, this.statements(anchor, axis)[0]);
+            }
+            const venn = part.parent;
+            const [left, shared, right] = this.facts.get(venn).venn.parts;
+            const own = this.partContent(part, axis);
+            const [placement] = part.placements;
+            const side = placement?.kind === 'align' ? sideAlong(placement.side) : 'center';
+            if (part === shared || side === 'center')
+                return -(own.start + own.size / 2);
+            const otherSet = part === left ? right : left;
+            const other = this.partContent(otherSet, axis);
+            const otherShift = this.vennShift(otherSet, axis);
+            const o = this.partContent(shared, axis);
+            const sharedShift = this.vennShift(shared, axis);
+            // The other set's box holds its own children and the overlap, so its
+            // edge is the further of the two; this set's children go even with that.
+            const low = Math.min(other.start + otherShift, o.start + sharedShift);
+            const high = Math.max(other.start + other.size + otherShift, o.start + o.size + sharedShift);
+            return side === 'start' ? low - own.start : high - own.start - own.size;
+        });
+        this.vennShifts.set(key, worked);
+        return worked;
+    }
+    /** Whether `named` is a child of a different part of the venn `node`'s part belongs to. */
+    inOtherPart(node, named) {
+        const part = node.parent;
+        const other = named.parent;
+        if (!part || !other || part === other || this.vennPart(part) === undefined)
+            return false;
+        return other.parent === part.parent && this.vennPart(other) !== undefined;
+    }
+    /** A child of a venn's part placed against a box in another part, which `checkAnchors` lets only the part's anchor be. */
+    acrossParts(node) {
+        return node.placements.some((placement) => placement.targets.some((target) => {
+            const named = this.byName.get(target.name);
+            return named !== undefined && this.inOtherPart(node, named);
+        }));
     }
     /** The overlap's contents in a set's own frame, which the set's box wraps as well as its own. */
     vennPhantom(node, axis) {
@@ -3629,8 +3676,10 @@ class Placer {
             }
         }
         else if (members.length > 0) {
+            if (parent && this.vennPart(parent) !== undefined)
+                this.checkAcrossParts(members, parent);
             const content = members.filter((member) => !this.framed(member));
-            const unplaced = content.filter((member) => member.placements.length === 0);
+            const unplaced = content.filter((member) => member.placements.length === 0 || this.acrossParts(member));
             const onTitle = content.find((member) => this.onTitle(member));
             if (!parent && unplaced.length === 0) {
                 throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
@@ -3650,6 +3699,42 @@ class Placer {
         }
         for (const member of all)
             this.checkAnchors(member.children, member);
+    }
+    /**
+     * A box in a venn's part may be placed against a box in another part, and
+     * then it says where its whole part goes up and down: so it must be the
+     * part's anchor, say nothing else, and say nothing across, which is the venn's.
+     */
+    checkAcrossParts(members, part) {
+        const across = members.filter((member) => this.acrossParts(member));
+        if (across.length === 0)
+            return;
+        if (across.length > 1) {
+            throw new SourceError(`"${across[0].name}" and "${across[1].name}" are both placed against a box in another part of venn ` +
+                `"${part.parent.name}" — one box places its part; place the other against its siblings`, across[1].line);
+        }
+        const [node] = across;
+        const [placement] = node.placements;
+        const sideways = placement.kind === 'on' ||
+            (placement.kind === 'align' && placement.axis === 'x') ||
+            (placement.kind === 'offset' && component(placement.direction, 'x') !== undefined);
+        const mixed = placement.targets.some((target) => {
+            const named = this.byName.get(target.name);
+            return named !== undefined && !this.inOtherPart(node, named);
+        });
+        if (mixed) {
+            throw new SourceError(`"${node.name}" is placed against boxes in its own part and another part of venn "${part.parent.name}" at once ` +
+                '— place it against the other part only', placement.line);
+        }
+        if (node.placements.length > 1 || sideways) {
+            throw new SourceError(`"${node.name}" is placed against a box in another part of venn "${part.parent.name}", which says where its ` +
+                `part goes up and down, so it can say nothing else: the venn sets the parts side by side, and the rest of ` +
+                `"${part.name}" is placed against "${node.name}" — keep only an up-and-down placement such as even with`, placement.line);
+        }
+        if (part.placements.length > 0) {
+            throw new SourceError(`"${part.name}" is lined up by "${describePlacement(part.placements[0])}" and also by "${node.name}" ` +
+                `being placed against another part — say it once`, placement.line);
+        }
     }
     // --- finishing -----------------------------------------------------------
     /** The text box, how far the node reaches past its own box, and the flags the renderer reads. */
@@ -11811,9 +11896,9 @@ function vennOf(node) {
         return undefined;
     const bracket = bracketOf('layout', node.appearance);
     for (const key of Object.keys(bracket)) {
-        if (key === 'heights')
+        if (key === 'heights' || key === 'gap')
             continue;
-        throw new SourceError(`"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights: equal in its bracket`, node.line);
+        throw new SourceError(`"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights: and gap: in its bracket`, node.line);
     }
     const heights = bracket['heights'] ?? 'natural';
     if (heights !== 'natural' && heights !== 'equal') {
@@ -11835,7 +11920,8 @@ function vennOf(node) {
                 (sizes.includes('height') ? ', or give the venn (heights: equal)' : ''), part.line);
         }
     }
-    return { heights, parts: parts };
+    const gap = bracket['gap'] === undefined ? GAPS['normal'] : gapPixels(bracket['gap'], `"${node.name}" layout: venn (gap: …)`, node.line);
+    return { heights, gap, parts: parts };
 }
 /**
  * Turn a parsed document into solved geometry.

@@ -1,14 +1,14 @@
 // A PDF template is made at design time and used at runtime, so it sits where the two overlap.
 
-node phases ""  layout: venn
+node phases ""  layout: venn (gap: 12)
 node phases.design  "Design time" (inside top, align: left)
 node phases.both    ""
 node phases.runtime "Runtime" (inside top, align: right)
 
 node phases.design.editor    "Editor"
 node phases.both.template    "PDF template"
-node phases.runtime.python   "Python Lib"
-node phases.runtime.report   "Report PDF"  below phases.runtime.python
+node phases.runtime.python   "Python Lib"  even with phases.both.template
+node phases.runtime.report   "Report PDF"  below phases.runtime.python (gap: wide)
 
 edge phases.design.editor -> phases.both.template      "generate"
 edge phases.both.template -> phases.runtime.python     "import"
