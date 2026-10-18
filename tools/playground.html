@@ -22,6 +22,7 @@
         --ink: #d9d9d9;
         --muted: #8b8b8b;
         --warn: #d2904e;
+        --finding: #d8c26a;
         --diagram: #111111;
         /* Syntax colors. Keywords and the placement vocabulary are the two
            things worth picking out of a line: what kind of statement this is,
@@ -430,6 +431,77 @@
         border-bottom: 1px solid currentColor;
       }
 
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      /* Findings are kept apart from errors: an error stops the drawing, a
+         finding only says where the drawing, made as written, may not read as
+         meant. So they sit under the diagram, not the source, in the ink
+         rather than the error color, and only after Check is pressed: the
+         writer here is looking at the picture. */
+      #findings {
+        max-height: 30%;
+        overflow: auto;
+        padding: 8px 18px;
+        border-top: 1px solid var(--edge);
+        background: var(--panel);
+        font-size: 13px;
+        transition: opacity 120ms ease;
+      }
+
+      #findings:empty {
+        display: none;
+      }
+
+      #findings.stale {
+        opacity: 0.45;
+      }
+
+      #findings p {
+        margin: 2px 0;
+        white-space: pre-wrap;
+      }
+
+      #findings .note {
+        color: var(--muted);
+      }
+
+      #findings .again {
+        display: none;
+      }
+
+      #findings.stale .again {
+        display: block;
+      }
+
+      #findings button {
+        all: unset;
+        display: block;
+        margin: 2px 0;
+        white-space: pre-wrap;
+        cursor: pointer;
+      }
+
+      #findings button:focus-visible {
+        outline: 1px solid var(--muted);
+      }
+
+      #findings b {
+        font-weight: 600;
+        border-bottom: 1px solid currentColor;
+      }
+
+      #findings i {
+        font-style: normal;
+        color: var(--finding);
+      }
+
       /* The examples picker. A list of names beside one diagram drawn large:
          the arrow keys step through the list and the preview follows, and
          nothing in the editor changes until one is opened. A strip of buttons
@@ -614,13 +686,13 @@
               &nbsp;<i>(<code>&lt;-</code> to write the target first, <code>&lt;-&gt;</code> for both ends)</i><br />
               <code>point <i>name</i> <i>where</i></code> &nbsp;<code>region <i>name</i> <i>a</i> top-left to <i>b</i> bottom-right</code><br />
               <code>bundle <i>name</i> via: <i>…</i></code> &nbsp;<i>(a path lines share)</i>
-              &nbsp;<code><b>guide</b> node|edge|point|region …</code> <i>(reference only, not drawn)</i><br />
+              &nbsp;<code><b>guide</b> node|edge|point|region …</code> <i>(reference only; tick Guides to see them)</i><br />
               <code>style <i>name</i> <i>key: value …</i></code><br />
               <code>diagram theme: nord  background: #1e2229  text: (color: #e0e0e0)</code><br />
               <code>default node|leaf|container|edge <i>key: value …</i></code>
               &nbsp;<i>(a style every one of that kind wears; the more specific wins)</i><br />
               <i>The picture is drawn exactly as written: nothing is moved to make room, and lines go only
-              where they are told. Anything that overlaps is drawn as written; <code>reladraw check</code> reports it.</i>
+              where they are told. Anything that overlaps is drawn as written; Check, above the diagram, reports it, as <code>reladraw check</code> does.</i>
             </dd>
 
             <dt>Labels</dt>
@@ -751,6 +823,12 @@
         <div class="bar">
           <h2>Diagram</h2>
           <div>
+            <label class="toggle" title="Draw what is written with guide in front, as --guides does">
+              <input id="guides" type="checkbox" /> Guides
+            </label>
+            <button id="check" type="button" title="Look for overlaps and other places the picture may not read as meant">
+              Check
+            </button>
             <select id="theme" aria-label="Theme" title="Writes a diagram theme: line into the source"></select>
             <button id="zoom" type="button" aria-pressed="false">Actual size</button>
             <button id="copy" type="button">Copy SVG</button>
@@ -758,6 +836,7 @@
           </div>
         </div>
         <div id="diagram"></div>
+        <div id="findings" role="status" aria-live="polite"></div>
       </section>
     </main>
 
@@ -804,6 +883,10 @@
         var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
         var download = document.getElementById('download');
+        var guides = document.getElementById('guides');
+        var checkButton = document.getElementById('check');
+        var findings = document.getElementById('findings');
+        var GUIDES = 'reladraw.guides';
 
         var drawn = '';
         var errorLine = null;
@@ -1033,9 +1116,13 @@
           // Before the compile, not after: a half-typed line is a parse error
           // and its coloring still has to follow the cursor.
           paint();
+          // Findings describe the source they were made from. Once it changes
+          // they are dimmed, not cleared, and undoing back to it lights them up
+          // again.
+          findings.classList.toggle('stale', checked !== null && source.value !== checked);
           var svg;
           try {
-            svg = reladraw.compile(source.value);
+            svg = reladraw.compile(source.value, viewing());
           } catch (e) {
             show(e.message, e instanceof reladraw.SourceError ? e.line : undefined);
             return;
@@ -1046,6 +1133,80 @@
           theme.value = themeOf(source.value) || reladraw.DEFAULT_THEME;
           show(null);
         }
+
+        // What the viewer chose, as opposed to what the file says. Unchecked
+        // is not "hide": it leaves it to the file's diagram guides: line.
+        function viewing() {
+          return guides.checked ? { guides: true } : {};
+        }
+
+        guides.addEventListener('change', function () {
+          try {
+            localStorage.setItem(GUIDES, guides.checked ? 'show' : '');
+          } catch (e) {
+            /* not remembered, and nothing else is lost */
+          }
+          draw();
+        });
+
+        try {
+          guides.checked = localStorage.getItem(GUIDES) === 'show';
+        } catch (e) {
+          /* off, then */
+        }
+
+        /* ---- findings, made when Check is pressed ---- */
+
+        // The source the findings on show were made from, or null when none are.
+        var checked = null;
+
+        function note(text, extra) {
+          var p = document.createElement('p');
+          p.className = 'note' + (extra ? ' ' + extra : '');
+          p.textContent = text;
+          return p;
+        }
+
+        // Checks are a button here, where the command line runs them on every
+        // render, because the writer here is looking at the picture. The file's
+        // own diagram checks: line still says which kinds are looked for.
+        function check() {
+          findings.textContent = '';
+          findings.classList.remove('stale');
+          var result;
+          try {
+            result = reladraw.draw(source.value, viewing());
+          } catch (e) {
+            checked = null;
+            findings.appendChild(note('Nothing was checked: the diagram has an error, shown under the source.'));
+            return;
+          }
+          checked = source.value;
+          findings.appendChild(note('Edited since this check. Press Check again.', 'again'));
+          if (result.findings.length === 0) {
+            findings.appendChild(note('No findings.'));
+            return;
+          }
+          result.findings.forEach(function (finding) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.title = 'Select line ' + finding.line + ' in the source';
+            var where = document.createElement('b');
+            where.textContent = 'line ' + finding.line;
+            var kind = document.createElement('i');
+            kind.textContent = finding.kind;
+            item.appendChild(where);
+            item.appendChild(document.createTextNode(': '));
+            item.appendChild(kind);
+            item.appendChild(document.createTextNode(': ' + finding.message));
+            item.addEventListener('click', function () {
+              selectLine(finding.line);
+            });
+            findings.appendChild(item);
+          });
+        }
+
+        checkButton.addEventListener('click', check);
 
         /* ---- the theme picker writes the source, so the text says what is shown ---- */
 
@@ -1273,11 +1434,14 @@
         /* ---- the error names a line, so clicking it goes there ---- */
 
         error.addEventListener('click', function () {
-          if (errorLine === null) return;
+          if (errorLine !== null) selectLine(errorLine);
+        });
+
+        function selectLine(number) {
           var lines = source.value.split('\n');
           var start = 0;
-          for (var i = 0; i < errorLine - 1 && i < lines.length; i++) start += lines[i].length + 1;
-          var end = start + (lines[errorLine - 1] || '').length;
+          for (var i = 0; i < number - 1 && i < lines.length; i++) start += lines[i].length + 1;
+          var end = start + (lines[number - 1] || '').length;
           source.focus();
           source.setSelectionRange(start, end);
           // Chrome does not scroll a selection made from outside the field into
@@ -1285,7 +1449,7 @@
           // and re-entering is what makes it scroll.
           source.blur();
           source.focus();
-        });
+        }
 
         var pending = null;
         source.addEventListener('input', function () {

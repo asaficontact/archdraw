@@ -809,7 +809,7 @@ guide node column ""  below a  width: 10  height: 20
 
 **A guide does everything its kind does except draw.** It places things, holds children, is placed against, and shapes the lines through it. A `guide node` container's children are drawn; only its box and title aren't. That gives a reserved empty space, a column to align against, or a group with no outline.
 
-Guides are shown by whoever renders the file, not by the file: `--guides` on the command line. A file that explains its own construction, such as a tutorial, may say `diagram  guides: show`. Shown guides are dashed, in the theme's secondary color, and unfilled. Their look changes per kind with `default guide node`, `default guide edge`, `default guide point` and `default guide region`; a bare `default guide` is refused, listing the four.
+Guides are shown by whoever renders the file, not by the file: `--guides` on the command line, the Guides box in the playground. A file that explains its own construction, such as a tutorial, may say `diagram  guides: show`. Shown guides are dashed, in the theme's secondary color, and unfilled. Their look changes per kind with `default guide node`, `default guide edge`, `default guide point` and `default guide region`; a bare `default guide` is refused, listing the four.
 
 A container styled with no border is different: the same picture with guides hidden, but showing guides never reveals it. A guide box draws nothing, so it is left out of the overlap and overflow findings.
 
@@ -950,6 +950,8 @@ diagram.reladraw:12: warning(text-overlap): text "statements" covers the top-lef
 The file and line of the statement at fault, `warning` in a fixed spot, the kind, then what happened, saying where and how much in the file's unit, so the fix is plain without the picture. A finding never chooses a fix, though it may list the ways to write one.
 
 Kinds are turned on or off by name, in the file or on the command line: `diagram  checks: (edge-crossings: on, crowded-edge-ends: off)`, or `--checks "edge-crossings: on"`. A kind not mentioned keeps its default. A deliberate overlap is stated on the thing itself (`overlap: allow`), not turned off for the whole file.
+
+In the playground, where you are looking at the picture, checks run only when you press Check. The findings are listed under the diagram, apart from errors, and clicking one selects its line.
 
 ## The command line
 
@@ -1095,9 +1097,9 @@ New:
 - **A point's and a region's text**: `point mid "halfway" (above-right)`, `region trust "trust boundary" (inside top)`.
 - **Invisible containers**: `shape: none` with children.
 - **`padding:`** on a box or region.
-- **Guides**: `guide` before any node, line, point or region, shown with `--guides` or `diagram guides: show`.
+- **Guides**: `guide` before any node, line, point or region, shown with `--guides`, the playground's Guides box, or `diagram guides: show`.
 - **Drawing order**: `depth: behind x`, `depth: in front of x`.
-- **Findings**, seven kinds, printed one per line, with `reladraw check`, `checks:`, `--checks` and `--no-checks`.
+- **Findings**, seven kinds, printed one per line, with `reladraw check`, `checks:`, `--checks` and `--no-checks`. In the playground, a Check button lists them under the diagram.
 - **Numbers**: `px` on any number, a number starting at its decimal point (`.5`), and `size:` and `thickness:` as multiples.
 
 **0.16.0**

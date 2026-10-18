@@ -27,7 +27,7 @@
  * them.
  */
 
-import { DIRECTIONS, MARKS, POSITIONS, SIDES, PASSAGE_AXES } from './ast.js';
+import { DEFAULT_TARGETS, DIRECTIONS, MARKS, PARTS, POINT_TEXT_SIDES, POSITIONS, SIDES } from './ast.js';
 
 /** What a span of source is, for coloring. */
 export type TokenKind =
@@ -43,7 +43,7 @@ export type TokenKind =
   | 'name'
   /** `->`, `<-`, `<->`, and `--` or `-` for a plain line. */
   | 'arrow'
-  /** Placement and edge vocabulary: `right`, `of`, `level`, `with`, `and`, `between`, … */
+  /** Placement and line vocabulary: `right`, `of`, `even`, `with`, `and`, `between`, `via`'s stops, … */
   | 'relation'
   /** A `key:` opening an attribute or a bracketed modifier. */
   | 'attribute'
@@ -75,6 +75,14 @@ export const STATEMENT_KEYWORDS = ['node', 'edge', 'style', 'diagram', 'default'
 const DECLARES_NAME = ['node', 'style', 'icon', 'point', 'region', 'bundle'];
 
 /**
+ * Keywords that take another after them: `guide region channel`, `default
+ * leaf`, `default guide edge`. The words that may follow are the kinds a
+ * default is written for, so `leaf` and `container` color as keywords there.
+ */
+const LEADS = ['guide', 'default'];
+const FOLLOWERS = [...new Set(DEFAULT_TARGETS.flatMap((target) => target.split(' ')))];
+
+/**
  * Every word that says something about where a thing goes. Assembled from the
  * lists the parser itself reads, so a direction or a passage axis added there
  * colors here without anybody remembering to come back.
@@ -83,12 +91,14 @@ export const RELATION_WORDS: string[] = [
   ...DIRECTIONS,
   ...SIDES,
   ...POSITIONS,
-  ...Object.keys(PASSAGE_AXES),
+  // `tall text`, `server top-left`: the part of a node a placement names.
+  ...PARTS,
+  ...POINT_TEXT_SIDES,
   // The connecting words. `of` is optional after a direction, `and` joins
-  // targets, `between` opens a passage, `level with` is the alignment, and
-  // `on ... at ...` is the overlay. Note `of` and `at` are what tell the two
-  // position vocabularies apart: a direction is always followed by `of`, a
-  // named position always preceded by `at`.
+  // targets, `between` names the point between two things, `even with` is the
+  // alignment, and `on ... at ...` is the overlay. Note `of` and `at` are what
+  // tell the two position vocabularies apart: a direction is always followed
+  // by `of`, a named position always preceded by `at`.
   'of',
   'at',
   'on',
@@ -103,6 +113,23 @@ export const RELATION_WORDS: string[] = [
   'across',
   'from',
   'to',
+  // `(inside top)`, `outside router right`, `via: inside p top`.
+  'inside',
+  'outside',
+  // Lines (design.org 6): `straight down from z3`, `each child of pool`,
+  // `leg climb`, `via: through slot horizontal`.
+  'straight',
+  'each',
+  'child',
+  'leg',
+  'through',
+  'horizontal',
+  'vertical',
+  // A line's text (design.org 7.3): `(left of edge)`, `(on: longest level)`.
+  // `edge` here is the line the text belongs to; at the start of a line it is
+  // still the keyword, since the keyword is matched first.
+  'edge',
+  'level',
 ];
 
 /** Longest first, so `above-left` is not read as `above` followed by `-left`. */
@@ -187,6 +214,12 @@ const COMMENT = sticky(PATTERNS.comment);
 const KEYWORD = sticky(PATTERNS.keyword);
 const WORD = sticky(PATTERNS.word);
 const WORD_IN_GROUP = sticky(PATTERNS.wordInGroup);
+const ARROW = new RegExp(`^${PATTERNS.arrow}$`);
+
+/** Whether a whole word is an arrow, as the parser's `looksLikeArrow` asks. */
+function isArrow(word: string): boolean {
+  return ARROW.test(word);
+}
 
 function sticky(source: string): RegExp {
   return new RegExp(source, 'y');
@@ -235,9 +268,19 @@ export function highlightLine(line: string): Span[] {
 
     if (opening) {
       opening = false;
-      const keyword = match(KEYWORD, line, at);
+      let keyword = match(KEYWORD, line, at);
       if (keyword !== null) {
         push('keyword', at + keyword.length);
+        // `default guide edge` leads twice, so this loops.
+        while (LEADS.includes(keyword)) {
+          const space = match(SPACE, line, at);
+          if (space === null) break;
+          const next = match(WORD, line, at + space.length);
+          if (next === null || !FOLLOWERS.includes(next)) break;
+          push('plain', at + space.length);
+          push('keyword', at + next.length);
+          keyword = next;
+        }
         if (DECLARES_NAME.includes(keyword)) {
           const space = match(SPACE, line, at);
           if (space !== null) {
@@ -247,6 +290,15 @@ export function highlightLine(line: string): Span[] {
             // half-typed line whose second word is already an attribute, and
             // coloring that as a name would be a lie about what it is.
             if (name !== null && !name.endsWith(':')) push('name', at + name.length);
+          }
+        } else if (keyword === 'edge') {
+          // `edge req client -> api`: a word before the ends names the line,
+          // told apart by the arrow coming third rather than second, which is
+          // the parser's own test.
+          const head = /^([ \t]+)([^\s"]+)[ \t]+([^\s"]+)[ \t]+(\S+)/.exec(line.slice(at));
+          if (head && !isArrow(head[3]!) && isArrow(head[4]!) && !RELATION_WORDS.includes(head[2]!)) {
+            push('plain', at + head[1]!.length);
+            push('name', at + head[2]!.length);
           }
         }
         continue;

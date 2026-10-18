@@ -283,6 +283,10 @@ chrome_bin() {
 
 screenshot() {
   local in="$1" out="$2" size="${3:-1600x1200}" bg="${4:-ffffff}"
+  # A fifth argument waits that many milliseconds of the page's own time
+  # before the shot, for a page whose scripts run late (`page-run`).
+  local wait=()
+  [ -n "${5:-}" ] && wait=(--virtual-time-budget="$5")
   case "$bg" in
     white) bg=ffffff ;;
     black) bg=000000 ;;
@@ -304,6 +308,7 @@ screenshot() {
     --screenshot="$out" \
     --window-size="$size" \
     --default-background-color="$bg" \
+    "${wait[@]}" \
     "$in" >/dev/null 2>&1 || true
   if [ ! -f "$out" ]; then
     echo "$chrome produced no screenshot for $in" >&2
@@ -698,7 +703,9 @@ EOF
     # still narrow and only then resizes it to WxH, so anything measured
     # straight away is measured in the page's narrow, stacked layout.
     { sed '/<\/body>/,$d' docs/index.html; printf '<script>setTimeout(function () { %s }, 300);</script>\n</body>\n</html>\n' "$js"; } >"$copy"
-    screenshot "file://$copy" "$out" "${3:-1400x900}" "0d0d10"
+    # Without the time budget the shot is taken before the delayed script
+    # runs, once the page is as heavy as the redesign's (2026-10-17).
+    screenshot "file://$copy" "$out" "${3:-1400x900}" "0d0d10" 2000
     rm -f "$copy"
     echo "$out"
     ;;
