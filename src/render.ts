@@ -17,7 +17,7 @@ import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js'
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, textOnFill, themeColor, type Theme } from './themes.js';
-import { crossingPoints, planLines, traceRoute, type Point, type Route } from './lines.js';
+import { crossingPoints, planLines, traceRoute, visibleRuns, type Point, type Route } from './lines.js';
 import { KNOCKOUT_PAD, placeLineTexts } from './linetexts.js';
 import { plain, type Line, type Run } from './text.js';
 
@@ -869,23 +869,6 @@ function sharpPath(points: Point[]): string {
 }
 
 /** A line's path, from its pieces. */
-/** A line's pieces with those along a collapsed bundle left out, as the runs either side of each. */
-function visibleRuns(route: Route): { start: Point; pieces: Route['pieces'] }[] {
-  const runs: { start: Point; pieces: Route['pieces'] }[] = [];
-  let run: { start: Point; pieces: Route['pieces'] } = { start: route.start, pieces: [] };
-  route.pieces.forEach((piece, index) => {
-    const hidden = route.hidden!.some(([first, past]) => index >= first && index < past);
-    if (hidden) {
-      if (run.pieces.length > 0) runs.push(run);
-      run = { start: piece.to, pieces: [] };
-    } else {
-      run.pieces.push(piece);
-    }
-  });
-  if (run.pieces.length > 0) runs.push(run);
-  return runs;
-}
-
 function piecesPath(route: { start: Point; pieces: Route['pieces'] }): string {
   return [
     `M ${round(route.start.x)} ${round(route.start.y)}`,

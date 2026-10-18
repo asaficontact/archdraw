@@ -9,7 +9,7 @@
  */
 import { joinedToText, type Layout, type LayoutEdge, type LayoutNode } from './model.js';
 import { UNIT, arrowLength } from './constants.js';
-import { crossingPoints, describeEdge, planSides, traceRoute, type Route, type SideEnds } from './lines.js';
+import { crossingPoints, describeEdge, planSides, traceRoute, traceVisible, type Point, type Route, type SideEnds } from './lines.js';
 import { placeLineTexts, type PlacedText } from './linetexts.js';
 
 /**
@@ -22,6 +22,7 @@ export const CHECK_DEFAULTS = {
   'text-overlap': true,
   'text-overflow': true,
   'edge-node-overlap': true,
+  'edge-overlap': true,
   'crowded-edge-ends': true,
   'node-overlap': true,
   'edge-no-length': true,
@@ -106,9 +107,10 @@ export function findings(layout: Layout, checks: Checks): Finding[] {
   const found: Finding[] = [];
   if (checks['node-overlap']) found.push(...nodeOverlaps(layout));
   if (checks['text-overflow']) found.push(...textOverflows(layout));
-  if (checks['edge-node-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends'] || checks['edge-crossings'] || checks['text-overlap']) {
+  if (checks['edge-node-overlap'] || checks['edge-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends'] || checks['edge-crossings'] || checks['text-overlap']) {
     const plan = planSides(layout);
     if (checks['edge-node-overlap']) found.push(...edgeNodeOverlaps(layout, plan.routes));
+    if (checks['edge-overlap']) found.push(...edgeOverlaps(layout, plan.routes));
     if (checks['edge-no-length']) found.push(...edgesWithNoLength(layout, plan.routes));
     if (checks['crowded-edge-ends']) found.push(...crowdedEnds(plan.sides));
     if (checks['edge-crossings']) found.push(...edgeCrossings(layout, plan.routes));
@@ -398,6 +400,96 @@ function edgeCrossings(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[
     }
   });
   return found;
+}
+
+/**
+ * Two lines on one run for a stretch, of any length (design.org 10.1). Where
+ * they part, nothing shows which went which way, so unlike a crossing it is
+ * never readable. Lines that only touch or cross share nothing. A collapsed
+ * bundle is the one shared run that is meant: the bus is drawn once, and its
+ * members' way along it is left out of their traces here, so only what they
+ * share off the bus is reported. Reported once per pair, against the later
+ * line, with the length shared.
+ *
+ * Segments are swept by left edge, as boxes are for node-overlap, so each is
+ * compared only with those beside it.
+ */
+function edgeOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
+  type Segment = { edge: LayoutEdge; a: Point; b: Point; minX: number; maxX: number };
+  const segments: Segment[] = [];
+  for (const edge of layout.edges) {
+    if (edge.guide) continue;
+    for (const trace of traceVisible(routes.get(edge)!)) {
+      for (let index = 1; index < trace.length; index += 1) {
+        const a = trace[index - 1]!;
+        const b = trace[index]!;
+        if (Math.hypot(b.x - a.x, b.y - a.y) < EPSILON) continue;
+        segments.push({ edge, a, b, minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x) });
+      }
+    }
+  }
+  segments.sort((p, q) => p.minX - q.minX);
+  const reach = SAME_RUN + Math.max(0, ...segments.map((segment) => segment.edge.look.thickness));
+
+  const shared = new Map<string, { earlier: LayoutEdge; later: LayoutEdge; length: number; longest: { length: number; a: Point; b: Point } }>();
+  let active: Segment[] = [];
+  for (const segment of segments) {
+    active = active.filter((other) => other.maxX + reach >= segment.minX);
+    for (const other of active) {
+      if (other.edge === segment.edge) continue;
+      const length = runShared(segment, other, SAME_RUN + Math.max(segment.edge.look.thickness, other.edge.look.thickness));
+      if (length < EPSILON) continue;
+      const [earlier, later] = other.edge.line <= segment.edge.line ? [other.edge, segment.edge] : [segment.edge, other.edge];
+      const key = `${layout.edges.indexOf(earlier)} ${layout.edges.indexOf(later)}`;
+      const entry = shared.get(key) ?? { earlier, later, length: 0, longest: { length: 0, a: segment.a, b: segment.b } };
+      entry.length += length;
+      if (length > entry.longest.length) entry.longest = { length, a: segment.a, b: segment.b };
+      shared.set(key, entry);
+    }
+    active.push(segment);
+  }
+
+  return [...shared.values()].map(({ earlier, later, length, longest }) => {
+    const across = Math.abs(longest.b.x - longest.a.x);
+    const down = Math.abs(longest.b.y - longest.a.y);
+    const run = down < EPSILON ? 'a level run' : across < EPSILON ? 'an upright run' : 'one run';
+    return new Finding(
+      'edge-overlap',
+      `line ${describeEdge(later)} runs on line ${describeEdge(earlier)} for ${units(length)}, on ${run}; ` +
+        `say where one of them goes, or put both in a collapsed bundle if they share the way on purpose`,
+      later.line,
+    );
+  });
+}
+
+/**
+ * Two lines whose centers are no further apart than this plus the thicker
+ * one's width leave less than a pixel between them, and read as one.
+ */
+const SAME_RUN = 1;
+
+/**
+ * How much of segment `p` runs on segment `q`: zero unless they head the same
+ * way, or opposite ways, and then the length of the stretch where both are
+ * and `q` is within `near` of `p` at each end of it.
+ */
+function runShared(p: { a: Point; b: Point }, q: { a: Point; b: Point }, near: number): number {
+  const length = Math.hypot(p.b.x - p.a.x, p.b.y - p.a.y);
+  const along = { x: (p.b.x - p.a.x) / length, y: (p.b.y - p.a.y) / length };
+  const qLength = Math.hypot(q.b.x - q.a.x, q.b.y - q.a.y);
+  const sine = Math.abs(along.x * (q.b.y - q.a.y) - along.y * (q.b.x - q.a.x)) / qLength;
+  if (sine > 0.05) return 0;
+  const position = (point: Point) => along.x * (point.x - p.a.x) + along.y * (point.y - p.a.y);
+  const offset = (point: Point) => along.x * (point.y - p.a.y) - along.y * (point.x - p.a.x);
+  const [first, last] = position(q.a) <= position(q.b) ? [q.a, q.b] : [q.b, q.a];
+  const start = Math.max(0, position(first));
+  const end = Math.min(length, position(last));
+  if (end - start < EPSILON) return 0;
+  // q's distance from p's line, at a place along p, read off q itself.
+  const span = position(last) - position(first);
+  const offsetAt = (at: number) => offset(first) + ((offset(last) - offset(first)) * (at - position(first))) / span;
+  if (Math.abs(offsetAt(start)) > near || Math.abs(offsetAt(end)) > near) return 0;
+  return end - start;
 }
 
 /**

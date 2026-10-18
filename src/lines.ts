@@ -1932,6 +1932,28 @@ export function traceRoute(route: Route): Point[] {
   return tracePieces(route.start, route.pieces);
 }
 
+/** A line's pieces with those along a collapsed bundle left out, as the runs either side of each. */
+export function visibleRuns(route: Route): { start: Point; pieces: Route['pieces'] }[] {
+  const runs: { start: Point; pieces: Route['pieces'] }[] = [];
+  let run: { start: Point; pieces: Route['pieces'] } = { start: route.start, pieces: [] };
+  route.pieces.forEach((piece, index) => {
+    const hidden = route.hidden?.some(([first, past]) => index >= first && index < past) ?? false;
+    if (hidden) {
+      if (run.pieces.length > 0) runs.push(run);
+      run = { start: piece.to, pieces: [] };
+    } else {
+      run.pieces.push(piece);
+    }
+  });
+  if (run.pieces.length > 0) runs.push(run);
+  return runs;
+}
+
+/** The line as drawn, as polylines: its trace with any stretch along a collapsed bundle left out. */
+export function traceVisible(route: Route): Point[][] {
+  return visibleRuns(route).map((run) => tracePieces(run.start, run.pieces));
+}
+
 /**
  * Where two drawn lines cross, with the way each runs there. Lines that only
  * touch or run together don't cross, and nor do two lines nearer than `clear`

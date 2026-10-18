@@ -972,6 +972,7 @@ An **error** means the file can't be drawn: an unknown key, two placements on on
 | `text-overlap` | a text on another text, on a line it doesn't belong to, or on a node it doesn't belong to | on |
 | `text-overflow` | a text running out of a box whose stated size is too small for it | on |
 | `edge-node-overlap` | a line across a node that isn't one of its ends, or through its own ends | on |
+| `edge-overlap` | two lines on one run for a stretch, however short; a collapsed bundle's bus, shared on purpose, is not reported | on |
 | `crowded-edge-ends` | several line ends bunched on a side too short to space them | on |
 | `node-overlap` | two nodes on one spot that no layout, `inside`, `on` or `overlap: allow` accounts for | on |
 | `edge-no-length` | a line between two boxes that touch, drawn as its marks at the seam | on |
@@ -1141,7 +1142,7 @@ New:
 - **`padding:`** on a box or region.
 - **Guides**: `guide` before any node, line, point or region, shown with `--guides`, the playground's Guides box, or `diagram guides: show`.
 - **Drawing order**: `depth: behind x`, `depth: in front of x`.
-- **Findings**, seven kinds, printed one per line, with `reladraw check`, `checks:`, `--checks` and `--no-checks`. In the playground, a Check button lists them under the diagram.
+- **Findings**, eight kinds, printed one per line, with `reladraw check`, `checks:`, `--checks` and `--no-checks`. In the playground, a Check button lists them under the diagram.
 - **Numbers**: `px` on any number, a number starting at its decimal point (`.5`), and `size:` and `thickness:` as multiples.
 
 **0.16.0**
