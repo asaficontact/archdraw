@@ -236,6 +236,8 @@ export interface LayoutEdge {
   evenAt?: { from?: Rect; to?: Rect };
   /** An end on another line (`edge log audit -> req`): the line it is on, for that end. */
   onLine?: { from?: LayoutEdge; to?: LayoutEdge };
+  /** An end at a named point or region (`edge a -> b` between two points): which kind, for that end. */
+  onMark?: { from?: 'point' | 'region'; to?: 'point' | 'region' };
   /** What the line's bracket says, checked and with every default filled in. */
   look: LineLook;
   attrs: Attrs;

@@ -274,9 +274,9 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   // Edges are resolved to nodes before anything is sized, because a labeled
   // edge claims room in the gap it crosses and so has to be in hand while the
   // gaps are being worked out. Nothing here reads geometry.
-  const edges = buildEdges(statements, byName, styles, defaults, measurer, fontSize);
-
   const named = collectNamed(doc.statements, byName);
+  const edges = buildEdges(statements, byName, named, styles, defaults, measurer, fontSize);
+
   const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
   const markTexts = measureMarkTexts(named, measurer, fontSize);
   const regionTexts = new Map([...markTexts].flatMap(([name, text]) => (text.region ? [[name, text.region] as const] : [])));
@@ -291,6 +291,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
     ...edges.flatMap((edge) => [edge.evenAt?.from, edge.evenAt?.to].filter((at) => at !== undefined)),
     ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.target ? [text.target] : []))),
   ]);
+  standInForMarks(edges, marks);
 
   const extent = bounds(nodes, marks);
   const look = (kind: 'node' | 'edge' | 'point' | 'region') => defaults.get(`guide ${kind}`) ?? {};
@@ -1300,6 +1301,7 @@ function markAt(end: 'from' | 'to', stmt: EdgeStmt, appearance: Attrs, what: str
 function buildEdges(
   statements: Stmt[],
   byName: Map<string, LayoutNode>,
+  named: Map<string, PointStmt | RegionStmt>,
   styles: Map<string, Attrs>,
   defaults: Map<DefaultTarget, Attrs>,
   measurer: Measurer,
@@ -1311,9 +1313,14 @@ function buildEdges(
   const lineNames = new Map<string, number>();
   for (const stmt of statements) {
     if ((stmt.kind !== 'edge' && stmt.kind !== 'bundle') || stmt.name === undefined) continue;
-    if (byName.has(stmt.name) || lineNames.has(stmt.name)) {
+    if (byName.has(stmt.name) || named.has(stmt.name) || lineNames.has(stmt.name)) {
+      const was = byName.has(stmt.name)
+        ? "a node's"
+        : named.has(stmt.name)
+          ? `the ${named.get(stmt.name)!.kind}'s on line ${named.get(stmt.name)!.line}`
+          : `the line's on line ${lineNames.get(stmt.name)}`;
       throw new SourceError(
-        `line "${stmt.name}": the name is already ${byName.has(stmt.name) ? "a node's" : `the line's on line ${lineNames.get(stmt.name)}`} — a name belongs to one thing`,
+        `line "${stmt.name}": the name is already ${was} — a name belongs to one thing`,
         stmt.line,
       );
     }
@@ -1332,9 +1339,17 @@ function buildEdges(
   // An end on another line (`edge log audit -> req`) has no box: it stands on
   // a point of that line, which `lines.ts` fills in once the line is drawn.
   const onLines = new Map<string, LayoutNode>();
+  // An end at a named point or region stands on a box of its own, put where
+  // the mark is once everything is placed (`standInForMarks`).
+  const onMarks = new Map<string, LayoutNode>();
   const endNode = (name: string, which: string, line: number): LayoutNode => {
     const node = byName.get(name);
     if (node) return node;
+    if (named.has(name)) {
+      const mark = onMarks.get(name) ?? placeholder(name, line);
+      onMarks.set(name, mark);
+      return mark;
+    }
     if (!lineNames.has(name)) throw new SourceError(`edge ${which} "${name}", which does not exist`, line);
     const point = onLines.get(name) ?? placeholder(name, line);
     onLines.set(name, point);
@@ -1431,6 +1446,14 @@ function buildEdges(
       attrs: stmt.attrs,
       appearance,
       ...(stmt.guide ? { guide: true } : {}),
+      ...(named.has(stmt.from) || named.has(stmt.to)
+        ? {
+            onMark: {
+              ...(named.has(stmt.from) ? { from: named.get(stmt.from)!.kind } : {}),
+              ...(named.has(stmt.to) ? { to: named.get(stmt.to)!.kind } : {}),
+            },
+          }
+        : {}),
       line: stmt.line,
     });
     pending.push({
@@ -1453,6 +1476,26 @@ function buildEdges(
     };
   }
   return edges;
+}
+
+/**
+ * An end at a named point or region is a box where the mark is: of no size at
+ * a point, the region's rectangle at a region. Done after the page is
+ * normalized, since the marks move with it.
+ */
+function standInForMarks(edges: LayoutEdge[], marks: LayoutMark[]): void {
+  const byName = new Map(marks.map((mark) => [mark.name, mark]));
+  for (const edge of edges) {
+    for (const which of ['from', 'to'] as const) {
+      if (edge.onMark?.[which] === undefined) continue;
+      const node = edge[which];
+      const mark = byName.get(node.name)!;
+      node.x = mark.x;
+      node.y = mark.y;
+      node.width = mark.width;
+      node.height = mark.height;
+    }
+  }
 }
 
 /** A box of no size standing for a point on a line, which `lines.ts` puts in place once the line is drawn. */

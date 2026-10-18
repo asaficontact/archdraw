@@ -240,7 +240,8 @@ interface CopySet {
  */
 function copySets(edges: LayoutEdge[], ends: Map<LayoutEdge, [End, End]>): Map<LayoutEdge, CopySet> {
   const filed = new Map<string, CopySet>();
-  const plain = (end: End): end is End & { spec: { kind: 'side' } } => end.spec.kind === 'side' && end.spec.after === undefined && !end.onLine;
+  const plain = (end: End): end is End & { spec: { kind: 'side' } } =>
+    end.spec.kind === 'side' && end.spec.after === undefined && !end.onLine && end.edge.onMark?.[end.which] !== 'point';
   const keyOf = (end: End): string => `${end.node.name}\n${(end.spec as { side: Side }).side}`;
   for (const edge of edges) {
     if (edge.via !== undefined || edge.straight !== undefined) continue;
@@ -644,6 +645,11 @@ function endOf(edge: LayoutEdge, which: 'from' | 'to'): End {
         edge.line,
       );
     }
+  } else if (edge.onMark?.[which] === 'point' && written !== undefined) {
+    throw new SourceError(
+      `${subject}: "${which}: ${written}" — ${node.name} is a point, which has no sides or parts, so the line ${which === 'from' ? 'starts' : 'ends'} exactly on it; leave out ${which}:`,
+      edge.line,
+    );
   } else {
     const farOnLine = edge.onLine?.[which === 'from' ? 'to' : 'from'] !== undefined;
     spec = written !== undefined
@@ -896,12 +902,12 @@ function placeEnd(end: End, context: Context): void {
   }
   if (spec.kind === 'aligned') {
     // The line straight `way` from the named thing's center, and where it first meets this end's box or line.
-    const from = context.layout.nodes.find((node) => node.name === spec.name);
+    const from = context.layout.nodes.find((node) => node.name === spec.name) ?? context.layout.marks.find((mark) => mark.name === spec.name);
     const fromLine = context.lines.get(spec.name);
     if (from === undefined && fromLine === undefined) {
       throw new SourceError(`${subject}: "${end.which}: ${spec.written}" names ${spec.name}, which does not exist`, end.edge.line);
     }
-    const origin = from ? centerOf(faceOfNode(from)) : alongLength(traceRoute(context.routes.get(fromLine!)!), 1 / 2);
+    const origin = from ? centerOf('body' in from ? faceOfNode(from) : { ...from, round: false }) : alongLength(traceRoute(context.routes.get(fromLine!)!), 1 / 2);
     const way = WAY_VECTOR[spec.way];
     if (end.onLine) {
       const hit = rayHit(origin, way, traceRoute(context.routes.get(end.onLine)!));
@@ -922,7 +928,7 @@ function placeEnd(end: End, context: Context): void {
     if (coordinate < low - 0.5 || coordinate > high + 0.5 || ahead < -0.5) {
       throw new SourceError(
         `${subject}: the line straight ${spec.way} from ${spec.name}'s center never meets ${end.node.name} — ` +
-          `${ahead < -0.5 ? `${end.node.name} is not ${spec.way} from it` : `it passes ${end.node.name}'s ${side} side`}; nothing is bent to reach it`,
+          `${ahead < -0.5 ? `${end.node.name} is not ${spec.way} from it` : end.edge.onMark?.[end.which] === 'point' ? `it passes beside ${end.node.name}` : `it passes ${end.node.name}'s ${side} side`}; nothing is bent to reach it`,
         end.edge.line,
       );
     }
@@ -1151,6 +1157,12 @@ function spreadSides(ends: End[]): SideEnds[] {
   const shared: SideEnds[] = [];
   const groups = new Map<string, End[]>();
   for (const end of ends) {
+    // At a named point every end lands on the point itself, heading out of
+    // the side that faces its far end; nothing spreads, and nothing crowds.
+    if (end.edge.onMark?.[end.which] === 'point' && end.spec.kind === 'side') {
+      end.at = centerOf(end.face);
+      continue;
+    }
     const side = sideOf(end);
     if (side === undefined) continue;
     const key = `${end.node.name}\n${side}`;

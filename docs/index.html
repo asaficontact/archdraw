@@ -3747,7 +3747,7 @@ function planSides(layout) {
  */
 function copySets(edges, ends) {
     const filed = new Map();
-    const plain = (end) => end.spec.kind === 'side' && end.spec.after === undefined && !end.onLine;
+    const plain = (end) => end.spec.kind === 'side' && end.spec.after === undefined && !end.onLine && end.edge.onMark?.[end.which] !== 'point';
     const keyOf = (end) => `${end.node.name}\n${end.spec.side}`;
     for (const edge of edges) {
         if (edge.via !== undefined || edge.straight !== undefined)
@@ -4134,6 +4134,9 @@ function endOf(edge, which) {
             throw new SourceError(`${subject}: "${which}: ${written}" names a part of a box, and ${node.name} is a line — say how far along it, such as ${which}: at 1/3`, edge.line);
         }
     }
+    else if (edge.onMark?.[which] === 'point' && written !== undefined) {
+        throw new SourceError(`${subject}: "${which}: ${written}" — ${node.name} is a point, which has no sides or parts, so the line ${which === 'from' ? 'starts' : 'ends'} exactly on it; leave out ${which}:`, edge.line);
+    }
     else {
         const farOnLine = edge.onLine?.[which === 'from' ? 'to' : 'from'] !== undefined;
         spec = written !== undefined
@@ -4366,12 +4369,12 @@ function placeEnd(end, context) {
     }
     if (spec.kind === 'aligned') {
         // The line straight `way` from the named thing's center, and where it first meets this end's box or line.
-        const from = context.layout.nodes.find((node) => node.name === spec.name);
+        const from = context.layout.nodes.find((node) => node.name === spec.name) ?? context.layout.marks.find((mark) => mark.name === spec.name);
         const fromLine = context.lines.get(spec.name);
         if (from === undefined && fromLine === undefined) {
             throw new SourceError(`${subject}: "${end.which}: ${spec.written}" names ${spec.name}, which does not exist`, end.edge.line);
         }
-        const origin = from ? centerOf(faceOfNode(from)) : alongLength(traceRoute(context.routes.get(fromLine)), 1 / 2);
+        const origin = from ? centerOf('body' in from ? faceOfNode(from) : { ...from, round: false }) : alongLength(traceRoute(context.routes.get(fromLine)), 1 / 2);
         const way = WAY_VECTOR[spec.way];
         if (end.onLine) {
             const hit = rayHit(origin, way, traceRoute(context.routes.get(end.onLine)));
@@ -4391,7 +4394,7 @@ function placeEnd(end, context) {
         const ahead = (point.x - origin.x) * way.x + (point.y - origin.y) * way.y;
         if (coordinate < low - 0.5 || coordinate > high + 0.5 || ahead < -0.5) {
             throw new SourceError(`${subject}: the line straight ${spec.way} from ${spec.name}'s center never meets ${end.node.name} — ` +
-                `${ahead < -0.5 ? `${end.node.name} is not ${spec.way} from it` : `it passes ${end.node.name}'s ${side} side`}; nothing is bent to reach it`, end.edge.line);
+                `${ahead < -0.5 ? `${end.node.name} is not ${spec.way} from it` : end.edge.onMark?.[end.which] === 'point' ? `it passes beside ${end.node.name}` : `it passes ${end.node.name}'s ${side} side`}; nothing is bent to reach it`, end.edge.line);
         }
         end.at = point;
         end.headings = [SIDE_NORMAL[side]];
@@ -4610,6 +4613,12 @@ function spreadSides(ends) {
     const shared = [];
     const groups = new Map();
     for (const end of ends) {
+        // At a named point every end lands on the point itself, heading out of
+        // the side that faces its far end; nothing spreads, and nothing crowds.
+        if (end.edge.onMark?.[end.which] === 'point' && end.spec.kind === 'side') {
+            end.at = centerOf(end.face);
+            continue;
+        }
         const side = sideOf(end);
         if (side === undefined)
             continue;
@@ -10998,11 +11007,11 @@ function markShape(mark, color, background) {
     }
 }
 /**
- * Whether a line's end is free of any box: on another line, or a bundle's own
- * end. A dot there is a junction, centered on the point.
+ * Whether a line's end is free of any box: on another line, at a named point,
+ * or a bundle's own end. A dot there is a junction, centered on the point.
  */
 function freeEnd(edge, which) {
-    return edge.bundle !== undefined || edge.onLine?.[which] !== undefined;
+    return edge.bundle !== undefined || edge.onLine?.[which] !== undefined || edge.onMark?.[which] === 'point';
 }
 /**
  * One marker, drawn at either end: `auto-start-reverse` turns it round at the
@@ -11375,8 +11384,8 @@ function resolve(doc, options = {}) {
     // Edges are resolved to nodes before anything is sized, because a labeled
     // edge claims room in the gap it crosses and so has to be in hand while the
     // gaps are being worked out. Nothing here reads geometry.
-    const edges = buildEdges(statements, byName, styles, defaults, measurer, fontSize);
     const named = collectNamed(doc.statements, byName);
+    const edges = buildEdges(statements, byName, named, styles, defaults, measurer, fontSize);
     const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
     const markTexts = measureMarkTexts(named, measurer, fontSize);
     const regionTexts = new Map([...markTexts].flatMap(([name, text]) => (text.region ? [[name, text.region]] : [])));
@@ -11391,6 +11400,7 @@ function resolve(doc, options = {}) {
         ...edges.flatMap((edge) => [edge.evenAt?.from, edge.evenAt?.to].filter((at) => at !== undefined)),
         ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.target ? [text.target] : []))),
     ]);
+    standInForMarks(edges, marks);
     const extent = bounds(nodes, marks);
     const look = (kind) => defaults.get(`guide ${kind}`) ?? {};
     return {
@@ -12255,7 +12265,7 @@ function markAt(end, stmt, appearance, what) {
     const given = appearance[key];
     return given === undefined ? 'none' : check(given);
 }
-function buildEdges(statements, byName, styles, defaults, measurer, fontSize) {
+function buildEdges(statements, byName, named, styles, defaults, measurer, fontSize) {
     const edges = [];
     // A line's name is used before or after it is written, so every name is
     // known before any end is looked up. A name belongs to one thing.
@@ -12263,8 +12273,13 @@ function buildEdges(statements, byName, styles, defaults, measurer, fontSize) {
     for (const stmt of statements) {
         if ((stmt.kind !== 'edge' && stmt.kind !== 'bundle') || stmt.name === undefined)
             continue;
-        if (byName.has(stmt.name) || lineNames.has(stmt.name)) {
-            throw new SourceError(`line "${stmt.name}": the name is already ${byName.has(stmt.name) ? "a node's" : `the line's on line ${lineNames.get(stmt.name)}`} — a name belongs to one thing`, stmt.line);
+        if (byName.has(stmt.name) || named.has(stmt.name) || lineNames.has(stmt.name)) {
+            const was = byName.has(stmt.name)
+                ? "a node's"
+                : named.has(stmt.name)
+                    ? `the ${named.get(stmt.name).kind}'s on line ${named.get(stmt.name).line}`
+                    : `the line's on line ${lineNames.get(stmt.name)}`;
+            throw new SourceError(`line "${stmt.name}": the name is already ${was} — a name belongs to one thing`, stmt.line);
         }
         lineNames.set(stmt.name, stmt.line);
     }
@@ -12284,10 +12299,18 @@ function buildEdges(statements, byName, styles, defaults, measurer, fontSize) {
     // An end on another line (`edge log audit -> req`) has no box: it stands on
     // a point of that line, which `lines.ts` fills in once the line is drawn.
     const onLines = new Map();
+    // An end at a named point or region stands on a box of its own, put where
+    // the mark is once everything is placed (`standInForMarks`).
+    const onMarks = new Map();
     const endNode = (name, which, line) => {
         const node = byName.get(name);
         if (node)
             return node;
+        if (named.has(name)) {
+            const mark = onMarks.get(name) ?? placeholder(name, line);
+            onMarks.set(name, mark);
+            return mark;
+        }
         if (!lineNames.has(name))
             throw new SourceError(`edge ${which} "${name}", which does not exist`, line);
         const point = onLines.get(name) ?? placeholder(name, line);
@@ -12384,6 +12407,14 @@ function buildEdges(statements, byName, styles, defaults, measurer, fontSize) {
             attrs: stmt.attrs,
             appearance,
             ...(stmt.guide ? { guide: true } : {}),
+            ...(named.has(stmt.from) || named.has(stmt.to)
+                ? {
+                    onMark: {
+                        ...(named.has(stmt.from) ? { from: named.get(stmt.from).kind } : {}),
+                        ...(named.has(stmt.to) ? { to: named.get(stmt.to).kind } : {}),
+                    },
+                }
+                : {}),
             line: stmt.line,
         });
         pending.push({
@@ -12408,6 +12439,26 @@ function buildEdges(statements, byName, styles, defaults, measurer, fontSize) {
         };
     }
     return edges;
+}
+/**
+ * An end at a named point or region is a box where the mark is: of no size at
+ * a point, the region's rectangle at a region. Done after the page is
+ * normalized, since the marks move with it.
+ */
+function standInForMarks(edges, marks) {
+    const byName = new Map(marks.map((mark) => [mark.name, mark]));
+    for (const edge of edges) {
+        for (const which of ['from', 'to']) {
+            if (edge.onMark?.[which] === undefined)
+                continue;
+            const node = edge[which];
+            const mark = byName.get(node.name);
+            node.x = mark.x;
+            node.y = mark.y;
+            node.width = mark.width;
+            node.height = mark.height;
+        }
+    }
 }
 /** A box of no size standing for a point on a line, which `lines.ts` puts in place once the line is drawn. */
 function placeholder(name, line) {

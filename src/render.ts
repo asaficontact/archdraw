@@ -1135,11 +1135,11 @@ function markShape(mark: Mark, color: string, background: string): string {
 }
 
 /**
- * Whether a line's end is free of any box: on another line, or a bundle's own
- * end. A dot there is a junction, centered on the point.
+ * Whether a line's end is free of any box: on another line, at a named point,
+ * or a bundle's own end. A dot there is a junction, centered on the point.
  */
 function freeEnd(edge: LayoutEdge, which: 'from' | 'to'): boolean {
-  return edge.bundle !== undefined || edge.onLine?.[which] !== undefined;
+  return edge.bundle !== undefined || edge.onLine?.[which] !== undefined || edge.onMark?.[which] === 'point';
 }
 
 /**

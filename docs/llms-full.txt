@@ -802,7 +802,20 @@ edge cat -- animal  style: inherits
 
 **A line may be named** by a word before its ends: `edge req client -> api`. Other lines can then end on it, pass along it, or be drawn behind it.
 
-The ends name only things, boxes or lines; `from:` and `to:` say where on them.
+**Each end is one name**: a box, a line, or a named point or region. `from:` and `to:` say where on it. The word before the ends, if there is one, is always the line's name, so `edge req end -> client` is a line named `req` from `end` to `client`.
+
+```
+node c
+node d  right of c (gap: wide)
+point a  2 below c bottom-center
+point b  2 above d top-center
+region pair  c top-left to d bottom-right
+guide edge rail a -> b
+edge c -> d  via: rail
+edge pair -> a
+```
+
+**An end at a named point is exactly on it.** A point has no sides, so `from:` or `to:` on that end is refused; the line heads out toward its far end, along the axis facing it, as a side would. Several lines at one point meet there, and the arrowhead or dot sits on the point, as on another line. **An end at a region is an end at a box** the size of the region: sides, spreading and every `from:` and `to:` work as on a node.
 
 ### Where a line ends
 
@@ -831,7 +844,7 @@ edge bin -> engine  from: right, even with b  to: left, even with b
 
 **An end may be on another line.** `edge audit -> req` ends on the line `req`, at its middle, and `to: at 1/3` a third of the way along it. An end may also start where another line meets the same box: on a line out of `api`, `from: req end` leaves from the point where `req` ends on `api`; naming a box the line doesn't start at is refused. Lines ending on lines must be drawable in some order, so a loop of them is refused.
 
-**A line may leave straight one way and stop at what it meets.** `edge d1 -- bus  straight down` ends where the line straight down from `d1`'s center meets `bus`. A miss is refused, never bent. This is also how a line runs level: `straight right` leaves at its own height. The longer form names any box: `to: down from z3`, or `from: left from bin` to take the height from the far end.
+**A line may leave straight one way and stop at what it meets.** `edge d1 -- bus  straight down` ends where the line straight down from `d1`'s center meets `bus`. A miss is refused, never bent. This is also how a line runs level: `straight right` leaves at its own height. The longer form names any box or named point or region: `to: down from z3`, or `from: left from bin` to take the height from the far end.
 
 ```
 node bus "bus"  width: 40
@@ -1301,6 +1314,7 @@ New:
 - **Line ends at points**: `from: bottom-center`, `to: left 3/4 down`, `from: center`, an end on another line, `straight down`, and a line's place among others on a side, `to: top, right of z`.
 - **A line's end even with another thing**: `from: right, even with cat1` leaves the right side level with `cat1`, and heads straight out. Lines out of a tall box can each run level with a box beside it without working out fractions of its height. A height that misses the side is refused.
 - **Named lines** and points on them: `req start`, `req end`, `req at 1/3`.
+- **A line between points and regions**: `edge a -> b` where `a` and `b` are named points, regions or boxes, in any mix, guide lines included. A point end is exactly on the point; a region end is like a box's.
 - **Bundles**, parallel, collapsed or fanned, with a stated `order:`, and `edge each child of a -> b`.
 - **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`.
 - **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down x`), and a part of the target (`top even with x bottom`).
