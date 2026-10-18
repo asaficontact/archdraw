@@ -436,7 +436,9 @@ function edgeOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
   for (const segment of segments) {
     active = active.filter((other) => other.maxX + reach >= segment.minX);
     for (const other of active) {
-      if (other.edge === segment.edge) continue;
+      // Lines one statement draws, `edge a -> b, c` or `each child of`, share
+      // their way on purpose, as a collapsed bundle's members do.
+      if (other.edge === segment.edge || other.edge.line === segment.edge.line) continue;
       const length = runShared(segment, other, SAME_RUN + Math.max(segment.edge.look.thickness, other.edge.look.thickness));
       if (length < EPSILON) continue;
       const [earlier, later] = other.edge.line <= segment.edge.line ? [other.edge, segment.edge] : [segment.edge, other.edge];

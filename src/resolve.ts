@@ -268,7 +268,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   const defaults = collectDefaults(doc.statements, styles);
   const icons = collectIcons(doc.statements, options.readIconFile);
   const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults, icons);
-  // From here on, `edge each child of a -> b` is the lines it stands for.
+  // From here on, `edge each child of a -> b` and `edge a -> b, c` are the lines they stand for.
   const statements = expandEach(doc.statements, byName);
 
   // Edges are resolved to nodes before anything is sized, because a labeled
@@ -319,6 +319,12 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
  */
 function expandEach(statements: Stmt[], byName: Map<string, LayoutNode>): Stmt[] {
   return statements.flatMap((stmt) => {
+    if (stmt.kind === 'edge' && stmt.several !== undefined) {
+      // `edge a -> b, c, d`: one line to each, in the order written. A text is
+      // drawn once, on the first, so a text by the shared end labels the group.
+      const { several, ...one } = stmt;
+      return several.names.map((name, index) => ({ ...one, texts: index === 0 ? one.texts : [], [several.side]: name }) as EdgeStmt);
+    }
     if (stmt.kind !== 'edge' || stmt.each === undefined) return [stmt];
     const name = stmt[stmt.each];
     const said = `edge ${stmt.each === 'from' ? 'each child of ' : ''}${stmt.from} ${stmt.arrow} ${stmt.each === 'to' ? 'each child of ' : ''}${stmt.to}`;

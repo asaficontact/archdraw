@@ -769,6 +769,16 @@ A parallel bundle's path is drawn only with guides; a collapsed one is drawn, st
 
 `edge each child of a -> b` is one line from each direct child of `a` into `b`, and stays true as children are added; `a -> each child of b` likewise. Both ends is refused: pairing the children of two containers has no order to go by.
 
+### Lines to several ends
+
+`edge a -> b, c, d` is one line from `a` to each of `b`, `c` and `d`; `b, c and d -> a` likewise into `a`. Everything after the ends applies to every line, so `from: right-center` sends all three out of one point, to fan from there:
+
+```
+edge a -> b, c, d  from: right-center  to: left
+```
+
+Lines one statement draws share their way on purpose, so a stretch they share isn't reported as `edge-overlap`; three separate statements naming the same point are. A text is drawn once, on the line to the first name, so `"fan" (at: start)` labels the group where its lines leave together. A list on both ends is refused, for the same reason as `each child of` on both, and so is a name, which belongs to one line.
+
 ### Crossings
 
 Where two lines cross, the later-written one is drawn on top and jumps the earlier: `crossing: gap` (the default, a short break), `arc`, `square` or `none`, on the later line. A line never jumps within reach of its own ends. Lines are drawn over boxes. [`depth:`](#drawing-order) changes either.
@@ -972,7 +982,7 @@ An **error** means the file can't be drawn: an unknown key, two placements on on
 | `text-overlap` | a text on another text, on a line it doesn't belong to, or on a node it doesn't belong to | on |
 | `text-overflow` | a text running out of a box whose stated size is too small for it | on |
 | `edge-node-overlap` | a line across a node that isn't one of its ends, or through its own ends | on |
-| `edge-overlap` | two lines on one run for a stretch, however short; a collapsed bundle's bus, shared on purpose, is not reported | on |
+| `edge-overlap` | two lines on one run for a stretch, however short; a collapsed bundle's bus, and lines from one statement such as `edge a -> b, c`, shared on purpose, are not reported | on |
 | `crowded-edge-ends` | several line ends bunched on a side too short to space them | on |
 | `node-overlap` | two nodes on one spot that no layout, `inside`, `on` or `overlap: allow` accounts for | on |
 | `edge-no-length` | a line between two boxes that touch, drawn as its marks at the seam | on |
@@ -1130,7 +1140,7 @@ New:
 - **A line's end even with another thing**: `from: right, even with cat1` leaves the right side level with `cat1`, and heads straight out. Lines out of a tall box can each run level with a box beside it without working out fractions of its height. A height that misses the side is refused.
 - **Named lines** and points on them: `req start`, `req end`, `req at 1/3`.
 - **A line between points and regions**: `edge a -> b` where `a` and `b` are named points, regions or boxes, in any mix, guide lines included. A point end is exactly on the point; a region end is like a box's.
-- **Bundles**, parallel, collapsed or fanned, with a stated `order:`, and `edge each child of a -> b`.
+- **Bundles**, parallel, collapsed or fanned, with a stated `order:`, `edge each child of a -> b`, and lines to several ends, `edge a -> b, c, d`.
 - **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`.
 - **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down x`), and a part of the target (`top even with x bottom`).
 - **Sizes**: `width:`, `height:` and the four limits, from numbers, measurements of other boxes, sums, spans and `larger of`.

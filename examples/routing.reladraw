@@ -32,14 +32,13 @@ edge v -> w  from: bottom  to: bottom  via: w right
 
 // A fan of three, 2026-09-27. The lines to the top and bottom nodes ran level
 // with the middle one, straight through it, out past the column and back.
-// All three now leave from one point and fan out.
+// All three now leave from one point and fan out, written as one statement so
+// the stretch they share is said rather than happened on.
 node a "A"  below q  (gap: wide)
 node c "C"  right of a  (gap: wide)
 node b "B"  above c  (gap: 1)
 node d "D"  below c  (gap: 1)
-edge a -> b  "fan" (at: start, above edge)  from: right-center  to: left
-edge a -> c  from: right-center  to: left
-edge a -> d  from: right-center  to: left
+edge a -> b, c, d  "fan" (at: start, above edge)  from: right-center  to: left
 
 // The Cache case, 2026-09-27. The curved line dipped through Cache, while the
 // same line drawn square happened to clear it. It now runs under Cache.

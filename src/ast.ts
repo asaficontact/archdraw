@@ -614,6 +614,8 @@ export interface EdgeStmt {
   via?: ViaEntry[];
   /** `edge each child of a -> b`: the end whose name is a container, one line per direct child of it (design.org 6.6). */
   each?: 'from' | 'to';
+  /** `edge a -> b, c, d`: the end written as a list, and every name in it, one line to each (design.org 6.6). */
+  several?: { side: 'from' | 'to'; names: string[] };
   attrs: Attrs;
   /** `guide edge a -> b`: shapes nothing differently, and is drawn only when guides are shown. */
   guide?: boolean;

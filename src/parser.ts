@@ -1422,6 +1422,9 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     // Before the arrow, the first end; after it, the second.
     const sides = each.map((at) => (head.slice(1, at).some(looksLikeArrow) ? 'to' : 'from'));
     const subject = `edge ${sides.includes('from') ? 'each child of ' : ''}${stmt.from} ${stmt.arrow} ${sides.includes('to') ? 'each child of ' : ''}${stmt.to}`;
+    if (stmt.several !== undefined) {
+      throw new SourceError(`${subject}: "each child of" and a list of ends can't share a statement — write a statement for each`, line);
+    }
     if (sides.length > 1) {
       throw new SourceError(
         `${subject}: "each child of" on both ends would pair the children of two containers, and nothing on the page says which goes with which — write the lines out`,
@@ -1433,11 +1436,39 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     }
     return { ...stmt, each: sides[0]! };
   }
+  // `edge a -> b, c, d`: one line to each name in the list, drawn as one group,
+  // so the stretch they share leaving `a` is said rather than happened on (6.6).
+  const lists = endLists(head, line);
+  if (lists !== undefined) {
+    const stmt = parseEdge(lists.head, line);
+    const written = (names: string[]) => names.join(', ');
+    const subject = `edge ${written(lists.from)} ${stmt.arrow} ${written(lists.to)}`;
+    if (lists.from.length > 1 && lists.to.length > 1) {
+      throw new SourceError(
+        `${subject}: a list on both ends would pair the names on one side with those on the other, and nothing says which goes with which — list one end and write a statement for each name on the other`,
+        line,
+      );
+    }
+    const side = lists.from.length > 1 ? 'from' : 'to';
+    const names = lists[side];
+    const twice = names.find((name, index) => names.indexOf(name) !== index);
+    if (twice !== undefined) {
+      throw new SourceError(`${subject}: ${twice} is listed twice — copies of one line are separate statements`, line);
+    }
+    if (stmt.name !== undefined) {
+      throw new SourceError(`${subject}: a name belongs to one line, and a list of ends draws one line to each — leave the name off`, line);
+    }
+    return { ...stmt, several: { side, names } };
+  }
   // `edge req client -> api`: a word before the ends names the line, told
   // from the ends by position, as in `node api "API"` (design.org 6.1).
   if (head[2] && head[3] && !head[2].quoted && !looksLikeArrow(head[2]) && looksLikeArrow(head[3])) {
     const name = requireName(head[1], 'edge', line);
-    return { ...parseEdge([head[0]!, ...head.slice(2)], line), name };
+    const stmt = parseEdge([head[0]!, ...head.slice(2)], line);
+    if (stmt.several !== undefined) {
+      throw new SourceError(`edge ${name}: a name belongs to one line, and a list of ends draws one line to each — leave the name off`, line);
+    }
+    return { ...stmt, name };
   }
   const stmt = parseEdgeEnds(head, line);
   // `via:` and the targets of `to: left, even with cat1` were stored as JSON
@@ -1454,6 +1485,47 @@ function parseEdge(head: Token[], line: number): EdgeStmt {
     ...(via !== undefined ? { via: JSON.parse(via) as ViaEntry[] } : {}),
     ...(fromEven !== undefined || toEven !== undefined ? { evenWith } : {}),
   };
+}
+
+/**
+ * The ends of `edge a -> b, c, d` as written, and the head with only the first
+ * name of each list left in it, or nothing when neither end is a list. Names
+ * are separated by commas or `and`, as a placement's targets are.
+ */
+function endLists(head: Token[], line: number): { head: Token[]; from: string[]; to: string[] } | undefined {
+  const left = readEndList(head, 1, line);
+  if (left.names.length === 0 || !head[left.next] || !looksLikeArrow(head[left.next]!)) return undefined;
+  const shortened = [head[0]!, { ...head[1]!, text: left.names[0]! }, ...head.slice(left.next)];
+  const arrow = readArrow(shortened, line);
+  const right = readEndList(shortened, arrow.next, line);
+  if (left.names.length < 2 && right.names.length < 2) return undefined;
+  return {
+    head: [...shortened.slice(0, arrow.next), { ...shortened[arrow.next]!, text: right.names[0]! }, ...shortened.slice(right.next)],
+    from: left.names,
+    to: right.names,
+  };
+}
+
+/** Names separated by commas or `and`, starting at `at`, up to the first that nothing follows. */
+function readEndList(head: Token[], at: number, line: number): { names: string[]; next: number } {
+  const names: string[] = [];
+  for (;;) {
+    const token = head[at];
+    if (!token || token.quoted || isAttrKey(token) || token.text === '(' || token.text === ',' || token.text === 'and') {
+      if (names.length === 0) return { names: [], next: at };
+      throw new SourceError(`edge: the list of ends after ${names.at(-1)} promises another name, and none follows`, line);
+    }
+    const comma = token.text.endsWith(',') && token.text.length > 1;
+    names.push(comma ? token.text.slice(0, -1) : token.text);
+    at += 1;
+    if (comma) continue;
+    const next = head[at];
+    if (next && !next.quoted && (next.text === ',' || next.text === 'and')) {
+      at += 1;
+      continue;
+    }
+    return { names, next: at };
+  }
 }
 
 /** Where `each child of` starts in an edge's head, before the attributes, once per time it is written. */
