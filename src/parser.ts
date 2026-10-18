@@ -3005,7 +3005,9 @@ function partAfter(tokens: Token[], at: number, partFirst = false): Part | undef
   const token = tokens[at];
   if (!token || token.quoted || !isPart(token.text)) return undefined;
   if (follows(tokens, at + 1, 'of')) return undefined;
-  if (!partFirst && follows(tokens, at + 1, 'even')) return undefined;
+  // `right of a  top even with b` is this box's top lined up; only a side word
+  // can open that, so `right of a text  even with b` keeps `text` as a's.
+  if (!partFirst && isSideWord(token.text) && follows(tokens, at + 1, 'even')) return undefined;
   // `right of a  center 12 right of b center`: a part followed by a distance
   // and a direction opens the next placement, one measured from this box's part.
   if (opensPartPlacement(tokens, at)) return undefined;

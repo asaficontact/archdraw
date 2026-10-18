@@ -843,7 +843,7 @@ node nas "NAS"  right of mirror
 edge mirror -> nas  style: backup
 ```
 
-A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `deck`, `from-mark`, `to-mark`, `padding` and `corners`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:` or a `depth:`, and it can't carry a `url:`.
+A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `deck`, `from-mark`, `to-mark`, `padding` and `corners`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:`.
 
 - **A style may span kinds.** It gives each thing only the keys that thing has, so the style above gives nodes their border and lines their color.
 - **A style must give a thing at least one key it has.** A style that dresses a thing in nothing is on the wrong thing.
@@ -1080,6 +1080,7 @@ Breaking, in spelling:
 | `size: 22` | `size: 22px` |
 | `thickness: 3` | `thickness: 3px` |
 | `gap: 12` | `gap: 12px`, or `1` |
+| `from:` or `to:` in a style, which did nothing | on each edge: `edge a -> b  from: right  to: left` |
 
 New:
 

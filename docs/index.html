@@ -6045,7 +6045,9 @@ function crowdedEnds(sides) {
         if (closest >= want)
             continue;
         const length = across ? node.width : node.height;
-        const needs = want * (drawn.length + 1);
+        // Rounded up: rounded to the nearest, a side just short of room read as
+        // needing exactly its own length.
+        const needs = Math.ceil((want * (drawn.length + 1)) / UNIT) * UNIT;
         found.push(new Finding('crowded-edge-ends', `${drawn.length} line ends share node ${node.name}'s ${side} side, which is ${units(length)} long; ` +
             `spaced so their marks don't run together they need ${units(needs)}`, Math.max(...drawn.map((end) => end.edge.line))));
     }
@@ -11958,6 +11960,9 @@ function checkStyleKeys(statements) {
             }
             if (topKey(key) === 'depth') {
                 throw new SourceError(`style "${stmt.name}" has depth:, which moves one thing in the drawing order, so it is written on that thing`, stmt.line);
+            }
+            if (topKey(key) === 'from' || topKey(key) === 'to') {
+                throw new SourceError(`style "${stmt.name}" has ${key}:, which says where one line ends, so it is written on that edge`, stmt.line);
             }
             if (ALL_ATTR_KEYS.includes(topKey(key)))
                 continue;

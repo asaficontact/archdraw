@@ -1152,6 +1152,12 @@ function checkStyleKeys(statements: Stmt[]): void {
           stmt.line,
         );
       }
+      if (topKey(key) === 'from' || topKey(key) === 'to') {
+        throw new SourceError(
+          `style "${stmt.name}" has ${key}:, which says where one line ends, so it is written on that edge`,
+          stmt.line,
+        );
+      }
       if (ALL_ATTR_KEYS.includes(topKey(key))) continue;
       throw new SourceError(
         `style "${stmt.name}" has ${key}: ${value}, which is not an attribute. ` +

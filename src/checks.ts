@@ -364,7 +364,9 @@ function crowdedEnds(sides: SideEnds[]): Finding[] {
     }
     if (closest >= want) continue;
     const length = across ? node.width : node.height;
-    const needs = want * (drawn.length + 1);
+    // Rounded up: rounded to the nearest, a side just short of room read as
+    // needing exactly its own length.
+    const needs = Math.ceil((want * (drawn.length + 1)) / UNIT) * UNIT;
     found.push(
       new Finding(
         'crowded-edge-ends',

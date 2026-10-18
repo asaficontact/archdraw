@@ -44,6 +44,10 @@ Commands:
                                  does, for one rendered by another build (such
                                  as compare's old/ half). ImageMagick drops
                                  dashed lines, so this goes through the browser.
+  findings <file> [png]         Print every finding for one file, then a count
+                                 of each kind. With png, also render beside it
+                                 and screenshot there. For working a large
+                                 diagram down to no findings.
   readme-image                 Regenerate the README's tracked pictures:
                                  docs/arch-render.png, the rendered half of the
                                  comparison, and docs/gap.png. Redraws only a
@@ -498,6 +502,21 @@ case "$cmd" in
     out="${2:-$(tmp_path look png)}"
     screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
     echo "$out"
+    ;;
+  findings)
+    in="${1:?input .reladraw path required}"
+    found="$(node dist/cli.js check "$in" 2>&1)" || { echo "$found"; exit 1; }
+    echo "$found"
+    echo "---"
+    kinds="$(echo "$found" | grep -oE 'warning\([a-z-]+\)' | sort | uniq -c || true)"
+    echo "${kinds:-no findings}"
+    if [[ -n "${2:-}" ]]; then
+      svg="$(tmp_path findings svg)"
+      render_quietly "$in" "$svg"
+      screenshot "$svg" "$2" "$(svg_size "$svg")" ffffff
+      rm -f "$svg"
+      echo "$2"
+    fi
     ;;
   readme-image)
     # The README's pictures. examples/out/ is gitignored, so anything the front
