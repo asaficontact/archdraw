@@ -336,7 +336,11 @@ export class Placer {
     const said = [
       ...new Set(
         loop.map((step) =>
-          step.placement ? `"${step.node.name} ${describePlacement(step.placement)}"` : `"${step.node.name} ${step.size}"`,
+          step.placement
+            ? step.node.titlePlacements?.includes(step.placement)
+              ? `"${step.node.name}"'s title "${describePlacement(step.placement)}"`
+              : `"${step.node.name} ${describePlacement(step.placement)}"`
+            : `"${step.node.name} ${step.size}"`,
         ),
       ),
     ];
@@ -736,15 +740,18 @@ export class Placer {
    */
   private crossingOf(node: LayoutNode, point: Extract<PointExpr, { kind: 'from' }>, axis: Axis, placement: Placement): Extent {
     const upright = point.lines.find((line) => line.way === 'up' || line.way === 'down')!;
-    const level = point.lines.find((line) => line.way === 'left' || line.way === 'right')!;
+    const level = point.lines.find((line) => line.way === 'left' || line.way === 'right' || line.way === 'even')!;
     const written = describePoint(point);
-    /** Where a line from this thing runs, on the axis it holds still. */
+    /**
+     * Where a line from this thing runs, on the axis it holds still. A line
+     * from a whole side starts at its middle; `even with` a side running the
+     * other way names no one height, as when placing a box, and is refused.
+     */
     const runs = (line: typeof upright, on: Axis) => {
       const at = this.extentOf(node, line.target, on, placement);
-      if (line.target.part !== undefined && at.size > 0.01) {
-        const sides = on === 'x' ? 'left or right, or a corner' : 'top or bottom, or a corner';
+      if (line.way === 'even' && line.target.part !== undefined && at.size > 0.01) {
         throw new SourceError(
-          `"${written}": ${nameTarget(line.target)} is a whole side, with no one place for a line ${line.way} from it to start — name ${sides}`,
+          `"${written}": ${nameTarget(line.target)} is a whole side, with no one height to be even with — name top or bottom, or a corner`,
           placement.line,
         );
       }
@@ -822,6 +829,13 @@ export class Placer {
         ? { start: 0, size: this.size(named, axis) }
         : { start: this.start(named, axis), size: this.size(named, axis) };
       if (target.part === 'text') text = this.textOf(named, axis, whole.start);
+    } else if (named === parent && target.part === 'text' && this.titleStates(parent, axis)) {
+      // The title is placed against the children on this axis, so it is
+      // known from them without the box.
+      const titleStart = this.titlePlaced(parent, axis)!;
+      const unit = this.hasUnit(parent) ? this.unit(parent, axis) : undefined;
+      text = { start: unit ? titleStart - unit.start : titleStart, size: this.textSize(parent, axis) };
+      whole = text;
     } else if (named === parent) {
       const frame = this.frame(parent, axis);
       whole = { start: frame.boxStart, size: frame.boxSize };
@@ -930,9 +944,13 @@ export class Placer {
     return facts.hasText ? (axis === 'x' ? facts.textBox.width : facts.textBox.height) : 0;
   }
 
-  /** Whether a container's title anchors its frame, because a child is placed against it. */
+  /**
+   * Whether a container's title anchors its frame, because a child is placed
+   * against it. A title placed against the children is a link between them
+   * instead, and the child it is placed against anchors the frame.
+   */
   private anchoredOnTitle(node: LayoutNode): boolean {
-    return this.contentOf(node).some((child) => this.onTitle(child));
+    return !node.titlePlacements?.length && this.contentOf(node).some((child) => this.onTitle(child));
   }
 
   /**
@@ -1367,19 +1385,9 @@ export class Placer {
       );
     }
     const [placement] = placements as [Placement];
-    // A child placed against the title anchors the frame on the title, which
-    // a title placed against a child would move: a loop.
-    const onTitle = this.contentOf(node).find((child) => this.onTitle(child));
-    if (onTitle) {
-      const against = onTitle.placements.find((one) =>
-        one.targets.some((target) => target.name === node.name && target.part === 'text'),
-      ) ?? onTitle.placements[0]!;
-      throw new SourceError(
-        `these placements depend on each other in a circle: "${node.name}"'s title "${describePlacement(placement)}", ` +
-          `"${onTitle.name} ${describePlacement(against)}" — one of them has to be placed against something else`,
-        placement.line,
-      );
-    }
+    // A child may be placed against a title placed against another child; a
+    // title placed against the very child placed against it is caught as a
+    // circle by the guard.
     return this.guard(`title\n${node.name}\n${axis}`, node, axis, placement, () => {
       let start = Infinity;
       let end = -Infinity;
@@ -1534,7 +1542,7 @@ export class Placer {
           unplaced[1]!.line,
         );
       }
-      if (parent && unplaced.length === 1 && onTitle) {
+      if (parent && unplaced.length === 1 && onTitle && this.anchoredOnTitle(parent)) {
         throw new SourceError(
           `"${parent.name}" has two anchors: "${unplaced[0]!.name}" says nothing about where it goes, and ` +
             `"${onTitle.name}" is placed against "${parent.name} text" — place "${unplaced[0]!.name}" against one of them`,

@@ -2593,7 +2593,7 @@ function readOneTarget(
   }
 
   // `down from a and left from b`: where two straight lines meet.
-  if ((WAYS as readonly string[]).includes(word) && follows(tokens, at + 1, 'from')) {
+  if (startsHalf(tokens, at)) {
     return readCrossing(tokens, at, subject, line);
   }
 
@@ -3000,23 +3000,40 @@ function readBetween(tokens: Token[], at: number, subject: string, line: number)
   return { target: { name: describePoint(point), point }, next, listed };
 }
 
-/** `down from a and left from b`, each line from a thing or one of its sides. */
+/** Whether a half of a point from two things starts here: `down from a`, or `even with a`. */
+function startsHalf(tokens: Token[], at: number): boolean {
+  const word = tokens[at];
+  if (!word || word.quoted) return false;
+  if ((WAYS as readonly string[]).includes(word.text)) return follows(tokens, at + 1, 'from');
+  return word.text === 'even' && follows(tokens, at + 1, 'with');
+}
+
+/** One half of a point from two things, as written. */
+function writtenHalf(half: { way: Way | 'even'; target: PlacementTarget }): string {
+  return `${half.way === 'even' ? 'even with' : `${half.way} from`} ${nameTarget(half.target)}`;
+}
+
+/**
+ * `down from a and left from b`, each line from a thing, one of its parts or
+ * a point; `even with a` is the level line through a, in either half.
+ */
 function readCrossing(tokens: Token[], at: number, subject: string, line: number): { target: PlacementTarget; next: number; listed: boolean } {
   const first = readWay(tokens, at, subject, line);
-  if (!follows(tokens, first.next, 'and') || !tokens[first.next + 1] || !follows(tokens, first.next + 2, 'from')) {
+  if (first.listed || !follows(tokens, first.next, 'and') || !startsHalf(tokens, first.next + 1)) {
+    const other = first.way === 'up' || first.way === 'down' ? 'left from …' : 'down from …';
     throw new SourceError(
-      `${subject}: "${first.way} from ${nameTarget(first.target)}" is one line, and a point is where two meet — ` +
-        `add the other, as in \`${first.way} from ${nameTarget(first.target)} and ${first.way === 'up' || first.way === 'down' ? 'left' : 'down'} from …\``,
+      `${subject}: "${writtenHalf(first)}" is one line, and a point is where two meet — ` +
+        `add the other, as in \`${writtenHalf(first)} and ${other}\``,
       line,
     );
   }
   const second = readWay(tokens, first.next + 1, subject, line);
-  const vertical = (way: Way) => way === 'up' || way === 'down';
+  const vertical = (way: Way | 'even') => way === 'up' || way === 'down';
   if (vertical(first.way) === vertical(second.way)) {
     throw new SourceError(
-      `${subject}: "${first.way} from ${nameTarget(first.target)} and ${second.way} from ${nameTarget(second.target)}" are two ` +
+      `${subject}: "${writtenHalf(first)} and ${writtenHalf(second)}" are two ` +
         `${vertical(first.way) ? 'up-and-down' : 'level'} lines, which never meet at one point — make one of them ` +
-        `${vertical(first.way) ? 'left or right' : 'up or down'}`,
+        `${vertical(first.way) ? 'left or right, or even with something' : 'up or down'}`,
       line,
     );
   }
@@ -3030,18 +3047,29 @@ function readCrossing(tokens: Token[], at: number, subject: string, line: number
   return { target: { name: describePoint(point), point }, next: second.next, listed: second.listed };
 }
 
-function readWay(tokens: Token[], at: number, subject: string, line: number): { way: Way; target: PlacementTarget; next: number; listed: boolean } {
-  const way = tokens[at]!.text as Way;
-  if (!(WAYS as readonly string[]).includes(way) || !follows(tokens, at + 1, 'from')) {
+function readWay(
+  tokens: Token[],
+  at: number,
+  subject: string,
+  line: number,
+): { way: Way | 'even'; target: PlacementTarget; next: number; listed: boolean } {
+  if (!startsHalf(tokens, at)) {
     throw new SourceError(`${subject}: a point from two things reads \`down from a and left from b\``, line);
   }
+  const way = tokens[at]!.text === 'even' ? 'even' : (tokens[at]!.text as Way);
+  const words = way === 'even' ? 'even with' : `${way} from`;
   const target = tokens[at + 2];
   if (!target || target.quoted || isAttrKey(target)) {
-    throw new SourceError(`${subject}: "${way} from" names no thing`, line);
+    throw new SourceError(`${subject}: "${words}" names no thing`, line);
   }
   const read = readOneTarget(tokens, at + 2, subject, line, true);
-  if (read.target.point || read.target.fraction) {
-    throw new SourceError(`${subject}: "${way} from" starts from a thing or one of its parts, not "${nameTarget(read.target)}"`, line);
+  // Anything that names a place will do, but not another point from two
+  // things, whose own "and" would make the pair unreadable.
+  if (read.target.point?.kind === 'from') {
+    throw new SourceError(
+      `${subject}: "${words}" starts from a point from two things — name that point first (\`point p  ${nameTarget(read.target)}\`) and write \`${words} p\``,
+      line,
+    );
   }
   return { way, target: read.target, next: read.next, listed: read.listed };
 }

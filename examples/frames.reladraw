@@ -6,11 +6,12 @@
 
 style mark  fill: #cdb96f  border: #8f7a3a  text: (color: #111111)
 
-// Four children in two rows, with room left between the columns for the text,
-// which sits in the middle.
-node corners "Deployment" (center)
+// Four children in two rows, the title between the columns: placed right of
+// the left column and centered on its two rows, with the right column placed
+// right of the title, so the columns sit as far apart as the title needs.
+node corners "Deployment" (right of corners.a (gap: 1), even with corners.a and corners.c)
 node corners.a "north-west"
-node corners.b "north-east"  9 right of corners.a
+node corners.b "north-east"  right of corners text (gap: 1)  top even with corners.a
 node corners.c "south-west"  below corners.a (gap: 1)
 node corners.d "south-east"  below corners.b (gap: 1)
 
@@ -59,8 +60,9 @@ node fresh "Release notes"  below column (gap: wide)
 node fresh.tag "new"  right of fresh text (gap: 1)  join-with: fresh text  style: mark
 
 // On a corner rather than inside it: centered on the point, so it straddles
-// the edge.
-node dot "Inbox"  right of fresh (gap: wide)
+// the edge. It takes no room in the box, so the box is stated wider, with the
+// text along its left, to keep the text clear of it.
+node dot "Inbox" (inside left)  right of fresh (gap: wide)  width: 7
 node dot.count "3"  on dot top-right  style: mark
 
 // Beyond the frame. The note is placed on the router's finished box and is no

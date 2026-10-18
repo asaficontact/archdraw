@@ -28,7 +28,7 @@ node c "C"  right of b  (gap: wide)
 node tall "Tall / middle / node"  right of c
 node d "D"  right of tall
 
-edge c -> d  "over the tall one"  from: left  to: right  via: c top (gap: normal), d top (gap: normal)
+edge c -> d  "over the tall one"  from: left  to: right  via: tall top
 
 // Stepped down, with a gap wide enough: the line turns back under E and over
 // F, through the gap between them. A normal gap is twice the distance a line
@@ -45,11 +45,13 @@ node h "H"  right of g  (gap: wide)  below g  (gap: tight)
 
 edge g -> h  "no room below"  from: left  to: right  via: g top
 
-// A column goes round the right.
+// A column goes round the right: along the right side of a region round
+// both, so the run down is straight past the narrower box.
 node top "Top"  right of d  (gap: wide)
 node bottom "Bottom"  below top
 
-edge top -> bottom  "column"  from: top  to: bottom  via: top top 1/1 across, bottom right
+guide region column  top top-left to bottom bottom-right
+edge top -> bottom  "column"  from: top  to: bottom  via: column right
 
 // And an edge from a node back to itself.
 node self "Self"  below bottom  (gap: wide)

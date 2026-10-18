@@ -211,8 +211,12 @@ export type PointExpr =
     }
   | {
       kind: 'from';
-      /** The line giving the point its place across or up and down, in the order written. */
-      lines: [{ way: Way; target: PlacementTarget }, { way: Way; target: PlacementTarget }];
+      /**
+       * The line giving the point its place across or up and down, in the
+       * order written. `even` is `even with x`: the level line through x,
+       * which says no way the point lies from it.
+       */
+      lines: [{ way: Way | 'even'; target: PlacementTarget }, { way: Way | 'even'; target: PlacementTarget }];
     }
   | {
       kind: 'moved';
@@ -229,7 +233,7 @@ export function describePoint(point: PointExpr): string {
     return `between ${nameTarget(point.a)} and ${nameTarget(point.b)}${at}${span}`;
   }
   if (point.kind === 'from') {
-    return point.lines.map((line) => `${line.way} from ${nameTarget(line.target)}`).join(' and ');
+    return point.lines.map((line) => `${line.way === 'even' ? 'even with' : `${line.way} from`} ${nameTarget(line.target)}`).join(' and ');
   }
   const of = /left|right/.test(point.direction) ? ' of' : '';
   return `${point.distance} ${point.direction}${of} ${nameTarget(point.from)}`;

@@ -325,8 +325,8 @@ A part is written as the name, then the part: `b top`, `e bottom-left`, `hub tex
 ### Points
 
 - **Between two things.** `between a and b` is the center of the space between them: halfway between their facing sides, not their centers. `between a and b at 1/3` is a third of the way across, from `a`. It always joins exactly two things with `and`; `between a, b` is refused.
-- **From two things.** `down from a and left from b` is where a line straight down from `a`'s center meets a line straight left from `b`'s. A part works too: `down from a left`. The direction words also say which way the point lies from each box, and that is checked: lines that don't meet are refused.
-- **Moved by a distance.** `2 below c bottom` is 2 units below `c`'s bottom. What is moved is a point, so `2 below c` is refused, asking which point. `c bottom + 2` is refused too, since `+` adds lengths and doesn't say up or down.
+- **From two things.** `down from a and left from b` is where a line straight down from `a`'s center meets a line straight left from `b`'s. A line may start from a part (`down from a left`) or a point (`left from 1 above b top-left`); from a whole side, such as `up from c top`, it starts at the side's middle. The direction words also say which way the point lies from each box, and that is checked: lines that don't meet are refused. Either half may be `even with x` instead, the level line through `x`: `up from c and even with tall top` is straight above `c`, level with `tall`'s top. It says no way the point lies, so only the other half is checked.
+- **Moved by a distance.** `2 below c bottom` is 2 units below `c`'s bottom. What is moved is a point or a side, so `2 below c` is refused, asking which. A moved side is still a side: `1 above tall top` works wherever `tall top` does. `c bottom + 2` is refused too, since `+` adds lengths and doesn't say up or down.
 - **On a line.** `req start`, `req end`, `req at 1/3` ([Points on a line](#points-on-a-line)).
 
 A box is placed at a point with `on`, and against one with a direction:
@@ -1109,7 +1109,7 @@ Breaking, in spelling:
 
 New:
 
-- **Points and regions.** `between a and b`, `down from a and left from b`, `2 below c bottom`, named with `point` and `region`, usable anywhere a position is.
+- **Points and regions.** `between a and b`, `down from a and left from b`, `up from c and even with d top`, `2 below c bottom`, named with `point` and `region`, usable anywhere a position is.
 - **Waypoints.** `via:` lists the places a line passes: a side, a point, a box, a region, a leg of another line. Legs can be named.
 - **Square and curved routes** read off a line's own two boxes, with `turn:`, `step-out:` and `curve:`.
 - **Line ends at points**: `from: bottom-center`, `to: left 3/4 down`, `from: center`, an end on another line, `straight down`, and a line's place among others on a side, `to: top, right of z`.
