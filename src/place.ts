@@ -22,7 +22,7 @@ import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget
 import { describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES } from './ast.js';
 import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
-import { joinedToText, type LayoutNode } from './model.js';
+import { isWithin, joinedToText, type LayoutNode } from './model.js';
 import { type Dimension, SIZE_KEYS, type SizeExpr, type SpanSide, storedSize } from './size.js';
 
 /** A stretch of one axis. */
@@ -98,7 +98,8 @@ export function regionTextAt(region: Extent, text: RegionTextFacts, axis: Axis):
 
 /** What `layout:` said, read and checked. */
 export interface Layout {
-  kind: 'column' | 'row';
+  /** A deck stacks its children, the first in front and each next one up and to the left behind it. */
+  kind: 'column' | 'row' | 'deck';
   /** Between facing sides of neighbors, in pixels. Absent when `centers` is given. */
   gap?: number;
   /** Between neighbors' centers, in pixels. */
@@ -182,6 +183,18 @@ export function gapPixels(written: string, subject: string, line: number): numbe
   );
 }
 
+/**
+ * A region's `opacity:`, an amount from none to full: `0` to `1.0`. The one
+ * look whose bare number is not a multiple of its normal (design.org 8.3).
+ */
+export function checkOpacity(value: string, subject: string, line: number): void {
+  if (/^\d*\.?\d+$/.test(value) && Number(value) <= 1) return;
+  throw new SourceError(
+    `${subject}: "opacity: ${value}" — opacity is an amount from 0 (none) to 1.0 (solid), such as opacity: 0.5`,
+    line,
+  );
+}
+
 export class Placer {
   private readonly starts = new Map<string, number>();
   private readonly sizes = new Map<string, number>();
@@ -204,6 +217,10 @@ export class Placer {
   private readonly unitStarts = new Map<string, number>();
   /** The stretch a container's text and what is joined to it cover, measured from the text's start. */
   private readonly units = new Map<string, Extent>();
+  /** Where a container's frame's origin is on the page. */
+  private readonly origins = new Map<string, number>();
+  /** Containers whose anchor is being placed on the page, so a box outside them is measured on the page rather than in their frame. */
+  private readonly onPage = new Set<string>();
 
   /** Named points and regions being worked out, innermost last, to refuse one defined through itself. */
   private readonly expanding: string[] = [];
@@ -278,7 +295,145 @@ export class Placer {
   page(node: LayoutNode, axis: Axis): number {
     const parent = node.parent;
     if (!parent) return this.start(node, axis);
-    return this.page(parent, axis) + this.start(node, axis) - this.frame(parent, axis).boxStart;
+    return this.origin(parent, axis) + this.start(node, axis);
+  }
+
+  /**
+   * Where a container's frame's origin is on the page. A container that says
+   * nothing about where it goes shares its own container's origin, so it is
+   * known without its outline; one placed by what it holds is where its
+   * anchor goes; any other is found from where its box went.
+   */
+  private origin(node: LayoutNode, axis: Axis): number {
+    const key = `${node.name}\n${axis}`;
+    const known = this.origins.get(key);
+    if (known !== undefined) return known;
+    const worked = this.guard(`origin\n${key}`, node, axis, undefined, () => {
+      if (this.frameAnchor(node, axis)) return this.anchorOnPage(node, axis);
+      const above = node.parent ? this.origin(node.parent, axis) : 0;
+      if (this.floats(node)) return above;
+      this.refusePlacedTwice(node, axis);
+      return above + this.start(node, axis) - this.frame(node, axis).boxStart;
+    });
+    this.origins.set(key, worked);
+    return worked;
+  }
+
+  /**
+   * A container that says where it goes on one axis cannot also hold a child
+   * placed against a box outside it on that axis: both would say where the
+   * container goes, and it is refused even when the two agree.
+   */
+  private refusePlacedTwice(node: LayoutNode, axis: Axis): void {
+    const own = this.statements(node, axis);
+    if (own.length === 0) return;
+    for (const child of this.contentOf(node)) {
+      for (const { placement } of this.statements(child, axis)) {
+        const outside = placement.targets.flatMap((target) => this.boxesNamed(target, [])).some((name) => {
+          const named = this.byName.get(name);
+          return named !== undefined && named !== node && !isWithin(named, node);
+        });
+        if (!outside) continue;
+        throw new SourceError(
+          `"${node.name}" is placed twice ${AXIS_SAID[axis]}: by its own "${describePlacement(own[0]!.placement)}" ` +
+            `and by "${child.name} ${describePlacement(placement)}", which is inside it — keep one of the two`,
+          placement.line,
+        );
+      }
+    }
+  }
+
+  /** The origin a box outside `parent` is measured from: the page while `parent`'s anchor is being placed on it. */
+  private originFor(parent: LayoutNode, axis: Axis): number {
+    return this.onPage.has(`${parent.name}\n${axis}`) ? 0 : this.origin(parent, axis);
+  }
+
+  /** Where the anchor of a container placed by what it holds goes on the page, which is its frame's origin. */
+  private anchorOnPage(node: LayoutNode, axis: Axis): number {
+    const anchor = this.frameAnchor(node, axis)!;
+    if (anchor.placements.length === 0) return this.origin(anchor, axis) + this.frame(anchor, axis).boxStart;
+    const key = `${node.name}\n${axis}`;
+    this.onPage.add(key);
+    try {
+      return this.placed(anchor, axis);
+    } finally {
+      this.onPage.delete(key);
+    }
+  }
+
+  /**
+   * A container that is its frame's anchor: it says nothing about where it
+   * goes, and nothing inside it is placed against a box outside it in its
+   * stead. Its frame's origin is its own container's.
+   */
+  private floats(node: LayoutNode): boolean {
+    const parent = node.parent;
+    if (node.placements.length > 0 || node.children.length === 0) return false;
+    if (parent && (parent.heading === node || joinedToText(node) || this.facts.get(parent)!.layout || this.vennPart(node) !== undefined)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * A container placed by what it holds, on one axis (design.org 5.5): it
+   * says nothing about where it goes, nothing inside it is its anchor, and a
+   * child is placed against boxes outside it. The first such child is the
+   * frame's anchor, and where it goes says where the container goes.
+   */
+  private frameAnchor(node: LayoutNode, axis: Axis): LayoutNode | undefined {
+    if (node.children.length === 0 || node.placements.length > 0) return undefined;
+    const parent = node.parent;
+    if (parent && (parent.heading === node || joinedToText(node) || this.facts.get(parent)!.layout || this.vennPart(node) !== undefined)) {
+      return undefined;
+    }
+    const facts = this.facts.get(node)!;
+    if (facts.layout || facts.venn) return undefined;
+    const content = this.contentOf(node);
+    if (this.anchoredOnTitle(node) || node.titlePlacements?.length) return undefined;
+    if (content.some((child) => this.unplaced(child))) return undefined;
+    return content.find((child) => this.fromOutside(child, axis, node));
+  }
+
+  /** A box that says nothing about where it goes, and so anchors its frame. */
+  private unplaced(node: LayoutNode): boolean {
+    if (this.acrossParts(node)) return true;
+    if (node.placements.length > 0) return false;
+    return !(this.frameAnchor(node, 'x') && this.frameAnchor(node, 'y'));
+  }
+
+  /** Whether everything a box is placed against on one axis is outside `of`. */
+  private fromOutside(node: LayoutNode, axis: Axis, of: LayoutNode): boolean {
+    if (node.placements.length === 0) {
+      const anchor = this.frameAnchor(node, axis);
+      return anchor !== undefined && this.fromOutside(anchor, axis, of);
+    }
+    const speaking = this.statements(node, axis).map((statement) => statement.placement);
+    const placements = speaking.length > 0
+      ? speaking
+      : node.placements.filter((placement) => placement.kind === 'offset' && component(placement.direction, axis) === undefined);
+    if (placements.length === 0) return false;
+    const names = placements.flatMap((placement) => placement.targets.flatMap((target) => this.boxesNamed(target, [])));
+    return names.length > 0 && names.every((name) => {
+      const named = this.byName.get(name);
+      return named !== undefined && named !== of && !isWithin(named, of);
+    });
+  }
+
+  /** The boxes a target is worked out from: the box it names, or those a point or region it names is worked out from. */
+  private boxesNamed(target: PlacementTarget, seen: string[]): string[] {
+    if (target.point) {
+      const point = target.point;
+      if (point.kind === 'between') return [...this.boxesNamed(point.a, seen), ...this.boxesNamed(point.b, seen)];
+      if (point.kind === 'from') return point.lines.flatMap((line) => this.boxesNamed(line.target, seen));
+      return this.boxesNamed(point.from, seen);
+    }
+    if (this.byName.has(target.name)) return [target.name];
+    const defined = this.named.get(target.name);
+    if (!defined || seen.includes(target.name)) return [];
+    const further = [...seen, target.name];
+    if (defined.kind === 'point') return this.boxesNamed(defined.point, further);
+    return defined.corners.flatMap((corner) => this.boxesNamed(corner, further));
   }
 
   /** Where a node starts in its container's frame, or on the page for the top level. */
@@ -393,6 +548,16 @@ export class Placer {
     if (parent && joinedToText(node)) return this.frame(parent, axis).textStart + this.unitStart(node, axis);
     if (this.vennPart(node) !== undefined) return this.vennStart(node, axis);
     if (parent && this.facts.get(parent)!.layout) return this.inLayout(node, axis).start;
+    // The anchor of a frame placed by what it holds sits at its origin.
+    if (parent && this.frameAnchor(parent, axis) === node) return 0;
+    if (this.frameAnchor(node, axis)) {
+      // Placed by what it holds: its frame is where its anchor went.
+      const above = parent ? this.origin(parent, axis) : 0;
+      return this.origin(node, axis) - above + this.frame(node, axis).boxStart;
+    }
+    // A container that anchors its frame shares its container's origin, so
+    // its box starts where its outline does.
+    if (this.floats(node)) return this.frame(node, axis).boxStart;
     if (node.placements.length === 0 || this.acrossParts(node)) {
       // The anchor of its frame. One placed against a box in another part of
       // a venn is still its part's anchor; the placement moves the part. A container's title, when something is
@@ -874,10 +1039,10 @@ export class Placer {
       whole = { start: this.start(named, axis) + this.vennShift(named.parent!, axis), size: this.size(named, axis) };
       if (target.part === 'text') text = this.textOf(named, axis, whole.start);
     } else {
-      throw new SourceError(
-        `"${node.name}" is placed against "${target.name}", which is not one of its siblings or its parent`,
-        placement.line,
-      );
+      // Outside its container, or inside another (design.org 5.2): found on
+      // the page and measured from this frame's origin.
+      whole = { start: this.page(named, axis) - this.originFor(parent, axis), size: this.size(named, axis) };
+      if (target.part === 'text') text = this.textOf(named, axis, whole.start);
     }
     if (target.part === 'text') {
       if (!text || (!this.hasTitle(named) && named !== parent)) {
@@ -1042,7 +1207,7 @@ export class Placer {
   /** Whether a laid-out container sets its children's size on this axis. */
   private stretches(parent: LayoutNode, axis: Axis): boolean {
     const layout = this.facts.get(parent)!.layout;
-    return layout !== undefined && axis === 'x' && layout.widths !== 'natural';
+    return layout !== undefined && (layout.kind === 'deck' || (axis === 'x' && layout.widths !== 'natural'));
   }
 
   /** A node's size from what it states, or else what it holds, within its limits. */
@@ -1315,11 +1480,6 @@ export class Placer {
       boxHigh = boxLow + side;
       natural = side;
     }
-    if (node.deckTexts.length > 0) {
-      const inset = node.deckTexts.length * DECK_STEP;
-      boxLow -= inset;
-      natural += inset;
-    }
     return {
       boxStart: boxLow,
       boxSize: natural,
@@ -1389,9 +1549,13 @@ export class Placer {
     const subject = `"${node.name}"'s title`;
     const said = placements.map((placement) => `"${describePlacement(placement)}"`).join(' and ');
     const line = placements[0]!.line;
-    if (placements.length > 1) {
+    // Opposite placements center the title between them, as they center a box (5.3).
+    const ways = placements.map((placement) => (placement.kind === 'offset' ? component(placement.direction, axis) : undefined));
+    const opposite = placements.length === 2 && ways[0] !== undefined && ways[1] !== undefined && ways[0] !== ways[1];
+    if (placements.length > 1 && !opposite) {
       throw new SourceError(
-        `${subject} says where it goes ${AXIS_SAID[axis]} more than once: ${said}. Each axis is stated once — keep one`,
+        `${subject} says where it goes ${AXIS_SAID[axis]} more than once: ${said}. Each axis is stated once — keep one, ` +
+          'or place it after one thing and before another to center it between them',
         line,
       );
     }
@@ -1413,11 +1577,23 @@ export class Placer {
         line,
       );
     }
-    const [placement] = placements as [Placement];
+    const size = this.titleSize(node, axis);
+    if (opposite) {
+      const after = ways[0] === 'after' ? placements[0]! : placements[1]!;
+      const before = ways[0] === 'after' ? placements[1]! : placements[0]!;
+      const low = this.titleStart(node, axis, after, subject);
+      const high = this.titleStart(node, axis, before, subject) + size;
+      return (low + high) / 2 - size / 2;
+    }
+    return this.titleStart(node, axis, placements[0]!, subject);
+  }
+
+  /** Where one placement of a title against the box's own children puts the title's start. */
+  private titleStart(node: LayoutNode, axis: Axis, placement: Placement, subject: string): number {
     // A child may be placed against a title placed against another child; a
     // title placed against the very child placed against it is caught as a
     // circle by the guard.
-    return this.guard(`title\n${node.name}\n${axis}`, node, axis, placement, () => {
+    return this.guard(`title\n${node.name}\n${axis}\n${placement.line}\n${describePlacement(placement)}`, node, axis, placement, () => {
       let start = Infinity;
       let end = -Infinity;
       for (const target of placement.targets) {
@@ -1482,6 +1658,14 @@ export class Placer {
     const main: Axis = layout.kind === 'column' ? 'y' : 'x';
     const children = parent.children.filter((child) => child !== parent.heading && !joinedToText(child));
     const natural = (child: LayoutNode, on: Axis) => this.ownSize(child, on);
+    if (layout.kind === 'deck') {
+      // Every card is as big as the biggest. The first is in front, and each
+      // next one a step up and to the left behind it.
+      const size = Math.max(...children.map((child) => natural(child, axis)));
+      const last = children.length - 1;
+      children.forEach((child, index) => this.laid.set(`${child.name}\n${axis}`, { start: (last - index) * DECK_STEP, size }));
+      return this.laid.get(key)!;
+    }
     if (axis !== main && this.stretches(parent, axis)) {
       for (const child of children) {
         const keys = sizeKeysOn(child, axis);
@@ -1769,7 +1953,7 @@ export class Placer {
     } else if (members.length > 0) {
       if (parent && this.vennPart(parent) !== undefined) this.checkAcrossParts(members, parent);
       const content = members.filter((member) => !this.framed(member));
-      const unplaced = content.filter((member) => member.placements.length === 0 || this.acrossParts(member));
+      const unplaced = content.filter((member) => this.unplaced(member));
       const onTitle = content.find((member) => this.onTitle(member));
       if (!parent && unplaced.length === 0) {
         throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
@@ -1851,7 +2035,6 @@ export class Placer {
   private finish(node: LayoutNode): void {
     const facts = this.facts.get(node)!;
     if (node.children.length === 0) {
-      node.inset = node.deckTexts.length * DECK_STEP;
       node.textBox = this.leafText(node);
       const x = this.reachOf(node, 'x');
       const y = this.reachOf(node, 'y');
@@ -1864,7 +2047,6 @@ export class Placer {
       ? { x: x.textStart - x.boxStart, y: y.textStart - y.boxStart, width: x.textSize, height: y.textSize }
       : { x: 0, y: 0, width: 0, height: 0 };
     node.banded = true;
-    node.inset = node.deckTexts.length * DECK_STEP;
     const x2 = this.reachOf(node, 'x');
     const y2 = this.reachOf(node, 'y');
     node.reach = { left: x2.low, top: y2.low, right: x2.high, bottom: y2.high };
@@ -1986,10 +2168,6 @@ function commonFrame(a: LayoutNode, b: LayoutNode): LayoutNode | undefined {
   return undefined;
 }
 
-function isWithin(node: LayoutNode, ancestor: LayoutNode): boolean {
-  for (let at = node.parent; at; at = at.parent) if (at === ancestor) return true;
-  return false;
-}
 
 /**
  * Narrow an extent to the part a placement named. A side leaves the axis it

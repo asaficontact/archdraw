@@ -7,8 +7,8 @@
  * anything: the picture is drawn as written, and this says where it may not
  * read as the writer meant.
  */
-import { joinedToText, type Layout, type LayoutEdge, type LayoutNode } from './model.js';
-import { UNIT, arrowLength } from './constants.js';
+import { isWithin, joinedToText, type Layout, type LayoutEdge, type LayoutNode } from './model.js';
+import { ARROW_MARKER_WIDTH, LINE_WIDTH, UNIT, arrowLength } from './constants.js';
 import { crossingPoints, describeEdge, planSides, traceRoute, traceVisible, type Point, type Route, type SideEnds } from './lines.js';
 import { placeLineTexts, type PlacedText } from './linetexts.js';
 
@@ -386,14 +386,23 @@ function crowdedEnds(sides: SideEnds[]): Finding[] {
     const drawn = ends.filter((end) => !end.edge.guide);
     if (drawn.length < 2) continue;
     const across = side === 'top' || side === 'bottom';
-    const want = Math.max(...drawn.map((end) => arrowLength(end.edge.look.thickness))) + 4;
-    let closest = Infinity;
+    // Two neighbors are crowded when their marks would touch, or, where
+    // neither has a mark, when the lines come within a third of a unit.
+    let crowded = false;
+    let want = 0;
+    const anyMark = drawn.some((end) => end.edge.marks[end.which] !== 'none');
     for (let index = 1; index < drawn.length; index += 1) {
-      const a = drawn[index - 1]!.at;
-      const b = drawn[index]!.at;
-      closest = Math.min(closest, Math.abs(across ? b.x - a.x : b.y - a.y));
+      const a = drawn[index - 1]!;
+      const b = drawn[index]!;
+      const apart = Math.abs(across ? b.at.x - a.at.x : b.at.y - a.at.y);
+      const marked = a.edge.marks[a.which] !== 'none' || b.edge.marks[b.which] !== 'none';
+      const needed = marked
+        ? (markWidth(a.edge, a.which) + markWidth(b.edge, b.which)) / 2
+        : (a.edge.look.thickness + b.edge.look.thickness) / 2 + UNIT / 3;
+      want = Math.max(want, needed);
+      if (apart < needed - EPSILON) crowded = true;
     }
-    if (closest >= want) continue;
+    if (!crowded) continue;
     const length = across ? node.width : node.height;
     // Rounded up: rounded to the nearest, a side just short of room read as
     // needing exactly its own length.
@@ -402,12 +411,27 @@ function crowdedEnds(sides: SideEnds[]): Finding[] {
       new Finding(
         'crowded-edge-ends',
         `${drawn.length} line ends share node ${node.name}'s ${side} side, which is ${units(length)} long; ` +
-          `spaced so their marks don't run together they need ${units(needs)}`,
+          `spaced so their ${anyMark ? 'marks' : 'lines'} don't run together they need ${units(needs)}`,
         Math.max(...drawn.map((end) => end.edge.line)),
       ),
     );
   }
   return found;
+}
+
+/**
+ * How wide a line's end is drawn across the line: its mark, or the line
+ * alone. The fractions are how much of its 10-unit marker box each of the
+ * renderer's mark shapes spans across the line; a dot keeps an ordinary
+ * line's size, and every other mark scales with the stroke.
+ */
+function markWidth(edge: LayoutEdge, which: 'from' | 'to'): number {
+  const thickness = edge.look.thickness;
+  const mark = edge.marks[which];
+  if (mark === 'none') return thickness;
+  if (mark === 'dot' || mark === 'odot') return (mark === 'dot' ? 0.8 : 0.82) * ARROW_MARKER_WIDTH * LINE_WIDTH;
+  const across = { arrow: 1, oarrow: 0.76, diamond: 0.76, odiamond: 0.62, bar: 0.9 }[mark];
+  return across * ARROW_MARKER_WIDTH * thickness;
 }
 
 /**
@@ -579,7 +603,7 @@ function textOverflows(layout: Layout): Finding[] {
  */
 function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[] {
   // `words` is any text's content: a line's, or a point's or region's (design.org 7.4).
-  type Item = { box: Box; text?: PlacedText; words?: string; node?: LayoutNode; line: number };
+  type Item = { box: Box; text?: PlacedText; words?: string; node?: LayoutNode; title?: LayoutNode; line: number };
   const items: Item[] = [];
   const found: Finding[] = [];
   for (const edge of layout.edges) {
@@ -624,6 +648,14 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
       );
     }
   }
+  // A box's own title, against boxes only. A box covering the title of a box
+  // it overlaps from outside is node-overlap's finding; this one is a child
+  // over its container's title, or anything over a title drawn outside its box.
+  for (const node of layout.nodes) {
+    if (node.guide || node.lines.length === 0 || node.textBox.width <= EPSILON) continue;
+    const box = { x: node.x + node.textBox.x, y: node.y + node.textBox.y, width: node.textBox.width, height: node.textBox.height };
+    items.push({ box, words: node.text, title: node, line: node.line });
+  }
   if (items.length === 0) return found;
   for (const node of layout.nodes) {
     if (node.guide || node.body.kind === 'none') continue;
@@ -647,6 +679,7 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
       const height = Math.min(item.box.y + item.box.height, other.box.y + other.box.height) - Math.max(item.box.y, other.box.y);
       if (width <= EPSILON || height <= EPSILON) continue;
       if (item.words !== undefined && other.words !== undefined) {
+        if (item.title || other.title) continue;
         const [earlier, later] = other.line <= item.line ? [other, item] : [item, other];
         found.push(
           new Finding(
@@ -658,6 +691,20 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
         continue;
       }
       const [text, node] = item.words !== undefined ? [item, other] : [other, item];
+      const owner = text.title;
+      if (owner) {
+        if (node.node === owner || isWithin(owner, node.node!)) continue;
+        const outside = !within(text.box, { x: owner.x, y: owner.y, width: owner.width, height: owner.height });
+        if (!outside && !isWithin(node.node!, owner)) continue;
+        found.push(
+          new Finding(
+            'text-overlap',
+            `node ${node.node!.name} covers ${coveredPart(text.box, node.box)}${owner.name}'s title "${text.words}"; ${size(width, height)}`,
+            node.line,
+          ),
+        );
+        continue;
+      }
       if (holds(node.node!, text.box)) continue;
       found.push(
         new Finding(
@@ -728,6 +775,8 @@ function nodeOverlaps(layout: Layout): Finding[] {
     const upB = lineage(b);
     if (upA.includes(b) || upB.includes(a)) return true;
     if (vennStates(a, b)) return true;
+    // A deck's cards are stacked on each other by the deck, and so is what they hold.
+    if (upA.some((one) => one.parent?.appearance['layout'] === 'deck' && upB.some((other) => other !== one && other.parent === one.parent))) return true;
     if (upA.some(saysOverlapAllowed) || upB.some(saysOverlapAllowed)) return true;
     const placedOn = (over: LayoutNode[], under: LayoutNode[]) =>
       over.some((node) => under.some((target) => stated.get(node)?.has(target)));
@@ -787,6 +836,14 @@ function saysOverlapAllowed(node: LayoutNode): boolean {
  * edge and not the far one, the far end the other way round, and the middle
  * otherwise.
  */
+/** Whether `inner` lies wholly inside `outer`. */
+function within(inner: Box, outer: Box): boolean {
+  return (
+    inner.x >= outer.x - EPSILON && inner.y >= outer.y - EPSILON &&
+    inner.x + inner.width <= outer.x + outer.width + EPSILON && inner.y + inner.height <= outer.y + outer.height + EPSILON
+  );
+}
+
 function coveredPart(under: Box, over: Box): string {
   const along = (start: number, extent: number, overStart: number, overExtent: number) => {
     const near = overStart <= start + EPSILON;

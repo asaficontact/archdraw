@@ -1,7 +1,6 @@
 import {
   ARROW_LENGTH,
   ARROW_MARKER_WIDTH,
-  DECK_STEP,
   DEFAULT_FONT_SIZE,
   ICON_LINES,
   LINE_WIDTH,
@@ -16,9 +15,9 @@ import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
-import { DARK_THEME, THEMES, overlapFill, textOnFill, themeColor, type Theme } from './themes.js';
+import { DARK_THEME, THEMES, overlapFill, regionTint, textOnFill, themeColor, type Theme } from './themes.js';
 import { crossingPoints, planLines, traceRoute, visibleRuns, type Point, type Route } from './lines.js';
-import { KNOCKOUT_PAD, placeLineTexts } from './linetexts.js';
+import { patchPadding, placeLineTexts } from './linetexts.js';
 import { plain, type Line, type Run } from './text.js';
 
 export interface RenderOptions {
@@ -81,7 +80,10 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   const hidden = (edge: LayoutEdge) => edge.guide === true && !guides.shown;
 
   const boxes = layout.roots.flatMap((root) => drawNode(root, theme, measurer, fontSize, layout.markup, guides));
-  const marks = layout.marks.map((mark) => ({ mark, item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize) } }));
+  const marks = layout.marks.map((mark) => ({
+    mark,
+    item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize), fills: markFills(mark, theme) },
+  }));
   const lines: Drawn[] = [];
   // Everything the boxes cover. Edges are added to it as they are drawn.
   let ink: Extent = { minX: 0, minY: 0, maxX: layout.width, maxY: layout.height };
@@ -118,7 +120,13 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   const masks: { id: string; holes: Crossing[] }[] = [];
   for (const edge of drawn) {
     const found = crossings.get(edge);
-    const parts = [edge.line, ...edge.rest];
+    // Each patch behind a text matches what is drawn under it, which the drawing order says.
+    const beneath = sequence.slice(0, place.get(keyOf(edge))!);
+    const rest = edge.rest.map((part) => {
+      const patch = edge.patches.find((one) => one.marker === part);
+      return patch ? patchSvg(patch, beneath, theme) : part;
+    });
+    const parts = [edge.line, ...rest.filter((part) => part.length > 0)];
     if (found) {
       const id = `cut-${masks.length + 1}`;
       masks.push({ id, holes: found });
@@ -268,6 +276,49 @@ interface Drawn {
   key: string;
   svg: string;
   node?: LayoutNode;
+  /** The areas it fills, bottom first, for the patch behind a line's text to match. */
+  fills?: Fill[];
+}
+
+/** An area something fills, and with what. */
+interface Fill extends Box {
+  color: string;
+  opacity: number;
+}
+
+/** What a node fills of its own. */
+function nodeFills(node: LayoutNode, theme: Theme): Fill[] {
+  if (node.guide || node.body.kind !== 'shape') return [];
+  const face = faceOf(node);
+  const fills: Fill[] = [];
+  const fill = fillOf(node.appearance, theme, holdsContents(node) ? containerFillOf(node, theme) : theme.boxFill);
+  if (fill !== 'none') fills.push({ ...face, color: fill, opacity: 1 });
+  return fills;
+}
+
+/**
+ * The patch behind a line's text (design.org 7.3): the color drawn beneath
+ * the text's middle, built up as it was drawn, so a tint over a container's
+ * fill is matched as both; or the color its `fill:` states, or none.
+ */
+function patchSvg(patch: Patch, beneath: Drawn[], theme: Theme): string {
+  const rect = `x="${round(patch.rect.x)}" y="${round(patch.rect.y)}" width="${round(patch.rect.width)}" height="${round(patch.rect.height)}"`;
+  if (patch.fill === 'none') return '';
+  if (patch.fill !== undefined) return `  <rect ${rect} fill="${themeColor(patch.fill, theme)}"/>`;
+  const { x, y } = patch.center;
+  const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
+    if (!fill.round) return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
+    const r = Math.min(fill.width, fill.height) / 2;
+    return Math.hypot(x - (fill.x + fill.width / 2), y - (fill.y + fill.height / 2)) <= r;
+  });
+  let base = -1;
+  under.forEach((fill, index) => {
+    if (fill.opacity >= 1) base = index;
+  });
+  return [
+    `  <rect ${rect} fill="${base < 0 ? theme.background : under[base]!.color}"/>`,
+    ...under.slice(base + 1).map((fill) => `  <rect ${rect} fill="${fill.color}" fill-opacity="${fill.opacity}"/>`),
+  ].join('\n');
 }
 
 /** What shown guides need to know: whether they are shown, their color, and each kind's look. */
@@ -314,9 +365,44 @@ function drawNode(
     if (node.body.kind === 'icon') own = [`  <g opacity="0.5">`, ...own, '  </g>'];
   }
   if (node.appearance['layout'] === 'venn' && !node.guide) return drawVenn(node, theme, measurer, fontSize, markup, guides, url);
+  if (node.appearance['layout'] === 'deck' && !node.guide) return drawDeck(node, theme, measurer, fontSize, markup, guides, url);
   return [
-    { key: node.name, node, svg: linked(own.join('\n'), url) },
+    { key: node.name, node, svg: linked(own.join('\n'), url), fills: nodeFills(node, theme) },
     ...node.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
+  ];
+}
+
+/**
+ * A deck: no outline of its own unless it states a fill or a border, and its
+ * cards drawn back to front, so the first, the front card, is on top.
+ */
+function drawDeck(
+  node: LayoutNode,
+  theme: Theme,
+  measurer: Measurer,
+  fontSize: number,
+  markup: Record<string, string>,
+  guides: Guides,
+  url: string | undefined,
+): Drawn[] {
+  const outlined = node.appearance['fill'] !== undefined || node.appearance['border'] !== undefined;
+  const drawn = outlined ? node : { ...node, appearance: { ...node.appearance, fill: 'none', border: 'none' } };
+  const cards = node.children.filter((child) => child !== node.heading && !joinedToText(child));
+  // The cards are the same thing, so each looks like the front one unless it says otherwise.
+  const front = cards[0]!;
+  const holds = holdsContents(front);
+  const look = {
+    fill: fillOf(front.appearance, theme, holds ? containerFillOf(front, theme) : theme.boxFill),
+    border: borderOf(front.appearance, theme, holds ? theme.containerStroke : theme.boxStroke),
+  };
+  const like = (card: LayoutNode): LayoutNode =>
+    card === front ? card : { ...card, appearance: { ...look, ...card.appearance } };
+  return [
+    { key: node.name, node, svg: linked(nodeSvg(drawn, theme, measurer, fontSize, markup).join('\n'), url), fills: nodeFills(drawn, theme) },
+    ...[...cards].reverse().flatMap((card) => drawNode(like(card), theme, measurer, fontSize, markup, guides, url)),
+    ...node.children
+      .filter((child) => !cards.includes(child))
+      .flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
   ];
 }
 
@@ -344,13 +430,14 @@ function drawVenn(
   const leftFill = left.appearance['fill'] ?? 'theme-primary-subtle';
   const rightFill = right.appearance['fill'] ?? 'theme-secondary-subtle';
   const sharedFill = shared.appearance['fill'] ?? overlapFill(themeColor(leftFill, theme), theme);
-  const item = (part: LayoutNode, key: string, svg: string[]): Drawn => ({ key, node: part, svg: linked(svg.join('\n'), part.attrs['url'] ?? url) });
+  const item = (part: LayoutNode, key: string, svg: string[], fills: Fill[] = []): Drawn => ({ key, node: part, svg: linked(svg.join('\n'), part.attrs['url'] ?? url), fills });
+  const filled = (part: LayoutNode, fill: string) => item(part, part.name, nodeSvg(plain(part, fill), theme, measurer, fontSize, markup), nodeFills(plain(part, fill), theme));
   const rest = (part: LayoutNode) => part.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, part.attrs['url'] ?? url));
   return [
-    { key: node.name, node, svg: linked(own.join('\n'), url) },
-    item(left, left.name, nodeSvg(plain(left, leftFill), theme, measurer, fontSize, markup)),
-    item(right, right.name, nodeSvg(plain(right, rightFill), theme, measurer, fontSize, markup)),
-    item(shared, shared.name, nodeSvg(plain(shared, sharedFill), theme, measurer, fontSize, markup)),
+    { key: node.name, node, svg: linked(own.join('\n'), url), fills: nodeFills(plain(node, node.appearance['fill'] ?? 'none'), theme) },
+    filled(left, leftFill),
+    filled(right, rightFill),
+    filled(shared, sharedFill),
     item(left, `${left.name} border`, [borderSvg(left, theme)]),
     item(right, `${right.name} border`, [borderSvg(right, theme)]),
     ...rest(left),
@@ -449,28 +536,6 @@ function nodeSvg(
   // makes a badge whose text is legible in every theme.
   const text = textColorOf(node.textAttrs, theme, textOnFill(node.appearance['fill'] ?? '', theme) ?? theme.text);
 
-  // Deck copies sit behind the front face, furthest back drawn first.
-  for (let depth = node.deckTexts.length; depth >= 1; depth -= 1) {
-    const x = face.x - depth * DECK_STEP;
-    const y = face.y - depth * DECK_STEP;
-    parts.push(
-      `  <path d="${outlinePath(outline, x, y, face.width, face.height, node.corners)}" fill="${theme.containerFill}" stroke="${border}"/>`,
-    );
-    const copy = node.deckTexts[depth - 1];
-    if (copy !== undefined) {
-      parts.push(
-        sized(
-          textBlock([[{ text: copy }]], x, y, textHeight, size,
-            { x: PAD, y: PAD, width: face.width - PAD * 2, height: textHeight },
-            { color: text, align: 'start', ink },
-          ),
-          size,
-          fontSize,
-        ),
-      );
-    }
-  }
-
   // A title on the border breaks it: the stroke is masked where the title sits,
   // and the fill, drawn without a stroke, still shows behind the title's inner
   // half.
@@ -563,12 +628,37 @@ function markSvg(mark: LayoutMark, theme: Theme, guides: Guides, markup: Record<
     const border = color(said('border')) ?? guides.color;
     return `${masked}  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
   }
-  const fill = color(said('fill'));
+  const fill = regionFill(mark, theme);
   const border = color(said('border'));
+  const opacity = fill.color === 'none' || fill.opacity >= 1 ? '' : ` fill-opacity="${round(fill.opacity)}"`;
   return (
-    `${masked}  <${shape} ${box} fill="${fill ?? theme.primary.color}"${fill === undefined ? ' fill-opacity="0.12"' : ''}` +
+    `${masked}  <${shape} ${box} fill="${fill.color}"${opacity}` +
     ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"${mask}/>${label}`
   );
+}
+
+/**
+ * A region's fill (design.org 8.3): what it states, or the theme's tint, at
+ * half opacity unless it says otherwise, so overlapping regions show both and
+ * a region never hides what it covers.
+ */
+function regionFill(mark: LayoutMark, theme: Theme): { color: string; opacity: number } {
+  const said = mark.appearance['opacity'];
+  const opacity = said === undefined ? REGION_OPACITY : Number(said);
+  const stated = mark.appearance['fill'];
+  if (stated === undefined) return regionTint(theme, opacity);
+  return { color: themeColor(stated, theme), opacity };
+}
+
+/** How opaque a region's fill is when it doesn't say. */
+const REGION_OPACITY = 0.5;
+
+/** What a region fills, for the patch behind a line's text: nothing for a guide, a point or a flat region. */
+function markFills(mark: LayoutMark, theme: Theme): Fill[] {
+  if (mark.kind !== 'region' || mark.guide || mark.width < 0.5 || mark.height < 0.5) return [];
+  const fill = regionFill(mark, theme);
+  if (fill.color === 'none' || fill.opacity <= 0) return [];
+  return [{ x: mark.x, y: mark.y, width: mark.width, height: mark.height, ...fill }];
 }
 
 /** A point's or a region's text (design.org 7.4), on a line of its own after the mark. */
@@ -784,8 +874,10 @@ interface DrawnEdge {
   edge: LayoutEdge;
   /** The line's element, closed with `/>` so a mask can be added to it. */
   line: string;
-  /** Its text, after it. */
+  /** Its text, after it, with a marker where each text's patch goes. */
   rest: string[];
+  /** The patch behind each text, drawn once the drawing order says what lies beneath it. */
+  patches: Patch[];
   ink: Extent;
   /** The line as a polyline, curves flattened, for sliding its text along. */
   trace: Point[];
@@ -793,6 +885,17 @@ interface DrawnEdge {
   traces: Point[][];
   color: string;
   stroke: string;
+}
+
+/** The patch behind one text on a line: the line's knockout under the words. */
+interface Patch {
+  /** The item in the edge's `rest` it replaces. */
+  marker: string;
+  rect: { x: number; y: number; width: number; height: number };
+  /** The middle of the words, where what lies beneath is judged. */
+  center: Point;
+  /** The text's own `fill:`, when it states one. */
+  fill?: string;
 }
 
 function drawEdge(
@@ -852,18 +955,27 @@ function drawEdge(
   // breaks on ` / ` exactly as a box text does, so a two-line caption on an
   // arrow needs no vocabulary of its own.
   const rest: string[] = [];
+  const patches: Patch[] = [];
   for (const placed of placeLineTexts(edge, route)) {
     const { text, center, angle } = placed;
     const lineHeight = measurer.lineHeight(text.size);
     const { width, height } = text;
     const top = center.y - height / 2;
     const turn = angle === 0 ? '' : ` transform="rotate(${round(angle)} ${round(center.x)} ${round(center.y)})"`;
+    // The text knocks a hole in whatever it lands on rather than sitting in
+    // a chip of its own: an outlined box reads as a node, which is the one
+    // thing a text on a line is not.
+    const pad = patchPadding(text, `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`, edge.line);
+    const marker = `\u0000patch ${patches.length}`;
+    patches.push({
+      marker,
+      rect: { x: center.x - width / 2 - pad.x, y: top - pad.y, width: width + pad.x * 2, height: height + pad.y * 2 },
+      center,
+      ...(text.textAttrs['fill'] !== undefined ? { fill: text.textAttrs['fill'] } : {}),
+    });
     rest.push(
       ...(turn ? ['  <g' + turn + '>'] : []),
-      // The text knocks a hole in whatever it lands on rather than sitting in
-      // a chip of its own: an outlined box reads as a node, which is the one
-      // thing a text on a line is not.
-      `  <rect x="${round(center.x - width / 2 - KNOCKOUT_PAD)}" y="${round(top)}" width="${round(width + KNOCKOUT_PAD * 2)}" height="${round(height)}" fill="${theme.background}"/>`,
+      marker,
       sized(
         textBlock(text.lines, center.x - width / 2, top, lineHeight, text.size,
           { x: 0, y: 0, width, height },
@@ -893,6 +1005,7 @@ function drawEdge(
     trace: route.hidden ? traceRoute(route) : tracesOf(line!)[0]!,
     traces: tracesOf(line!),
     color,
+    patches,
     stroke,
   };
 }
@@ -1208,13 +1321,13 @@ interface Box {
   round?: boolean;
 }
 
-/** The rectangle actually drawn. Differs from the node box only for a deck. */
+/** The rectangle drawn, and whether it is round. */
 function faceOf(node: LayoutNode): Box {
   return {
-    x: node.x + node.inset,
-    y: node.y + node.inset,
-    width: node.width - node.inset,
-    height: node.height - node.inset,
+    x: node.x,
+    y: node.y,
+    width: node.width,
+    height: node.height,
     round: node.body.kind === 'shape' && node.body.outline === 'circle',
   };
 }
@@ -1357,7 +1470,10 @@ function lineOf(appearance: Record<string, string>, theme: Theme, fallback: stri
  */
 function containerFillOf(node: LayoutNode, theme: Theme): string {
   let below = node.parent;
-  while (below !== undefined && (below.body.kind === 'none' || !holdsContents(below))) below = below.parent;
+  // A container that draws no fill is not a layer: an invisible one, or a deck that states none.
+  const unfilled = (one: LayoutNode) =>
+    one.body.kind === 'none' || !holdsContents(one) || (one.appearance['layout'] === 'deck' && one.appearance['fill'] === undefined);
+  while (below !== undefined && unfilled(below)) below = below.parent;
   if (below === undefined) return theme.containerFill;
   const base = fillOf(below.appearance, theme, containerFillOf(below, theme));
   const channel = (hex: string, at: number) => parseInt(hex.slice(at, at + 2), 16);

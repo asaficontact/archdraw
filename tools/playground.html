@@ -708,6 +708,7 @@
               <code>layout: column</code> or <code>row</code> — the children in written order, with
               <code>(gap: tight, widths: match, align-children: left)</code>.
               Without a layout, one child is unplaced and the rest are placed against it.<br />
+              <code>layout: deck</code> — a stack of cards, the first child in front.<br />
               <code>gather-children: left</code> — where the children sit in spare room.
               <code>shape: none</code> on a container draws no box.
             </dd>
@@ -773,7 +774,7 @@
               <code>none</code> is text with no box, which is what an annotation is.<br />
               <code>icon: <i>name</i></code> — the node <i>is</i> that picture, with no box.<br />
               <code>badge: <i>name</i></code> — the picture is part of the label, beside the text, and the node keeps its box.<br />
-              <code>deck: "text" <i>["text" …]</i></code> — offset copies behind the box, one per text.<br />
+              <code>layout: deck  cards: "text" <i>["text" …]</i></code> — a stack of cards, front first, one per text.<br />
               Pictures: <code>disk</code> <code>desktop</code> <code>laptop</code>
               <code>package</code> <code>cubes</code> <code>cube</code> <code>database</code>.<br />
               Your own: <code>icon <i>name</i> """&lt;svg …&gt;…&lt;/svg&gt;"""</code> declares one,

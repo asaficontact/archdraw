@@ -172,7 +172,7 @@ node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 
 - **A labeled line between close boxes.** The text sits on the line and nothing widens the gap, so it covers the boxes and is reported. Give the placement a larger gap.
 - **Two unplaced boxes.** Only one may be. The error names both.
 - **Saying an axis twice.** `right of a  even with a` is fine; `below a  even with b` is two statements about height, and refused.
-- **Old syntax.** `level with` is `even with`; `gap:` on a node goes in a placement's bracket; edge clauses like `below c` and `between a and b` are `via: c bottom` and `via: between a and b`; `contents:` is `layout: column (…)`; `at:` on a node's text is `(inside top, align: left)` and the like. Each is refused with what to write instead.
+- **Old syntax.** `level with` is `even with`; `gap:` on a node goes in a placement's bracket; edge clauses like `below c` and `between a and b` are `via: c bottom` and `via: between a and b`; `contents:` is `layout: column (…)`; `at:` on a node's text is `(inside top, align: left)` and the like; `deck:` is a container, `layout: deck  cards: "Drive 1" "Drive 2"`. Each is refused with what to write instead.
 - **`note`, `box` or `link`.** Not statements: a note is `node … shape: none`, and the keywords are `node` and `edge`.
 - **A coordinate.** None exist. Every position is relative to something in the diagram.
 - **`#` as a comment.** It opens a hex color; comments are `//`.
@@ -272,7 +272,7 @@ A distance (a gap, a size, a padding, `2 right of x`) is measured in the file's 
 
 A distance below the words is a number, `1 right of a` or `0.5 right of a`, and a number may start at its decimal point, `.5`. A unit is 12 pixels at the normal text size.
 
-An appearance number is a multiple of its own normal: `(size: 1.2)` is text 20% bigger, `thickness: 2` a line twice the normal width. So a bare number has two scales, and `thickness: 1` is not `gap: 1`.
+An appearance number is a multiple of its own normal: `(size: 1.2)` is text 20% bigger, `thickness: 2` a line twice the normal width. So a bare number has two scales, and `thickness: 1` is not `gap: 1`. The one exception is a region's `opacity:`, an amount from `0` (none) to `1.0` (solid), not a multiple of anything.
 
 A suffix `px` fixes any of these in pixels, so it doesn't follow the file: `(size: 16px)`, `thickness: 3px`, `(gap: 12px)`. A bare number never means pixels.
 
@@ -374,13 +374,9 @@ With an empty text, `node flag "" badge: disk`, the node is exactly the picture 
 
 **A picture that is a thing of its own is a child**, placed like any other: `node drive.mark  icon: disk  inside drive top-right` in a corner. Placed against the text without `join-with:`, it is not part of the label: the text stays where it would be without it, and the box grows to hold both.
 
-### Decks and padding
+### Padding
 
-```
-node drive "Drive 1"  deck: "Drive 2" "Drive 3"
-```
-
-`deck:` draws offset copies behind a box, one per text, listed back to front, to say "there are several of these and they are the same". Only the front copy shows contents. The copies hang up and to the left and are part of the node, so something placed above or left of it clears the whole stack. A box only.
+A stack of cards, which `deck:` used to draw, is a container: [`layout: deck`](#a-stack-of-cards-layout-deck).
 
 `padding:` is the room between a box's edge and what it holds, in the file's unit: `padding: 2`. On a region it is measured outward instead ([Points and regions](#points-and-regions)).
 
@@ -512,7 +508,7 @@ A part is written as the name, then the part: `b top`, `e bottom-left`, `hub tex
 
 - **Between two things.** `between a and b` is the center of the space between them: halfway between their facing sides, not their centers. `between a and b at 1/3` is a third of the way across, from `a`. It always joins exactly two things with `and`; `between a, b` is refused.
 - **From two things.** `down from a and left from b` is where a line straight down from `a`'s center meets a line straight left from `b`'s. A line may start from a part (`down from a left`) or a point (`left from 1 above b top-left`); from a whole side, such as `up from c top`, it starts at the side's middle. The direction words also say which way the point lies from each box, and that is checked: lines that don't meet are refused. Either half may be `even with x` instead, the level line through `x`: `up from c and even with tall top` is straight above `c`, level with `tall`'s top. It says no way the point lies, so only the other half is checked.
-- **Moved by a distance.** `2 below c bottom` is 2 units below `c`'s bottom. What is moved is a point or a side, so `2 below c` is refused, asking which. A moved side is still a side: `1 above tall top` works wherever `tall top` does. `c bottom + 2` is refused too, since `+` adds lengths and doesn't say up or down.
+- **Moved by a distance.** `2 below c bottom` is 2 units below `c`'s bottom. What is moved is a point or a side, so `2 below c` is refused, asking which. A moved side is still a side: `1 above tall top` works wherever `tall top` does. A named point moves the same way: `2 above over_c`. `c bottom + 2` is refused too, since `+` adds lengths and doesn't say up or down.
 - **On a line.** `req start`, `req end`, `req at 1/3` ([Points on a line](#points-on-a-line)).
 
 A box is placed at a point with `on`, and against one with a direction:
@@ -537,7 +533,7 @@ A named point can be used by several things (`via: funnel`, `below funnel`), and
 
 A region is the rectangle spanned by two points, in either order. `region r  between a and b` is the space between the two boxes: on an axis where they are apart, the gap; where they overlap, only the stretch they share. `(span: both)` stretches it across both boxes on the other axis. Once named, a region has every part a box has, so `via: r center`, `right of r` and `inside r top-left` need nothing new. `padding:` pushes its edges out.
 
-A region bounds things without owning them: they keep their own parent, aren't moved by it, and may sit in several regions, and a region may span containers. That is what separates it from a container. A point is drawn as a dot and a region as a light tint with a quiet border, unless written as a [guide](#guides).
+A region bounds things without owning them: they keep their own parent, aren't moved by it, and may sit in several regions, and a region may span containers. That is what separates it from a container. A point is drawn as a dot and a region as a light tint with a quiet border, unless written as a [guide](#guides). A region's fill, the tint or one it states with `fill:`, is drawn at half opacity, so overlapping regions show both colors and a region never hides what it covers; `opacity: 1.0` makes it solid, and `opacity:` takes any amount from `0` to `1.0`.
 
 ```
 node web  "Web"
@@ -584,6 +580,29 @@ node server.db  "database"  below server.web
 node server.cache "cache"  right of server.db
 ```
 
+A container scopes names, not placement: a child may be placed against a box outside its container, and a box outside against a child. Here `bin` is as tall as a column of boxes outside `host`:
+
+```
+node host "host"
+node host.trx
+node host.bin  left even with host.trx  top even with cat0  bottom even with nice
+node src  left of host.trx (gap: wide)
+node cat0  below src
+node nice  below cat0 (gap: 6)
+```
+
+When no child is unplaced and a child is placed against a box outside, the container is placed by what it holds: it goes wherever that puts the child, and it doesn't count as a box that says nothing about where it goes.
+
+```
+node abc
+node lot  below abc (gap: 4)
+node host "host"
+node host.trx  right of abc (gap: 6)
+node host.dog  right of lot (gap: 6)
+```
+
+A container placed by its own statement can't also be placed by a child against a box outside it on the same axis. Both would say where the container goes, so it is refused as placed twice, even when the two agree; keep one of them.
+
 ### By a stated layout
 
 `layout: column` puts every child in a column, in written order, and `layout: row` in a row. A child of a laid-out container never places itself; that is refused.
@@ -626,6 +645,28 @@ Each set wraps its own children and the overlap's, and the two cross over the ov
 
 The overlap has no border of its own. Its title follows every container's rule: drawn if it has one, nothing for `""`, and it sits centered at the top of the strip. The venn itself draws no box unless it states a fill or border. Each part gets a different fill unless it states one: the left set the theme's primary-subtle, the right its secondary-subtle, and the overlap the two laid over each other. A venn's sets crossing, and what is in the overlap sitting inside both, is never reported.
 
+### A stack of cards: `layout: deck`
+
+A stack of cards says "there are several of these and they are the same". `layout: deck` stacks its children, the first in front and each next one a step up and to the left behind it. When the cards are only texts, `cards:` lists them, front first:
+
+```
+node drives ""  layout: deck  cards: "Drive 1" "Drive 2" "Drive 3"
+```
+
+That is the same as writing each card as a child, which is how a card that holds anything is written, and then every card is, front first; `cards:` beside cards written out is refused, quoting them:
+
+```
+node drives ""  layout: deck
+node drives.1 "Drive 1"  layout: column
+node drives.1.backup "backup"
+node drives.2 "Drive 2"
+node drives.3 "Drive 3"
+```
+
+`cards:` names them `drives.1`, `drives.2` and on, so a line or a placement can name one card: `edge laptop -> drives.1` ends on the front card. `drives` itself is the whole stack: something placed beside, above or `even with` it measures from the stack, and a line to it ends on the stack's edge. Every card is as big as the biggest, a stated size included, and takes the front card's colors unless it states its own. A card's text sits at its top left, where it shows above the card in front, unless it says where. A card places nothing itself; the deck places it.
+
+The deck draws nothing of its own: no outline, and nothing round its cards. A `fill:` or `border:` on it draws an outline, a padding away from the cards. Its title follows every container's rule, so it is titled with its name unless it says `""`, and it goes above the stack, centered across it, unless it says where. Cards stacked on each other are never reported as overlapping.
+
 ### Where the children sit
 
 `gather-children:` on the box says where the group of its children sits when the box has spare room, from a stated size or a title wider than they are: against a side (`left`, `right`, `top`, `bottom`), in a corner (`top-left` and the others), or in the middle (`center`, the default). It works on any container, laid out or hand-placed; hand-placed children move as one piece.
@@ -661,7 +702,7 @@ node tall "Top"  height: 8
 node tall.disk  icon: disk  1 right of tall text  top even with tall text  join-with: tall text
 ```
 
-A unit that includes a box's text is placed by the text's position words: on a leaf it is centered as a pair, on a container it takes the title's place. Joins chain. `x` must be something one of the node's placements is against, and must be its own container's text or a sibling. A node joined to the text may be placed only against the text and what is joined to it. A box whose every child is joined to its text draws as a leaf. `badge:` is the short form.
+A unit that includes a box's text is placed by the text's position words: on a leaf it is centered as a pair, on a container it takes the title's place. Joins chain. In a container whose title its side words place and which has an unplaced child, a child placed only against the text, or against what is joined to it, is joined without saying so: `node d1.nw "3"  right of d1 text  even with d1 text` goes with the title. The box then holds two groups nothing relates, each fully stated; if they land on each other, that is reported as an overlap. `x` must be something one of the node's placements is against, and must be its own container's text or a sibling. A node joined to the text may be placed only against the text and what is joined to it. A box whose every child is joined to its text draws as a leaf. `badge:` is the short form.
 
 ### Against its own parent
 
@@ -747,7 +788,7 @@ node legend "Legend" (on top)  right of hub
 node legend.a "solid: synced"  shape: none
 ```
 
-**A title may be placed against the box's own children**, with any placement a child takes, the box implied: `(right even with r.d, top even with r.a)` puts the title in the top-right corner beside `r.a`, with no row of its own. A side word places the title across the side, and `align:` or a placement places it along; two words for one direction are refused. A direction nothing states takes the default, `inside top` and `align: center`.
+**A title may be placed against the box's own children**, with any placement a child takes, the box implied: `(right even with r.d, top even with r.a)` puts the title in the top-right corner beside `r.a`, with no row of its own. A side word places the title across the side, and `align:` or a placement places it along; two words for one direction are refused. Opposite placements center the title between them, as they center a box: `(right of r.a  left of r.b, even with r.a)` sits it in the middle of the gap the two leave. A direction nothing states takes the default, `inside top` and `align: center`.
 
 ```
 node r "Deployment" (right even with r.d, top even with r.a)
@@ -862,6 +903,8 @@ edge bin -> engine  from: right, even with b  to: left, even with b
 **Several ends on one side spread evenly**, ordered by where each far box sits along the side: on a top side, the line from the leftmost box takes the leftmost slot. A line states its own place among the others with `to: top, right of z`, where `z` is a named line ending on that side; on a left or right side the words are `above` and `below`. An end pinned to a point, or even with something, splits the side, so the others spread on either side of it.
 
 **An end may be on another line.** `edge audit -> req` ends on the line `req`, at its middle, and `to: at 1/3` a third of the way along it. An end may also start where another line meets the same box: on a line out of `api`, `from: req end` leaves from the point where `req` ends on `api`; naming a box the line doesn't start at is refused. Lines ending on lines must be drawable in some order, so a loop of them is refused.
+
+**A line may go from a box back to itself**, as a loop round one of its sides: `edge job -> job  from: left  to: right  via: job top  line: (path: square)` leaves the left side, runs over the top and comes back into the right side. A straight line can't loop, so a line to itself without a square or curved path is refused, quoting this form.
 
 **A line may leave straight one way and stop at what it meets.** `edge d1 -- bus  straight down` ends where the line straight down from `d1`'s center meets `bus`. A miss is refused, never bent. This is also how a line runs level: `straight right` leaves at its own height. The longer form names any box or named point or region: `to: down from z3`, or `from: left from bin` to take the height from the far end.
 
@@ -1042,6 +1085,14 @@ node b  right of a (gap: 16)
 edge a -> b  "1" (at: start)  "calls" (above edge)  "n" (at: end)
 ```
 
+**The line is broken behind its text** by a patch the color of whatever is drawn under the text's middle: the page, a container's fill, or a region's tint over it. The text's bracket can say otherwise, in a box's words: `fill:` is the patch's color, `none` for no patch, and `padding:` the room it leaves round the text, all round. By default it reaches a little past the words either side and not at all above or below.
+
+```
+node a
+node b  right of a (gap: 16)
+edge a -> b  "beside" (above edge, fill: none)  "boxed" (at: 3/4, fill: theme-fill, padding: 0.5)
+```
+
 **A text never moves anything.** The line is drawn first and each text is measured on it. Texts that overlap are drawn and reported as `text-overlap`. A line's text takes the line's color unless its bracket says otherwise. `align:` in a line text's bracket is refused, pointing to the placement words.
 
 ## Guides
@@ -1092,7 +1143,7 @@ node nas "NAS"  right of mirror
 edge mirror -> nas  style: backup
 ```
 
-A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `deck`, `from-mark`, `to-mark`, `padding` and `corners`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:`.
+A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:` or a deck's `cards:`.
 
 - **A style may span kinds.** It gives each thing only the keys that thing has, so the style above gives nodes their border and lines their color.
 - **A style must give a thing at least one key it has.** A style that dresses a thing in nothing is on the wrong thing.
@@ -1184,11 +1235,11 @@ An **error** means the file can't be drawn: an unknown key, two placements on on
 
 | kind | reports | default |
 |---|---|---|
-| `text-overlap` | a text on another text, on a line it doesn't belong to, or on a node it doesn't belong to | on |
+| `text-overlap` | a text on another text, on a line it doesn't belong to, or on a node it doesn't belong to; a node over its container's title | on |
 | `text-overflow` | a text running out of a box whose stated size is too small for it | on |
 | `edge-node-overlap` | a line across a node that isn't one of its ends, or through its own ends | on |
 | `edge-overlap` | two lines on one run for a stretch, however short; a collapsed bundle's bus, and lines from one statement such as `edge a -> b, c`, shared on purpose, are not reported | on |
-| `crowded-edge-ends` | several line ends bunched on a side too short to space them | on |
+| `crowded-edge-ends` | several line ends bunched on a side too short to space them: two ends' marks would touch, or, where neither has a mark, the lines come within a third of a unit | on |
 | `node-overlap` | two nodes on one spot that no layout, `inside`, `on` or `overlap: allow` accounts for | on |
 | `edge-no-length` | a line between two boxes that touch, drawn as its marks at the seam | on |
 | `edge-crossings` | two lines crossing | off |
@@ -1234,7 +1285,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `shape` | ✓ | | ✓ | | the outline |
 | `icon` | | ✓ | | | the picture the node is drawn as |
 | `badge` | ✓ | | | | a picture joined to the text |
-| `deck` | ✓ | | | | offset copies behind the box |
+| `cards` | ✓ | | | | a deck's cards, when they are only texts, front first |
 | `fill`, `border` | ✓ | | | | colors |
 | `corners` | ✓ | | | | `sharp` or `rounded`; not on a circle. A line's go in `line: (…)` |
 | `text` | ✓ | ✓ | ✓ | ✓ | in a style only; on a statement, the bracket after the text |
@@ -1252,7 +1303,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `from-mark`, `to-mark` | | | | ✓ | the marks at its ends |
 | `line` | | | | ✓ | its color, or everything about it in a bracket |
 
-A point takes `style`, `fill` and `depth`; a region those, `border` and `padding`; a bundle `via`, `layout`, `order`, `line`, `from-mark` and `to-mark`.
+A point takes `style`, `fill` and `depth`; a region those, `opacity`, `border` and `padding`; a bundle `via`, `layout`, `order`, `line`, `from-mark` and `to-mark`.
 
 **A word the table doesn't give the kind is an error.** A word that is an attribute nowhere is a misspelling, and the error lists what the kind takes. A word that is an attribute somewhere else is usually written on the wrong thing, so the error says where it belongs: `background:` on a node points at `fill:`, and `theme:` on one points at `diagram theme:`.
 
@@ -1303,6 +1354,8 @@ Breaking, in how things are drawn:
 - **A child placed against its parent's side no longer grows the parent.** It is placed against the finished box.
 - **Opposite placements no longer push their targets apart.** `right of a  left of b` centers the box in the space already there.
 - **A line's text no longer makes room for itself**, and no longer slides off other texts. It sits at the middle of its line unless placed, and overlaps are reported.
+- **The patch behind a line's text takes the color beneath it**, such as a container's fill, where it was always the page's color and showed as a dark box on a tint. `fill:` in the text's bracket sets it, `none` for none.
+- **A deck is a container, `layout: deck`, and its cards are its children**, the front one first, so each card has a name and the deck is the whole stack. `node drive "Drive 1"  deck: "Drive 2" "Drive 3"` is written `node drive ""  layout: deck  cards: "Drive 1" "Drive 2" "Drive 3"`, and a front card that holds things is written out with every card as a child. `deck:` is refused, quoting the new form.
 - **Lines are straight by default**, `path: straight`. They were curved. `default edge  line: (path: curved)` keeps the old look.
 - **Lines no longer find their way round boxes.** A line goes straight, or square or curved along a route read off its own two boxes, and through anything in between, which is reported. `via:` says where it goes. Lines no longer take lanes from each other; copies of one line still fan.
 - **A line with no side named meets the side facing the other box.** It used to aim at the other box's center; `from: center` does that.
@@ -1334,6 +1387,7 @@ Breaking, in spelling:
 | `thickness: 3` | `thickness: 3px` |
 | `gap: 12` | `gap: 12px`, or `1` |
 | `from:` or `to:` in a style, which did nothing | on each edge: `edge a -> b  from: right  to: left` |
+| `node drive "Drive 1"  deck: "Drive 2" "Drive 3"` | `node drive ""  layout: deck  cards: "Drive 1" "Drive 2" "Drive 3"`; a front card holding things is written as a child, `node drive.1 "Drive 1"`, and so is every card |
 
 New:
 
@@ -1345,12 +1399,15 @@ New:
 - **Named lines** and points on them: `req start`, `req end`, `req at 1/3`.
 - **A line between points and regions**: `edge a -> b` where `a` and `b` are named points, regions or boxes, in any mix, guide lines included. A point end is exactly on the point; a region end is like a box's.
 - **Bundles**, parallel, collapsed or fanned, with a stated `order:`, `edge each child of a -> b`, and lines to several ends, `edge a -> b, c, d`.
-- **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`.
+- **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`; the patch behind one takes `fill:` and `padding:`.
+- **A line from a box back to itself**, as a loop round a side: `edge job -> job  from: left  to: right  via: job top  line: (path: square)`.
+- **Placing across containers**: a child may be placed against a box outside its container, `node host.bin  top even with cat0`, and a container whose children are placed that way, with none unplaced, goes where they put it.
 - **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down x`), and a part of the target (`top even with x bottom`).
 - **Sizes**: `width:`, `height:` and the four limits, from numbers, measurements of other boxes, sums, spans and `larger of`.
 - **Layouts**: `layout: column` and `row`, with `gap:`, `widths:`, `align-children:` and `centers:`; `gather-children:` on any container.
-- **Titles placed** against any side, inside, on or outside the border, or against the box's own children, and turned with `reads:`; `heading:`; `join-with:`.
+- **Titles placed** against any side, inside, on or outside the border, or against the box's own children, centered between two with opposite placements, and turned with `reads:`; `heading:`; `join-with:`, which a child placed only against a title its side words place takes without saying so.
 - **A point's and a region's text**: `point mid "halfway" (above-right)`, `region trust "trust boundary" (inside top)`.
+- **A region's fill is drawn at half opacity**, stated or not, so overlapping regions show both; `opacity:` from `0` to `1.0` says otherwise.
 - **Invisible containers**: `shape: none` with children.
 - **Square-cornered boxes**: `corners: sharp` on a node, a style or a default draws a box's corners square, a document's too, fold aside. Boxes are still rounded unless told, so no existing diagram changes. A circle refuses it, having no corners.
 - **`padding:`** on a box or region.

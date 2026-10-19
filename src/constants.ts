@@ -16,9 +16,9 @@ export const UNIT = 12;
 /** Between a container's own text and its first child. */
 export const HEADER_GAP = 10;
 /**
- * How far each deck copy is offset behind the front face. It has to clear a
- * whole line of text plus the padding above it, or a copy's text is drawn and
- * then immediately covered by the copy in front of it.
+ * How far each card of a deck sits up and to the left of the one in front. It
+ * has to clear a whole line of text plus the padding above it, or a card's
+ * text is drawn and then immediately covered by the card in front of it.
  */
 export const DECK_STEP = 34;
 /**
@@ -82,35 +82,6 @@ export const THICKNESS: Record<string, number> = {
  */
 export function arrowLength(thickness: number): number {
   return ARROW_MARKER_WIDTH * thickness;
-}
-
-/**
- * How much room an edge's text takes along one axis.
- *
- * The knockout rectangle drawn behind a text is the text plus five either side,
- * so that rectangle, not the glyphs, is what must not overlap anything.
- *
- * Shared by the resolver, which widens a corridor to hold a text, and the
- * renderer, which spaces the lanes of a channel by it, so the two cannot
- * disagree about how much room a text needs. The two ask different questions of
- * it and both are right: the resolver measures *along* the run, so an edge
- * traveling horizontally needs the text's width; the renderer measures *across*
- * the channel, so an edge traveling horizontally down one needs its height.
- */
-export function textExtent(
-  lines: Line[],
-  textAttrs: Attrs,
-  axis: 'x' | 'y',
-  measurer: Measurer,
-  fontSize: number,
-  line: number,
-): number {
-  const size = fontSizeFor('edge', textAttrs, fontSize, line);
-  const width = lines.reduce(
-    (widest, drawn) => Math.max(widest, measurer.measure(plain(drawn), size).width),
-    0,
-  );
-  return axis === 'x' ? width + 10 : lines.length * measurer.lineHeight(size);
 }
 
 /**

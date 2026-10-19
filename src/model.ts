@@ -65,14 +65,6 @@ export interface LayoutNode {
   height: number;
 
   /**
-   * Distance from the node's outer box to its drawn face. Zero for everything
-   * except a deck, where the offset copies sit in that margin.
-   */
-  inset: number;
-  /** One text per copy behind this node, back to front. Empty for most nodes. */
-  deckTexts: string[];
-
-  /**
    * Vertical space this node's own text and icon occupy, at whichever end of
    * the box `text.at` puts them. Zero for leaves.
    */
@@ -328,5 +320,11 @@ export function joinedToText(node: LayoutNode): boolean {
     if (target === 'text') return true;
     at = target;
   }
+  return false;
+}
+
+/** Whether a node is inside another, at any depth. */
+export function isWithin(node: LayoutNode, ancestor: LayoutNode): boolean {
+  for (let at = node.parent; at; at = at.parent) if (at === ancestor) return true;
   return false;
 }

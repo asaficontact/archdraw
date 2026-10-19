@@ -165,7 +165,7 @@ node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 
 - **A labeled line between close boxes.** The text sits on the line and nothing widens the gap, so it covers the boxes and is reported. Give the placement a larger gap.
 - **Two unplaced boxes.** Only one may be. The error names both.
 - **Saying an axis twice.** `right of a  even with a` is fine; `below a  even with b` is two statements about height, and refused.
-- **Old syntax.** `level with` is `even with`; `gap:` on a node goes in a placement's bracket; edge clauses like `below c` and `between a and b` are `via: c bottom` and `via: between a and b`; `contents:` is `layout: column (…)`; `at:` on a node's text is `(inside top, align: left)` and the like. Each is refused with what to write instead.
+- **Old syntax.** `level with` is `even with`; `gap:` on a node goes in a placement's bracket; edge clauses like `below c` and `between a and b` are `via: c bottom` and `via: between a and b`; `contents:` is `layout: column (…)`; `at:` on a node's text is `(inside top, align: left)` and the like; `deck:` is a container, `layout: deck  cards: "Drive 1" "Drive 2"`. Each is refused with what to write instead.
 - **`note`, `box` or `link`.** Not statements: a note is `node … shape: none`, and the keywords are `node` and `edge`.
 - **A coordinate.** None exist. Every position is relative to something in the diagram.
 - **`#` as a comment.** It opens a hex color; comments are `//`.

@@ -708,6 +708,7 @@
               <code>layout: column</code> or <code>row</code> — the children in written order, with
               <code>(gap: tight, widths: match, align-children: left)</code>.
               Without a layout, one child is unplaced and the rest are placed against it.<br />
+              <code>layout: deck</code> — a stack of cards, the first child in front.<br />
               <code>gather-children: left</code> — where the children sit in spare room.
               <code>shape: none</code> on a container draws no box.
             </dd>
@@ -773,7 +774,7 @@
               <code>none</code> is text with no box, which is what an annotation is.<br />
               <code>icon: <i>name</i></code> — the node <i>is</i> that picture, with no box.<br />
               <code>badge: <i>name</i></code> — the picture is part of the label, beside the text, and the node keeps its box.<br />
-              <code>deck: "text" <i>["text" …]</i></code> — offset copies behind the box, one per text.<br />
+              <code>layout: deck  cards: "text" <i>["text" …]</i></code> — a stack of cards, front first, one per text.<br />
               Pictures: <code>disk</code> <code>desktop</code> <code>laptop</code>
               <code>package</code> <code>cubes</code> <code>cube</code> <code>database</code>.<br />
               Your own: <code>icon <i>name</i> """&lt;svg …&gt;…&lt;/svg&gt;"""</code> declares one,
@@ -862,6 +863,13 @@ function joinedToText(node) {
             return true;
         at = target;
     }
+    return false;
+}
+/** Whether a node is inside another, at any depth. */
+function isWithin(node, ancestor) {
+    for (let at = node.parent; at; at = at.parent)
+        if (at === ancestor)
+            return true;
     return false;
 }
 
@@ -1184,7 +1192,7 @@ const POINT_KEYS = ['style', 'fill', 'depth'];
 const POINT_TEXT_SIDES = ['above', 'below', 'left', 'right', 'above-right', 'above-left', 'below-right', 'below-left'];
 /** What a point's or a region's text takes in its bracket besides its position words. */
 const MARK_TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'reads', 'gap'];
-const REGION_KEYS = ['style', 'fill', 'border', 'padding', 'depth'];
+const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'depth'];
 /**
  * The attributes a `diagram` statement understands. `text` takes a bracket,
  * `text: (color: …)`, and sets the text color of everything at once — the
@@ -1295,7 +1303,7 @@ const COLOR_PARTS = {
 /** The keys that state a size; `size.ts` reads their values. */
 const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'];
 const ATTR_KEYS = {
-    shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
+    shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
     icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
     none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
     edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
@@ -1319,7 +1327,7 @@ const NODE_CORNERS = ['rounded', 'sharp'];
  * not told the word does not exist.
  */
 const ALL_ATTR_KEYS = [
-    ...new Set([...Object.values(ATTR_KEYS).flat(), ...DIAGRAM_KEYS]),
+    ...new Set([...Object.values(ATTR_KEYS).flat(), ...DIAGRAM_KEYS, ...REGION_KEYS]),
 ];
 
 // ---- errors.js ----
@@ -1609,24 +1617,6 @@ const THICKNESS = {
  */
 function arrowLength(thickness) {
     return ARROW_MARKER_WIDTH * thickness;
-}
-/**
- * How much room an edge's text takes along one axis.
- *
- * The knockout rectangle drawn behind a text is the text plus five either side,
- * so that rectangle, not the glyphs, is what must not overlap anything.
- *
- * Shared by the resolver, which widens a corridor to hold a text, and the
- * renderer, which spaces the lanes of a channel by it, so the two cannot
- * disagree about how much room a text needs. The two ask different questions of
- * it and both are right: the resolver measures *along* the run, so an edge
- * traveling horizontally needs the text's width; the renderer measures *across*
- * the channel, so an edge traveling horizontally down one needs its height.
- */
-function textExtent(lines, textAttrs, axis, measurer, fontSize, line) {
-    const size = fontSizeFor('edge', textAttrs, fontSize, line);
-    const width = lines.reduce((widest, drawn) => Math.max(widest, measurer.measure(plain(drawn), size).width), 0);
-    return axis === 'x' ? width + 10 : lines.length * measurer.lineHeight(size);
 }
 /**
  * The widest of these lines, which is how wide the block of them is. Shared by
@@ -2194,6 +2184,15 @@ function gapPixels(written, subject, line) {
     throw new SourceError(`${subject}: "${written}" is not a distance — write one of ${Object.keys(GAPS).join(', ')}, ` +
         'a number in the file\'s unit, or a number of pixels such as 12px', line);
 }
+/**
+ * A region's `opacity:`, an amount from none to full: `0` to `1.0`. The one
+ * look whose bare number is not a multiple of its normal (design.org 8.3).
+ */
+function checkOpacity(value, subject, line) {
+    if (/^\d*\.?\d+$/.test(value) && Number(value) <= 1)
+        return;
+    throw new SourceError(`${subject}: "opacity: ${value}" — opacity is an amount from 0 (none) to 1.0 (solid), such as opacity: 0.5`, line);
+}
 class Placer {
     roots;
     byName;
@@ -2221,6 +2220,10 @@ class Placer {
     unitStarts = new Map();
     /** The stretch a container's text and what is joined to it cover, measured from the text's start. */
     units = new Map();
+    /** Where a container's frame's origin is on the page. */
+    origins = new Map();
+    /** Containers whose anchor is being placed on the page, so a box outside them is measured on the page rather than in their frame. */
+    onPage = new Set();
     /** Named points and regions being worked out, innermost last, to refuse one defined through itself. */
     expanding = [];
     constructor(roots, byName, facts, 
@@ -2289,7 +2292,153 @@ class Placer {
         const parent = node.parent;
         if (!parent)
             return this.start(node, axis);
-        return this.page(parent, axis) + this.start(node, axis) - this.frame(parent, axis).boxStart;
+        return this.origin(parent, axis) + this.start(node, axis);
+    }
+    /**
+     * Where a container's frame's origin is on the page. A container that says
+     * nothing about where it goes shares its own container's origin, so it is
+     * known without its outline; one placed by what it holds is where its
+     * anchor goes; any other is found from where its box went.
+     */
+    origin(node, axis) {
+        const key = `${node.name}\n${axis}`;
+        const known = this.origins.get(key);
+        if (known !== undefined)
+            return known;
+        const worked = this.guard(`origin\n${key}`, node, axis, undefined, () => {
+            if (this.frameAnchor(node, axis))
+                return this.anchorOnPage(node, axis);
+            const above = node.parent ? this.origin(node.parent, axis) : 0;
+            if (this.floats(node))
+                return above;
+            this.refusePlacedTwice(node, axis);
+            return above + this.start(node, axis) - this.frame(node, axis).boxStart;
+        });
+        this.origins.set(key, worked);
+        return worked;
+    }
+    /**
+     * A container that says where it goes on one axis cannot also hold a child
+     * placed against a box outside it on that axis: both would say where the
+     * container goes, and it is refused even when the two agree.
+     */
+    refusePlacedTwice(node, axis) {
+        const own = this.statements(node, axis);
+        if (own.length === 0)
+            return;
+        for (const child of this.contentOf(node)) {
+            for (const { placement } of this.statements(child, axis)) {
+                const outside = placement.targets.flatMap((target) => this.boxesNamed(target, [])).some((name) => {
+                    const named = this.byName.get(name);
+                    return named !== undefined && named !== node && !isWithin(named, node);
+                });
+                if (!outside)
+                    continue;
+                throw new SourceError(`"${node.name}" is placed twice ${AXIS_SAID[axis]}: by its own "${describePlacement(own[0].placement)}" ` +
+                    `and by "${child.name} ${describePlacement(placement)}", which is inside it — keep one of the two`, placement.line);
+            }
+        }
+    }
+    /** The origin a box outside `parent` is measured from: the page while `parent`'s anchor is being placed on it. */
+    originFor(parent, axis) {
+        return this.onPage.has(`${parent.name}\n${axis}`) ? 0 : this.origin(parent, axis);
+    }
+    /** Where the anchor of a container placed by what it holds goes on the page, which is its frame's origin. */
+    anchorOnPage(node, axis) {
+        const anchor = this.frameAnchor(node, axis);
+        if (anchor.placements.length === 0)
+            return this.origin(anchor, axis) + this.frame(anchor, axis).boxStart;
+        const key = `${node.name}\n${axis}`;
+        this.onPage.add(key);
+        try {
+            return this.placed(anchor, axis);
+        }
+        finally {
+            this.onPage.delete(key);
+        }
+    }
+    /**
+     * A container that is its frame's anchor: it says nothing about where it
+     * goes, and nothing inside it is placed against a box outside it in its
+     * stead. Its frame's origin is its own container's.
+     */
+    floats(node) {
+        const parent = node.parent;
+        if (node.placements.length > 0 || node.children.length === 0)
+            return false;
+        if (parent && (parent.heading === node || joinedToText(node) || this.facts.get(parent).layout || this.vennPart(node) !== undefined)) {
+            return false;
+        }
+        return true;
+    }
+    /**
+     * A container placed by what it holds, on one axis (design.org 5.5): it
+     * says nothing about where it goes, nothing inside it is its anchor, and a
+     * child is placed against boxes outside it. The first such child is the
+     * frame's anchor, and where it goes says where the container goes.
+     */
+    frameAnchor(node, axis) {
+        if (node.children.length === 0 || node.placements.length > 0)
+            return undefined;
+        const parent = node.parent;
+        if (parent && (parent.heading === node || joinedToText(node) || this.facts.get(parent).layout || this.vennPart(node) !== undefined)) {
+            return undefined;
+        }
+        const facts = this.facts.get(node);
+        if (facts.layout || facts.venn)
+            return undefined;
+        const content = this.contentOf(node);
+        if (this.anchoredOnTitle(node) || node.titlePlacements?.length)
+            return undefined;
+        if (content.some((child) => this.unplaced(child)))
+            return undefined;
+        return content.find((child) => this.fromOutside(child, axis, node));
+    }
+    /** A box that says nothing about where it goes, and so anchors its frame. */
+    unplaced(node) {
+        if (this.acrossParts(node))
+            return true;
+        if (node.placements.length > 0)
+            return false;
+        return !(this.frameAnchor(node, 'x') && this.frameAnchor(node, 'y'));
+    }
+    /** Whether everything a box is placed against on one axis is outside `of`. */
+    fromOutside(node, axis, of) {
+        if (node.placements.length === 0) {
+            const anchor = this.frameAnchor(node, axis);
+            return anchor !== undefined && this.fromOutside(anchor, axis, of);
+        }
+        const speaking = this.statements(node, axis).map((statement) => statement.placement);
+        const placements = speaking.length > 0
+            ? speaking
+            : node.placements.filter((placement) => placement.kind === 'offset' && component(placement.direction, axis) === undefined);
+        if (placements.length === 0)
+            return false;
+        const names = placements.flatMap((placement) => placement.targets.flatMap((target) => this.boxesNamed(target, [])));
+        return names.length > 0 && names.every((name) => {
+            const named = this.byName.get(name);
+            return named !== undefined && named !== of && !isWithin(named, of);
+        });
+    }
+    /** The boxes a target is worked out from: the box it names, or those a point or region it names is worked out from. */
+    boxesNamed(target, seen) {
+        if (target.point) {
+            const point = target.point;
+            if (point.kind === 'between')
+                return [...this.boxesNamed(point.a, seen), ...this.boxesNamed(point.b, seen)];
+            if (point.kind === 'from')
+                return point.lines.flatMap((line) => this.boxesNamed(line.target, seen));
+            return this.boxesNamed(point.from, seen);
+        }
+        if (this.byName.has(target.name))
+            return [target.name];
+        const defined = this.named.get(target.name);
+        if (!defined || seen.includes(target.name))
+            return [];
+        const further = [...seen, target.name];
+        if (defined.kind === 'point')
+            return this.boxesNamed(defined.point, further);
+        return defined.corners.flatMap((corner) => this.boxesNamed(corner, further));
     }
     /** Where a node starts in its container's frame, or on the page for the top level. */
     start(node, axis) {
@@ -2382,6 +2531,18 @@ class Placer {
             return this.vennStart(node, axis);
         if (parent && this.facts.get(parent).layout)
             return this.inLayout(node, axis).start;
+        // The anchor of a frame placed by what it holds sits at its origin.
+        if (parent && this.frameAnchor(parent, axis) === node)
+            return 0;
+        if (this.frameAnchor(node, axis)) {
+            // Placed by what it holds: its frame is where its anchor went.
+            const above = parent ? this.origin(parent, axis) : 0;
+            return this.origin(node, axis) - above + this.frame(node, axis).boxStart;
+        }
+        // A container that anchors its frame shares its container's origin, so
+        // its box starts where its outline does.
+        if (this.floats(node))
+            return this.frame(node, axis).boxStart;
         if (node.placements.length === 0 || this.acrossParts(node)) {
             // The anchor of its frame. One placed against a box in another part of
             // a venn is still its part's anchor; the placement moves the part. A container's title, when something is
@@ -2840,7 +3001,11 @@ class Placer {
                 text = this.textOf(named, axis, whole.start);
         }
         else {
-            throw new SourceError(`"${node.name}" is placed against "${target.name}", which is not one of its siblings or its parent`, placement.line);
+            // Outside its container, or inside another (design.org 5.2): found on
+            // the page and measured from this frame's origin.
+            whole = { start: this.page(named, axis) - this.originFor(parent, axis), size: this.size(named, axis) };
+            if (target.part === 'text')
+                text = this.textOf(named, axis, whole.start);
         }
         if (target.part === 'text') {
             if (!text || (!this.hasTitle(named) && named !== parent)) {
@@ -2991,7 +3156,7 @@ class Placer {
     /** Whether a laid-out container sets its children's size on this axis. */
     stretches(parent, axis) {
         const layout = this.facts.get(parent).layout;
-        return layout !== undefined && axis === 'x' && layout.widths !== 'natural';
+        return layout !== undefined && (layout.kind === 'deck' || (axis === 'x' && layout.widths !== 'natural'));
     }
     /** A node's size from what it states, or else what it holds, within its limits. */
     ownSize(node, axis) {
@@ -3249,11 +3414,6 @@ class Placer {
             boxHigh = boxLow + side;
             natural = side;
         }
-        if (node.deckTexts.length > 0) {
-            const inset = node.deckTexts.length * DECK_STEP;
-            boxLow -= inset;
-            natural += inset;
-        }
         return {
             boxStart: boxLow,
             boxSize: natural,
@@ -3319,8 +3479,12 @@ class Placer {
         const subject = `"${node.name}"'s title`;
         const said = placements.map((placement) => `"${describePlacement(placement)}"`).join(' and ');
         const line = placements[0].line;
-        if (placements.length > 1) {
-            throw new SourceError(`${subject} says where it goes ${AXIS_SAID[axis]} more than once: ${said}. Each axis is stated once — keep one`, line);
+        // Opposite placements center the title between them, as they center a box (5.3).
+        const ways = placements.map((placement) => (placement.kind === 'offset' ? component(placement.direction, axis) : undefined));
+        const opposite = placements.length === 2 && ways[0] !== undefined && ways[1] !== undefined && ways[0] !== ways[1];
+        if (placements.length > 1 && !opposite) {
+            throw new SourceError(`${subject} says where it goes ${AXIS_SAID[axis]} more than once: ${said}. Each axis is stated once — keep one, ` +
+                'or place it after one thing and before another to center it between them', line);
         }
         // The side words state the axis across their side, and align: the axis
         // along it; a placement may take whichever of the two they leave unsaid.
@@ -3336,11 +3500,22 @@ class Placer {
                 .join(', ');
             throw new SourceError(`${subject} says where it goes ${AXIS_SAID[axis]} twice: "${written}" and ${said}. Each axis is stated once — keep one`, line);
         }
-        const [placement] = placements;
+        const size = this.titleSize(node, axis);
+        if (opposite) {
+            const after = ways[0] === 'after' ? placements[0] : placements[1];
+            const before = ways[0] === 'after' ? placements[1] : placements[0];
+            const low = this.titleStart(node, axis, after, subject);
+            const high = this.titleStart(node, axis, before, subject) + size;
+            return (low + high) / 2 - size / 2;
+        }
+        return this.titleStart(node, axis, placements[0], subject);
+    }
+    /** Where one placement of a title against the box's own children puts the title's start. */
+    titleStart(node, axis, placement, subject) {
         // A child may be placed against a title placed against another child; a
         // title placed against the very child placed against it is caught as a
         // circle by the guard.
-        return this.guard(`title\n${node.name}\n${axis}`, node, axis, placement, () => {
+        return this.guard(`title\n${node.name}\n${axis}\n${placement.line}\n${describePlacement(placement)}`, node, axis, placement, () => {
             let start = Infinity;
             let end = -Infinity;
             for (const target of placement.targets) {
@@ -3402,6 +3577,14 @@ class Placer {
         const main = layout.kind === 'column' ? 'y' : 'x';
         const children = parent.children.filter((child) => child !== parent.heading && !joinedToText(child));
         const natural = (child, on) => this.ownSize(child, on);
+        if (layout.kind === 'deck') {
+            // Every card is as big as the biggest. The first is in front, and each
+            // next one a step up and to the left behind it.
+            const size = Math.max(...children.map((child) => natural(child, axis)));
+            const last = children.length - 1;
+            children.forEach((child, index) => this.laid.set(`${child.name}\n${axis}`, { start: (last - index) * DECK_STEP, size }));
+            return this.laid.get(key);
+        }
         if (axis !== main && this.stretches(parent, axis)) {
             for (const child of children) {
                 const keys = sizeKeysOn(child, axis);
@@ -3679,7 +3862,7 @@ class Placer {
             if (parent && this.vennPart(parent) !== undefined)
                 this.checkAcrossParts(members, parent);
             const content = members.filter((member) => !this.framed(member));
-            const unplaced = content.filter((member) => member.placements.length === 0 || this.acrossParts(member));
+            const unplaced = content.filter((member) => this.unplaced(member));
             const onTitle = content.find((member) => this.onTitle(member));
             if (!parent && unplaced.length === 0) {
                 throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
@@ -3741,7 +3924,6 @@ class Placer {
     finish(node) {
         const facts = this.facts.get(node);
         if (node.children.length === 0) {
-            node.inset = node.deckTexts.length * DECK_STEP;
             node.textBox = this.leafText(node);
             const x = this.reachOf(node, 'x');
             const y = this.reachOf(node, 'y');
@@ -3754,7 +3936,6 @@ class Placer {
             ? { x: x.textStart - x.boxStart, y: y.textStart - y.boxStart, width: x.textSize, height: y.textSize }
             : { x: 0, y: 0, width: 0, height: 0 };
         node.banded = true;
-        node.inset = node.deckTexts.length * DECK_STEP;
         const x2 = this.reachOf(node, 'x');
         const y2 = this.reachOf(node, 'y');
         node.reach = { left: x2.low, top: y2.low, right: x2.high, bottom: y2.high };
@@ -3864,12 +4045,6 @@ function commonFrame(a, b) {
         if (isWithin(b, at))
             return at;
     return undefined;
-}
-function isWithin(node, ancestor) {
-    for (let at = node.parent; at; at = at.parent)
-        if (at === ancestor)
-            return true;
-    return false;
 }
 /**
  * Narrow an extent to the part a placement named. A side leaves the axis it
@@ -4370,10 +4545,10 @@ const MET_SIDE = { down: 'top', up: 'bottom', left: 'right', right: 'left' };
 /** The drawn rectangle of a node. */
 function faceOfNode(node) {
     return {
-        x: node.x + node.inset,
-        y: node.y + node.inset,
-        width: node.width - node.inset,
-        height: node.height - node.inset,
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
         round: node.body.kind === 'shape' && node.body.outline === 'circle',
     };
 }
@@ -4694,7 +4869,6 @@ function faceThePoint(own, other) {
         y: point.y,
         width: 0,
         height: 0,
-        inset: 0,
         parent: undefined,
     });
     const side = spec.side;
@@ -4955,7 +5129,7 @@ function spreadSides(ends) {
             shared.push({
                 node: group[0].node,
                 side,
-                ends: ordered.map((end) => ({ at: end.at, edge: end.edge })).sort((p, q) => along(p.at) - along(q.at)),
+                ends: ordered.map((end) => ({ at: end.at, edge: end.edge, which: end.which })).sort((p, q) => along(p.at) - along(q.at)),
             });
         }
     }
@@ -4976,6 +5150,13 @@ function sideOf(end) {
 }
 function route(edge, start, end, context) {
     const subject = edge.bundle ? `bundle ${edge.name}` : `edge ${describeEdge(edge)}`;
+    // A straight line from a box back to itself has nowhere to go but along
+    // its own border; a loop needs a path that bends round something.
+    const bends = edge.look.path !== 'straight' || (edge.via ?? []).some((entry) => entry.leg?.attrs['path'] !== undefined && entry.leg.attrs['path'] !== 'straight');
+    if (!edge.bundle && edge.from === edge.to && !edge.onLine?.from && !edge.onLine?.to && !bends) {
+        throw new SourceError(`${subject} goes from ${edge.from.name} back to itself, and a straight line can't loop — ` +
+            `write it as a loop round a side, such as from: left  to: right  via: ${edge.from.name} top  line: (path: square)`, edge.line);
+    }
     // A bundle has no ends: its path is its stops alone (6.6).
     const ways = edge.bundle
         ? []
@@ -5672,6 +5853,18 @@ function describeEdge(edge) {
 const TEXT_GAP = 6;
 /** How far the hole a text knocks in its line reaches past the words, either side. */
 const KNOCKOUT_PAD = 5;
+/**
+ * The room the patch behind a text leaves round it, across and up and down:
+ * by default the knockout's reach either side and none above or below, and
+ * `padding:` in its bracket all round, as a box's padding is.
+ */
+function patchPadding(text, subject, line) {
+    const written = text.textAttrs['padding'];
+    if (written === undefined)
+        return { x: KNOCKOUT_PAD, y: 0 };
+    const by = gapPixels(written, `${subject}: the text "${text.text}" padding`, line);
+    return { x: by, y: by };
+}
 function measured(points) {
     const lengths = [0];
     for (let index = 1; index < points.length; index += 1) {
@@ -5976,10 +6169,11 @@ function placeLineTexts(edge, route) {
             center = { x: spot.x + (out[0] * size.width) / 2, y: spot.y + (out[1] * size.height) / 2 };
         }
         if (place.beside) {
-            const gap = place.edgeGap === undefined ? TEXT_GAP : gapPixels(place.edgeGap, `${subject}: the text "${text.text}": edge-gap:`, edge.line);
+            const gap = place.edgeGap === undefined ? TEXT_GAP : gapPixels(place.edgeGap, `${subject}: the text "${text.text}" edge-gap`, edge.line);
             center = besideLine(whole, s, center, size, place.beside, gap);
         }
-        const knockout = turned(text.width + KNOCKOUT_PAD * 2, text.height, angle);
+        const pad = patchPadding(text, subject, edge.line);
+        const knockout = turned(text.width + pad.x * 2, text.height + pad.y * 2, angle);
         return {
             text,
             center,
@@ -6417,23 +6611,49 @@ function crowdedEnds(sides) {
         if (drawn.length < 2)
             continue;
         const across = side === 'top' || side === 'bottom';
-        const want = Math.max(...drawn.map((end) => arrowLength(end.edge.look.thickness))) + 4;
-        let closest = Infinity;
+        // Two neighbors are crowded when their marks would touch, or, where
+        // neither has a mark, when the lines come within a third of a unit.
+        let crowded = false;
+        let want = 0;
+        const anyMark = drawn.some((end) => end.edge.marks[end.which] !== 'none');
         for (let index = 1; index < drawn.length; index += 1) {
-            const a = drawn[index - 1].at;
-            const b = drawn[index].at;
-            closest = Math.min(closest, Math.abs(across ? b.x - a.x : b.y - a.y));
+            const a = drawn[index - 1];
+            const b = drawn[index];
+            const apart = Math.abs(across ? b.at.x - a.at.x : b.at.y - a.at.y);
+            const marked = a.edge.marks[a.which] !== 'none' || b.edge.marks[b.which] !== 'none';
+            const needed = marked
+                ? (markWidth(a.edge, a.which) + markWidth(b.edge, b.which)) / 2
+                : (a.edge.look.thickness + b.edge.look.thickness) / 2 + UNIT / 3;
+            want = Math.max(want, needed);
+            if (apart < needed - EPSILON)
+                crowded = true;
         }
-        if (closest >= want)
+        if (!crowded)
             continue;
         const length = across ? node.width : node.height;
         // Rounded up: rounded to the nearest, a side just short of room read as
         // needing exactly its own length.
         const needs = Math.ceil((want * (drawn.length + 1)) / UNIT) * UNIT;
         found.push(new Finding('crowded-edge-ends', `${drawn.length} line ends share node ${node.name}'s ${side} side, which is ${units(length)} long; ` +
-            `spaced so their marks don't run together they need ${units(needs)}`, Math.max(...drawn.map((end) => end.edge.line))));
+            `spaced so their ${anyMark ? 'marks' : 'lines'} don't run together they need ${units(needs)}`, Math.max(...drawn.map((end) => end.edge.line))));
     }
     return found;
+}
+/**
+ * How wide a line's end is drawn across the line: its mark, or the line
+ * alone. The fractions are how much of its 10-unit marker box each of the
+ * renderer's mark shapes spans across the line; a dot keeps an ordinary
+ * line's size, and every other mark scales with the stroke.
+ */
+function markWidth(edge, which) {
+    const thickness = edge.look.thickness;
+    const mark = edge.marks[which];
+    if (mark === 'none')
+        return thickness;
+    if (mark === 'dot' || mark === 'odot')
+        return (mark === 'dot' ? 0.8 : 0.82) * ARROW_MARKER_WIDTH * LINE_WIDTH;
+    const across = { arrow: 1, oarrow: 0.76, diamond: 0.76, odiamond: 0.62, bar: 0.9 }[mark];
+    return across * ARROW_MARKER_WIDTH * thickness;
 }
 /**
  * Two lines crossing (design.org 6.6). Often fine, which is why it is off
@@ -6632,6 +6852,15 @@ function textOverlaps(layout, routes) {
                     : 'place it clear of the line, such as (below) or (above-left)'), item.line));
         }
     }
+    // A box's own title, against boxes only. A box covering the title of a box
+    // it overlaps from outside is node-overlap's finding; this one is a child
+    // over its container's title, or anything over a title drawn outside its box.
+    for (const node of layout.nodes) {
+        if (node.guide || node.lines.length === 0 || node.textBox.width <= EPSILON)
+            continue;
+        const box = { x: node.x + node.textBox.x, y: node.y + node.textBox.y, width: node.textBox.width, height: node.textBox.height };
+        items.push({ box, words: node.text, title: node, line: node.line });
+    }
     if (items.length === 0)
         return found;
     for (const node of layout.nodes) {
@@ -6657,11 +6886,23 @@ function textOverlaps(layout, routes) {
             if (width <= EPSILON || height <= EPSILON)
                 continue;
             if (item.words !== undefined && other.words !== undefined) {
+                if (item.title || other.title)
+                    continue;
                 const [earlier, later] = other.line <= item.line ? [other, item] : [item, other];
                 found.push(new Finding('text-overlap', `text "${later.words}" covers ${coveredPart(earlier.box, later.box)}text "${earlier.words}"; ${size(width, height)}`, later.line));
                 continue;
             }
             const [text, node] = item.words !== undefined ? [item, other] : [other, item];
+            const owner = text.title;
+            if (owner) {
+                if (node.node === owner || isWithin(owner, node.node))
+                    continue;
+                const outside = !within(text.box, { x: owner.x, y: owner.y, width: owner.width, height: owner.height });
+                if (!outside && !isWithin(node.node, owner))
+                    continue;
+                found.push(new Finding('text-overlap', `node ${node.node.name} covers ${coveredPart(text.box, node.box)}${owner.name}'s title "${text.words}"; ${size(width, height)}`, node.line));
+                continue;
+            }
             if (holds(node.node, text.box))
                 continue;
             found.push(new Finding('text-overlap', `text "${text.words}" covers ${coveredPart(node.box, text.box)}node ${node.node.name}; ${size(width, height)}`, text.line));
@@ -6724,6 +6965,9 @@ function nodeOverlaps(layout) {
             return true;
         if (vennStates(a, b))
             return true;
+        // A deck's cards are stacked on each other by the deck, and so is what they hold.
+        if (upA.some((one) => one.parent?.appearance['layout'] === 'deck' && upB.some((other) => other !== one && other.parent === one.parent)))
+            return true;
         if (upA.some(saysOverlapAllowed) || upB.some(saysOverlapAllowed))
             return true;
         const placedOn = (over, under) => over.some((node) => under.some((target) => stated.get(node)?.has(target)));
@@ -6771,6 +7015,11 @@ function saysOverlapAllowed(node) {
  * edge and not the far one, the far end the other way round, and the middle
  * otherwise.
  */
+/** Whether `inner` lies wholly inside `outer`. */
+function within(inner, outer) {
+    return (inner.x >= outer.x - EPSILON && inner.y >= outer.y - EPSILON &&
+        inner.x + inner.width <= outer.x + outer.width + EPSILON && inner.y + inner.height <= outer.y + outer.height + EPSILON);
+}
 function coveredPart(under, over) {
     const along = (start, extent, overStart, overExtent) => {
         const near = overStart <= start + EPSILON;
@@ -7185,6 +7434,20 @@ function overlapFill(under, theme) {
     const base = /^#[0-9a-f]{6}$/i.test(under) ? under : theme.primary.subtle;
     return mix(theme.secondary.color, base, SUBTLE);
 }
+/**
+ * A region's fill when it states none (design.org 8.3): the theme's primary
+ * mixed toward the page, so that drawn at a region's half opacity it reads as
+ * the primary at 12% did, the tint regions have always had. A page color that
+ * can't be measured keeps the primary itself, at a quarter of the opacity.
+ */
+function regionTint(theme, opacity) {
+    const hex = /^#[0-9a-f]{6}$/i;
+    if (!hex.test(theme.primary.color) || !hex.test(theme.background))
+        return { color: theme.primary.color, opacity: opacity * REGION_TINT };
+    return { color: mix(theme.primary.color, theme.background, REGION_TINT), opacity };
+}
+/** How much of the primary a region's own tint keeps, so that at half opacity it is 12% of it. */
+const REGION_TINT = 0.24;
 /** `amount` of `color` over `page`, both `#rrggbb`. */
 function mix(color, page, amount) {
     const channel = (hex, at) => parseInt(hex.slice(at, at + 2), 16);
@@ -7690,13 +7953,12 @@ function substitution(word, head) {
         return `reladraw has no \`note\` statement — a note is a node with no body, so try ` +
             `\`node ${rewrite(head)} shape: none\``;
     }
-    // A statement until 0.4.0. It created nothing, only said more about a node
-    // declared elsewhere, which is what an attribute on that node is for.
+    // A statement until 0.4.0, then the attribute `deck:` until the redesign.
     if (word === 'deck') {
         const name = head[1] && !head[1].quoted ? head[1].text : '<name>';
         const texts = head.slice(2).map((token) => (token.quoted ? quoteOf(token.text) : token.text));
-        return `reladraw has no \`deck\` statement — a deck is an attribute of the node, so write ` +
-            `\`deck: ${texts.length > 0 ? texts.join(' ') : '"…"'}\` on \`node ${name}\``;
+        return `reladraw has no \`deck\` statement — a deck is a container and its cards are its children, the front one first: ` +
+            `\`node ${name} ""  layout: deck  cards: "…" ${texts.length > 0 ? texts.join(' ') : '"…"'}\``;
     }
     const replacement = SUBSTITUTIONS[word];
     if (replacement === undefined)
@@ -7813,6 +8075,16 @@ function readAttr(tokens, at, attrs, line, subject) {
     if (key === 'contents') {
         throw new SourceError(`${subject}: contents: is gone — a container's children are arranged with layout:, and its settings ` +
             'go in its bracket: `layout: column (widths: match, align: center)`', line);
+    }
+    if (key === 'deck') {
+        // The node's own text was the front card's, and the copies' texts went back to front.
+        const name = subject.replace(/^node "|"$/g, '');
+        const own = tokens.slice(0, at).find((token) => token.quoted);
+        const cards = [quoteOf(own?.text ?? name)];
+        for (let next = at + 1; tokens[next]?.quoted; next++)
+            cards.push(quoteOf(tokens[next].text));
+        throw new SourceError(`${subject}: deck: is gone — a deck is a container and its cards are its children, the front one first: ` +
+            `\`node ${name} ""  layout: deck  cards: ${cards.join(' ')}\`; a card that holds things is written as a child, such as node ${name}.1`, line);
     }
     if (key === 'heading') {
         // `heading: d1.head (inside top, align: left)` — the child, then where it
@@ -8025,7 +8297,7 @@ function readAttr(tokens, at, attrs, line, subject) {
         // `centers: 5 apart` reads its last word as part of the value.
         const value = tokens[at + 1];
         if (!value || value.quoted || isAttrKey(value) || value.text === '(') {
-            throw new SourceError(`${subject}: layout: names an arrangement — column, row or venn`, line);
+            throw new SourceError(`${subject}: layout: names an arrangement — column, row, venn or deck`, line);
         }
         setOnce(attrs, 'layout', value.text, subject, line);
         let next = at + 2;
@@ -8120,8 +8392,8 @@ function readAttr(tokens, at, attrs, line, subject) {
         setOnce(attrs, key, names.join(' '), subject, line, { key, value: (v) => v.split(' ').join(', ') });
         return next;
     }
-    if (key === 'deck') {
-        // One quoted text per copy behind the node, back to front, as many as are
+    if (key === 'cards') {
+        // One quoted text per card of a deck, front first, as many as are
         // written. Stored joined on a line break, which no source line can hold.
         const texts = [];
         let next = at + 1;
@@ -8129,8 +8401,8 @@ function readAttr(tokens, at, attrs, line, subject) {
             texts.push(tokens[next++].text);
         if (texts.length === 0) {
             const given = tokens[next];
-            throw new SourceError(`${subject}: \`deck:\` takes one quoted text per copy behind the node, as in \`deck: "Drive 2" "Drive 3"\`` +
-                (given && !isAttrKey(given) ? `, not \`deck: ${given.text}\`` : ''), line);
+            throw new SourceError(`${subject}: \`cards:\` takes one quoted text per card, front first, as in \`cards: "Drive 1" "Drive 2" "Drive 3"\`` +
+                (given && !isAttrKey(given) ? `, not \`cards: ${given.text}\`` : ''), line);
         }
         setOnce(attrs, key, texts.join('\n'), subject, line, {
             key,
@@ -8233,8 +8505,12 @@ function attrsOnly(tokens, start, line, subject) {
     }
     return attrs;
 }
-/** How a text on a line looks, which is a node text's keys less the two that place it in a box. */
-const EDGE_TEXT_LOOK = TEXT_KEYS.filter((key) => key !== 'at' && key !== 'align');
+/**
+ * How a text on a line looks, which is a node text's keys less the two that
+ * place it in a box, and the patch behind it, in a box's words: its `fill:`
+ * and the `padding:` it leaves round the text (design.org 7.3).
+ */
+const EDGE_TEXT_LOOK = [...TEXT_KEYS.filter((key) => key !== 'at' && key !== 'align'), 'fill', 'padding'];
 /** Where a text on a line sits (design.org 7.3). */
 const EDGE_TEXT_PLACE = ['at', 'on', 'gap', 'edge-gap', 'reads'];
 const EDGE_TEXT_KEYS = [...EDGE_TEXT_LOOK, ...EDGE_TEXT_PLACE];
@@ -8281,7 +8557,7 @@ function readEdgeTextBracket(tokens, start, subject, text, line) {
             }
             once(key, key);
             i += 2;
-            if (key === 'color')
+            if (key === 'color' || key === 'fill')
                 checkColorWord(value, subject, line);
             if (key === 'at') {
                 const fraction = /^(\d+)\/(\d+)$/.exec(value);
@@ -9113,6 +9389,8 @@ function parseRegion(head, line) {
     }
     const attrs = attrsOnly(head, next, line, subject);
     refuseKeys(attrs, REGION_KEYS, subject, 'a region', line);
+    if (attrs['opacity'] !== undefined)
+        checkOpacity(attrs['opacity'], subject, line);
     return { kind: 'region', name, corners, ...(marked.text ? { text: marked.text } : {}), attrs, line };
 }
 /** Refuse what a point or a region has no use for, by name. */
@@ -10637,7 +10915,10 @@ function render(layout, options = {}) {
     });
     const hidden = (edge) => edge.guide === true && !guides.shown;
     const boxes = layout.roots.flatMap((root) => drawNode(root, theme, measurer, fontSize, layout.markup, guides));
-    const marks = layout.marks.map((mark) => ({ mark, item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize) } }));
+    const marks = layout.marks.map((mark) => ({
+        mark,
+        item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize), fills: markFills(mark, theme) },
+    }));
     const lines = [];
     // Everything the boxes cover. Edges are added to it as they are drawn.
     let ink = { minX: 0, minY: 0, maxX: layout.width, maxY: layout.height };
@@ -10670,7 +10951,13 @@ function render(layout, options = {}) {
     const masks = [];
     for (const edge of drawn) {
         const found = crossings.get(edge);
-        const parts = [edge.line, ...edge.rest];
+        // Each patch behind a text matches what is drawn under it, which the drawing order says.
+        const beneath = sequence.slice(0, place.get(keyOf(edge)));
+        const rest = edge.rest.map((part) => {
+            const patch = edge.patches.find((one) => one.marker === part);
+            return patch ? patchSvg(patch, beneath, theme) : part;
+        });
+        const parts = [edge.line, ...rest.filter((part) => part.length > 0)];
         if (found) {
             const id = `cut-${masks.length + 1}`;
             masks.push({ id, holes: found });
@@ -10802,6 +11089,45 @@ function linked(svg, url) {
 function holdsContents(node) {
     return node.children.some((child) => child !== node.heading && !joinedToText(child));
 }
+/** What a node fills of its own. */
+function nodeFills(node, theme) {
+    if (node.guide || node.body.kind !== 'shape')
+        return [];
+    const face = faceOf(node);
+    const fills = [];
+    const fill = fillOf(node.appearance, theme, holdsContents(node) ? containerFillOf(node, theme) : theme.boxFill);
+    if (fill !== 'none')
+        fills.push({ ...face, color: fill, opacity: 1 });
+    return fills;
+}
+/**
+ * The patch behind a line's text (design.org 7.3): the color drawn beneath
+ * the text's middle, built up as it was drawn, so a tint over a container's
+ * fill is matched as both; or the color its `fill:` states, or none.
+ */
+function patchSvg(patch, beneath, theme) {
+    const rect = `x="${round(patch.rect.x)}" y="${round(patch.rect.y)}" width="${round(patch.rect.width)}" height="${round(patch.rect.height)}"`;
+    if (patch.fill === 'none')
+        return '';
+    if (patch.fill !== undefined)
+        return `  <rect ${rect} fill="${themeColor(patch.fill, theme)}"/>`;
+    const { x, y } = patch.center;
+    const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
+        if (!fill.round)
+            return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
+        const r = Math.min(fill.width, fill.height) / 2;
+        return Math.hypot(x - (fill.x + fill.width / 2), y - (fill.y + fill.height / 2)) <= r;
+    });
+    let base = -1;
+    under.forEach((fill, index) => {
+        if (fill.opacity >= 1)
+            base = index;
+    });
+    return [
+        `  <rect ${rect} fill="${base < 0 ? theme.background : under[base].color}"/>`,
+        ...under.slice(base + 1).map((fill) => `  <rect ${rect} fill="${fill.color}" fill-opacity="${fill.opacity}"/>`),
+    ].join('\n');
+}
 /** The dash a shown guide is drawn with, so construction is told apart from the picture. */
 const GUIDE_DASH = '4 3';
 /**
@@ -10831,9 +11157,35 @@ function drawNode(node, theme, measurer, fontSize, markup, guides, inherited) {
     }
     if (node.appearance['layout'] === 'venn' && !node.guide)
         return drawVenn(node, theme, measurer, fontSize, markup, guides, url);
+    if (node.appearance['layout'] === 'deck' && !node.guide)
+        return drawDeck(node, theme, measurer, fontSize, markup, guides, url);
     return [
-        { key: node.name, node, svg: linked(own.join('\n'), url) },
+        { key: node.name, node, svg: linked(own.join('\n'), url), fills: nodeFills(node, theme) },
         ...node.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
+    ];
+}
+/**
+ * A deck: no outline of its own unless it states a fill or a border, and its
+ * cards drawn back to front, so the first, the front card, is on top.
+ */
+function drawDeck(node, theme, measurer, fontSize, markup, guides, url) {
+    const outlined = node.appearance['fill'] !== undefined || node.appearance['border'] !== undefined;
+    const drawn = outlined ? node : { ...node, appearance: { ...node.appearance, fill: 'none', border: 'none' } };
+    const cards = node.children.filter((child) => child !== node.heading && !joinedToText(child));
+    // The cards are the same thing, so each looks like the front one unless it says otherwise.
+    const front = cards[0];
+    const holds = holdsContents(front);
+    const look = {
+        fill: fillOf(front.appearance, theme, holds ? containerFillOf(front, theme) : theme.boxFill),
+        border: borderOf(front.appearance, theme, holds ? theme.containerStroke : theme.boxStroke),
+    };
+    const like = (card) => card === front ? card : { ...card, appearance: { ...look, ...card.appearance } };
+    return [
+        { key: node.name, node, svg: linked(nodeSvg(drawn, theme, measurer, fontSize, markup).join('\n'), url), fills: nodeFills(drawn, theme) },
+        ...[...cards].reverse().flatMap((card) => drawNode(like(card), theme, measurer, fontSize, markup, guides, url)),
+        ...node.children
+            .filter((child) => !cards.includes(child))
+            .flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, url)),
     ];
 }
 /**
@@ -10853,13 +11205,14 @@ function drawVenn(node, theme, measurer, fontSize, markup, guides, url) {
     const leftFill = left.appearance['fill'] ?? 'theme-primary-subtle';
     const rightFill = right.appearance['fill'] ?? 'theme-secondary-subtle';
     const sharedFill = shared.appearance['fill'] ?? overlapFill(themeColor(leftFill, theme), theme);
-    const item = (part, key, svg) => ({ key, node: part, svg: linked(svg.join('\n'), part.attrs['url'] ?? url) });
+    const item = (part, key, svg, fills = []) => ({ key, node: part, svg: linked(svg.join('\n'), part.attrs['url'] ?? url), fills });
+    const filled = (part, fill) => item(part, part.name, nodeSvg(plain(part, fill), theme, measurer, fontSize, markup), nodeFills(plain(part, fill), theme));
     const rest = (part) => part.children.flatMap((child) => drawNode(child, theme, measurer, fontSize, markup, guides, part.attrs['url'] ?? url));
     return [
-        { key: node.name, node, svg: linked(own.join('\n'), url) },
-        item(left, left.name, nodeSvg(plain(left, leftFill), theme, measurer, fontSize, markup)),
-        item(right, right.name, nodeSvg(plain(right, rightFill), theme, measurer, fontSize, markup)),
-        item(shared, shared.name, nodeSvg(plain(shared, sharedFill), theme, measurer, fontSize, markup)),
+        { key: node.name, node, svg: linked(own.join('\n'), url), fills: nodeFills(plain(node, node.appearance['fill'] ?? 'none'), theme) },
+        filled(left, leftFill),
+        filled(right, rightFill),
+        filled(shared, sharedFill),
         item(left, `${left.name} border`, [borderSvg(left, theme)]),
         item(right, `${right.name} border`, [borderSvg(right, theme)]),
         ...rest(left),
@@ -10937,16 +11290,6 @@ function nodeSvg(node, theme, measurer, fontSize, markup) {
     // theme fill, it is whatever reads on that fill: `fill: theme-primary` alone
     // makes a badge whose text is legible in every theme.
     const text = textColorOf(node.textAttrs, theme, textOnFill(node.appearance['fill'] ?? '', theme) ?? theme.text);
-    // Deck copies sit behind the front face, furthest back drawn first.
-    for (let depth = node.deckTexts.length; depth >= 1; depth -= 1) {
-        const x = face.x - depth * DECK_STEP;
-        const y = face.y - depth * DECK_STEP;
-        parts.push(`  <path d="${outlinePath(outline, x, y, face.width, face.height, node.corners)}" fill="${theme.containerFill}" stroke="${border}"/>`);
-        const copy = node.deckTexts[depth - 1];
-        if (copy !== undefined) {
-            parts.push(sized(textBlock([[{ text: copy }]], x, y, textHeight, size, { x: PAD, y: PAD, width: face.width - PAD * 2, height: textHeight }, { color: text, align: 'start', ink }), size, fontSize));
-        }
-    }
     // A title on the border breaks it: the stroke is masked where the title sits,
     // and the fill, drawn without a stroke, still shows behind the title's inner
     // half.
@@ -11019,10 +11362,35 @@ function markSvg(mark, theme, guides, markup, fontSize) {
         const border = color(said('border')) ?? guides.color;
         return `${masked}  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
     }
-    const fill = color(said('fill'));
+    const fill = regionFill(mark, theme);
     const border = color(said('border'));
-    return (`${masked}  <${shape} ${box} fill="${fill ?? theme.primary.color}"${fill === undefined ? ' fill-opacity="0.12"' : ''}` +
+    const opacity = fill.color === 'none' || fill.opacity >= 1 ? '' : ` fill-opacity="${round(fill.opacity)}"`;
+    return (`${masked}  <${shape} ${box} fill="${fill.color}"${opacity}` +
         ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"${mask}/>${label}`);
+}
+/**
+ * A region's fill (design.org 8.3): what it states, or the theme's tint, at
+ * half opacity unless it says otherwise, so overlapping regions show both and
+ * a region never hides what it covers.
+ */
+function regionFill(mark, theme) {
+    const said = mark.appearance['opacity'];
+    const opacity = said === undefined ? REGION_OPACITY : Number(said);
+    const stated = mark.appearance['fill'];
+    if (stated === undefined)
+        return regionTint(theme, opacity);
+    return { color: themeColor(stated, theme), opacity };
+}
+/** How opaque a region's fill is when it doesn't say. */
+const REGION_OPACITY = 0.5;
+/** What a region fills, for the patch behind a line's text: nothing for a guide, a point or a flat region. */
+function markFills(mark, theme) {
+    if (mark.kind !== 'region' || mark.guide || mark.width < 0.5 || mark.height < 0.5)
+        return [];
+    const fill = regionFill(mark, theme);
+    if (fill.color === 'none' || fill.opacity <= 0)
+        return [];
+    return [{ x: mark.x, y: mark.y, width: mark.width, height: mark.height, ...fill }];
 }
 /** A point's or a region's text (design.org 7.4), on a line of its own after the mark. */
 function markTextSvg(mark, theme, fallback, markup, fontSize) {
@@ -11261,17 +11629,25 @@ function drawEdge(edge, route, theme, measurer, fontSize, markup) {
     // breaks on ` / ` exactly as a box text does, so a two-line caption on an
     // arrow needs no vocabulary of its own.
     const rest = [];
+    const patches = [];
     for (const placed of placeLineTexts(edge, route)) {
         const { text, center, angle } = placed;
         const lineHeight = measurer.lineHeight(text.size);
         const { width, height } = text;
         const top = center.y - height / 2;
         const turn = angle === 0 ? '' : ` transform="rotate(${round(angle)} ${round(center.x)} ${round(center.y)})"`;
-        rest.push(...(turn ? ['  <g' + turn + '>'] : []), 
         // The text knocks a hole in whatever it lands on rather than sitting in
         // a chip of its own: an outlined box reads as a node, which is the one
         // thing a text on a line is not.
-        `  <rect x="${round(center.x - width / 2 - KNOCKOUT_PAD)}" y="${round(top)}" width="${round(width + KNOCKOUT_PAD * 2)}" height="${round(height)}" fill="${theme.background}"/>`, sized(textBlock(text.lines, center.x - width / 2, top, lineHeight, text.size, { x: 0, y: 0, width, height }, {
+        const pad = patchPadding(text, `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`, edge.line);
+        const marker = `\u0000patch ${patches.length}`;
+        patches.push({
+            marker,
+            rect: { x: center.x - width / 2 - pad.x, y: top - pad.y, width: width + pad.x * 2, height: height + pad.y * 2 },
+            center,
+            ...(text.textAttrs['fill'] !== undefined ? { fill: text.textAttrs['fill'] } : {}),
+        });
+        rest.push(...(turn ? ['  <g' + turn + '>'] : []), marker, sized(textBlock(text.lines, center.x - width / 2, top, lineHeight, text.size, { x: 0, y: 0, width, height }, {
             // A colored edge carries its meaning into its text; an uncolored
             // one leaves the words to read as ordinary text.
             color: textColorOf(text.textAttrs, theme, lineOf(edge.appearance, theme, theme.text)),
@@ -11290,6 +11666,7 @@ function drawEdge(edge, route, theme, measurer, fontSize, markup) {
         trace: route.hidden ? traceRoute(route) : tracesOf(line)[0],
         traces: tracesOf(line),
         color,
+        patches,
         stroke,
     };
 }
@@ -11555,13 +11932,13 @@ function markMarker(mark, color, background, free) {
 function markerId(mark, color, free) {
     return `${mark}-${color.replace(/[^a-zA-Z0-9]/g, '')}${free && (mark === 'dot' || mark === 'odot') ? '-free' : ''}`;
 }
-/** The rectangle actually drawn. Differs from the node box only for a deck. */
+/** The rectangle drawn, and whether it is round. */
 function faceOf(node) {
     return {
-        x: node.x + node.inset,
-        y: node.y + node.inset,
-        width: node.width - node.inset,
-        height: node.height - node.inset,
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
         round: node.body.kind === 'shape' && node.body.outline === 'circle',
     };
 }
@@ -11678,7 +12055,9 @@ function lineOf(appearance, theme, fallback) {
  */
 function containerFillOf(node, theme) {
     let below = node.parent;
-    while (below !== undefined && (below.body.kind === 'none' || !holdsContents(below)))
+    // A container that draws no fill is not a layer: an invisible one, or a deck that states none.
+    const unfilled = (one) => one.body.kind === 'none' || !holdsContents(one) || (one.appearance['layout'] === 'deck' && one.appearance['fill'] === undefined);
+    while (below !== undefined && unfilled(below))
         below = below.parent;
     if (below === undefined)
         return theme.containerFill;
@@ -11734,7 +12113,9 @@ function factsFor(node, measurer, fontSize) {
     const layout = layoutOf(node);
     const venn = vennOf(node);
     const circle = isCircle(node);
-    const padding = node.body.kind === 'none'
+    // A deck that draws no outline of its own is its cards, with nothing round them.
+    const undrawnDeck = node.appearance['layout'] === 'deck' && node.appearance['fill'] === undefined && node.appearance['border'] === undefined;
+    const padding = node.body.kind === 'none' || (undrawnDeck && node.appearance['padding'] === undefined)
         ? 0
         : node.appearance['padding'] !== undefined
             ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
@@ -11776,12 +12157,9 @@ function factsFor(node, measurer, fontSize) {
     if (layout && node.children.length === 0) {
         throw new SourceError(`"${node.name}" has layout: but no children — a node with no children is not a container`, node.line);
     }
-    // A leaf's deck hangs up and to the left of the front card, inside its box,
-    // as a container's does (`frame` in place.ts), so the copies are part of the node.
-    const deck = node.children.length === 0 ? node.deckTexts.length * DECK_STEP : 0;
     return {
-        natural: { width: textWidth + padding * 2 + deck, height: textHeight + padding * 2 + deck },
-        textBox: { x: padding + deck, y: padding + deck, width: textWidth, height: textHeight },
+        natural: { width: textWidth + padding * 2, height: textHeight + padding * 2 },
+        textBox: { x: padding, y: padding, width: textWidth, height: textHeight },
         hasText,
         padding,
         ...measures,
@@ -11847,12 +12225,22 @@ function gatherOf(node) {
 /** `layout: column (gap: 0, widths: match, align-children: left)`, read and checked. */
 function layoutOf(node) {
     const kind = node.appearance['layout'];
+    if (node.attrs['cards'] !== undefined && kind !== 'deck') {
+        throw new SourceError(`"${node.name}" has cards:, which are a deck's — add layout: deck`, node.line);
+    }
     if (kind === undefined || kind === 'venn')
         return undefined;
-    if (kind !== 'column' && kind !== 'row') {
-        throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row, venn`, node.line);
+    if (kind !== 'column' && kind !== 'row' && kind !== 'deck') {
+        throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row, venn, deck`, node.line);
     }
     const bracket = bracketOf('layout', node.appearance);
+    if (kind === 'deck') {
+        const [key] = Object.keys(bracket);
+        if (key !== undefined) {
+            throw new SourceError(`"${node.name}" has layout: deck (${key}: ${bracket[key]}), and a deck takes nothing in its bracket`, node.line);
+        }
+        return { kind, widths: 'natural', align: 'center' };
+    }
     if (bracket['heights'] !== undefined) {
         throw new SourceError(`"${node.name}" has layout: ${kind} (heights: ${bracket['heights']}), and heights: belongs to layout: venn — ` +
             'a column or row sizes its children with widths:', node.line);
@@ -11943,7 +12331,7 @@ function resolve(doc, options = {}) {
     checkStyleKeys(doc.statements);
     const defaults = collectDefaults(doc.statements, styles);
     const icons = collectIcons(doc.statements, options.readIconFile);
-    const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults, icons);
+    const { nodes, byName, roots } = buildTree(writeOutCards(doc.statements), styles, defaults, icons);
     // From here on, `edge each child of a -> b` and `edge a -> b, c` are the lines they stand for.
     const statements = expandEach(doc.statements, byName);
     // Edges are resolved to nodes before anything is sized, because a labeled
@@ -12114,6 +12502,9 @@ function buildMarks(named, placed, styles, texts = new Map()) {
                 throw new SourceError(`${stmt.kind} "${name}" wears a style with ${topKey(key)}:, which a ${stmt.kind} doesn't have — it takes ${allowed.map((k) => `${k}:`).join(', ')}`, stmt.line);
             }
         }
+        // A style may carry it, so it is checked as worn.
+        if (appearance['opacity'] !== undefined)
+            checkOpacity(appearance['opacity'], `region "${name}"`, stmt.line);
         const targets = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
         const names = [...new Set(targets.flatMap((target) => namesIn(target, named)))];
         const text = texts.get(name);
@@ -12368,6 +12759,17 @@ function buildTree(statements, styles, defaults, icons) {
                 ...(stmt.attrs['heading.align'] !== undefined ? { align: stmt.attrs['heading.align'] } : {}),
             }
             : { ...bracketOf('text', appearance), ...stmt.textAttrs };
+        // A card's text sits at its top left, where it shows above the card in
+        // front of it, unless it says where.
+        const deck = byName.get(stmt.name.slice(0, Math.max(stmt.name.lastIndexOf('.'), 0)));
+        if (deck?.appearance['layout'] === 'deck' && textAttrs['place'] === undefined && textAttrs['align'] === undefined) {
+            textAttrs['place'] = 'inside top';
+            textAttrs['align'] = 'left';
+        }
+        // A deck draws no outline of its own for a title to sit inside, so its
+        // title goes above, centered on the stack, unless it says where.
+        if (appearance['layout'] === 'deck' && textAttrs['place'] === undefined)
+            textAttrs['place'] = 'outside top';
         const node = {
             name: stmt.name,
             kind,
@@ -12380,8 +12782,6 @@ function buildTree(statements, styles, defaults, icons) {
             y: 0,
             width: 0,
             height: 0,
-            inset: 0,
-            deckTexts: [],
             headerHeight: 0,
             reach: { left: 0, top: 0, right: 0, bottom: 0 },
             banded: false,
@@ -12401,11 +12801,6 @@ function buildTree(statements, styles, defaults, icons) {
         // the renderer does for its colors; its own words beat both.
         const guideLook = stmt.guide ? defaults.get('guide node')?.['corners'] : undefined;
         node.corners = cornersOf(node, stmt.attrs['corners'] ?? guideLook ?? appearance['corners'], stmt.attrs['corners'] !== undefined);
-        // `deck:` holds one text per copy, joined on a line break the source cannot
-        // contain. Like a badge, only a box has an outline to repeat.
-        const deck = appearance['deck'];
-        if (deck !== undefined && body.kind === 'shape')
-            node.deckTexts = deck.split('\n');
         const cut = stmt.name.lastIndexOf('.');
         if (cut === -1) {
             roots.push(node);
@@ -12470,7 +12865,46 @@ function buildTree(statements, styles, defaults, icons) {
         }
         node.heading = heading;
     }
+    for (const node of nodes)
+        joinBesideTitle(node);
     return { nodes, byName, roots };
+}
+/**
+ * What `cards:` writes out: one child per text, front first, numbered from 1,
+ * declared right after the deck as if written by hand:
+ *
+ *     node <self>.1 "Drive 1"
+ *     node <self>.2 "Drive 2"
+ *
+ * Cards that hold anything are written by hand, every one of them, so a deck
+ * with `cards:` may have no other children.
+ */
+function writeOutCards(statements) {
+    const out = [];
+    for (const stmt of statements) {
+        out.push(stmt);
+        if (stmt.kind !== 'node' || stmt.attrs['cards'] === undefined)
+            continue;
+        const texts = stmt.attrs['cards'].split('\n');
+        const written = statements.find((other) => other.kind === 'node' && other.name.startsWith(`${stmt.name}.`) && other.name !== stmt.attrs['heading']);
+        if (written) {
+            throw new SourceError(`"${stmt.name}" has cards: and a child written out, "${written.name}" — once a card holds something, every card is ` +
+                `written as a child, front first: ${texts.map((text, index) => `node ${stmt.name}.${index + 1} "${text}"`).join(', ')}`, written.line);
+        }
+        texts.forEach((text, index) => {
+            out.push({
+                kind: 'node',
+                name: `${stmt.name}.${index + 1}`,
+                text,
+                statedText: true,
+                textAttrs: {},
+                placements: [],
+                attrs: {},
+                line: stmt.line,
+            });
+        });
+    }
+    return out;
 }
 /**
  * What `badge:` writes out, which is this:
@@ -12502,8 +12936,6 @@ function writeOutBadge(node, named, icons) {
         y: 0,
         width: 0,
         height: 0,
-        inset: 0,
-        deckTexts: [],
         headerHeight: 0,
         reach: { left: 0, top: 0, right: 0, bottom: 0 },
         banded: false,
@@ -12568,6 +13000,44 @@ function joinTarget(node, written, byName) {
             `where it sits beside it — place it against "${written}", such as 1 right of ${written}`, node.line);
     }
     return part === 'text' ? 'text' : byName.get(name);
+}
+/**
+ * A child placed against a title its side words place goes with the title,
+ * when another child anchors the frame (design.org 7.2): it is joined to the
+ * text as `join-with:` would join it, and so is whatever is placed only
+ * against it. The box then holds two groups nothing relates, each fully
+ * stated; if they land on each other, that is an overlap like any other.
+ */
+function joinBesideTitle(node) {
+    if (node.children.length === 0 || node.titlePlacements?.length || node.heading || node.attrs['layout'] !== undefined)
+        return;
+    const free = node.children.filter((child) => !joinedToText(child));
+    if (!free.some((child) => child.placements.length === 0))
+        return;
+    for (let changed = true; changed;) {
+        changed = false;
+        for (const child of free) {
+            if (child.joinWith !== undefined || child.placements.length === 0)
+                continue;
+            let onText = false;
+            let sibling;
+            const besideTitle = child.placements.every((placement) => placement.targets.every((target) => {
+                if (target.point || target.fraction)
+                    return false;
+                if (target.name === node.name && target.part === 'text')
+                    return (onText = true);
+                const named = node.children.find((one) => one.name === target.name);
+                if (named === undefined || named === child || !joinedToText(named))
+                    return false;
+                sibling ??= named;
+                return true;
+            }));
+            if (!besideTitle)
+                continue;
+            child.joinWith = onText ? 'text' : sibling;
+            changed = true;
+        }
+    }
 }
 /**
  * A node joined to its container's text is placed only against the text and
@@ -12646,8 +13116,8 @@ function checkAttrs(kind, name, attrs, line) {
             continue;
         // Quoted back the way it was written. A bracketed value arrives one dotted
         // key at a time, and `contents: match` is not a line anybody could look for.
-        // A deck's texts are stored joined on a line break; quote them back as written.
-        const shown = key === 'deck' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+        // A deck's cards are stored joined on a line break; quote them back as written.
+        const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
         const wrote = written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
         if (!ALL_ATTR_KEYS.includes(key)) {
             // Nothing anywhere in the language answers to this word, so the only
@@ -12756,6 +13226,9 @@ function checkStyleKeys(statements) {
             }
             if (topKey(key) === 'depth') {
                 throw new SourceError(`style "${stmt.name}" has depth:, which moves one thing in the drawing order, so it is written on that thing`, stmt.line);
+            }
+            if (topKey(key) === 'cards') {
+                throw new SourceError(`style "${stmt.name}" has cards:, which are one deck's own children, so it is written on that deck`, stmt.line);
             }
             if (topKey(key) === 'from' || topKey(key) === 'to') {
                 throw new SourceError(`style "${stmt.name}" has ${key}:, which says where one line ends, so it is written on that edge`, stmt.line);
@@ -13045,8 +13518,6 @@ function placeholder(name, line) {
         y: 0,
         width: 0,
         height: 0,
-        inset: 0,
-        deckTexts: [],
         headerHeight: 0,
         reach: { left: 0, top: 0, right: 0, bottom: 0 },
         banded: false,

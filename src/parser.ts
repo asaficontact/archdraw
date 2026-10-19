@@ -68,6 +68,7 @@ import { CHECK_DEFAULTS, CHECK_KINDS, setCheck } from './checks.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
 import { isAttrKey, nameMark, OpenString, tokenizeLine, type Token } from './lexer.js';
+import { checkOpacity } from './place.js';
 import { readSize, SIZE_KEYS, writeSize } from './size.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
@@ -283,13 +284,12 @@ function substitution(word: string, head: Token[]): string {
     return `reladraw has no \`note\` statement — a note is a node with no body, so try ` +
       `\`node ${rewrite(head)} shape: none\``;
   }
-  // A statement until 0.4.0. It created nothing, only said more about a node
-  // declared elsewhere, which is what an attribute on that node is for.
+  // A statement until 0.4.0, then the attribute `deck:` until the redesign.
   if (word === 'deck') {
     const name = head[1] && !head[1].quoted ? head[1].text : '<name>';
     const texts = head.slice(2).map((token) => (token.quoted ? quoteOf(token.text) : token.text));
-    return `reladraw has no \`deck\` statement — a deck is an attribute of the node, so write ` +
-      `\`deck: ${texts.length > 0 ? texts.join(' ') : '"…"'}\` on \`node ${name}\``;
+    return `reladraw has no \`deck\` statement — a deck is a container and its cards are its children, the front one first: ` +
+      `\`node ${name} ""  layout: deck  cards: "…" ${texts.length > 0 ? texts.join(' ') : '"…"'}\``;
   }
   const replacement = SUBSTITUTIONS[word];
   if (replacement === undefined) return `unknown statement "${word}"`;
@@ -441,6 +441,18 @@ function readAttr(
     throw new SourceError(
       `${subject}: contents: is gone — a container's children are arranged with layout:, and its settings ` +
         'go in its bracket: `layout: column (widths: match, align: center)`',
+      line,
+    );
+  }
+  if (key === 'deck') {
+    // The node's own text was the front card's, and the copies' texts went back to front.
+    const name = subject.replace(/^node "|"$/g, '');
+    const own = tokens.slice(0, at).find((token) => token.quoted);
+    const cards = [quoteOf(own?.text ?? name)];
+    for (let next = at + 1; tokens[next]?.quoted; next++) cards.push(quoteOf(tokens[next]!.text));
+    throw new SourceError(
+      `${subject}: deck: is gone — a deck is a container and its cards are its children, the front one first: ` +
+        `\`node ${name} ""  layout: deck  cards: ${cards.join(' ')}\`; a card that holds things is written as a child, such as node ${name}.1`,
       line,
     );
   }
@@ -650,7 +662,7 @@ function readAttr(
     // `centers: 5 apart` reads its last word as part of the value.
     const value = tokens[at + 1];
     if (!value || value.quoted || isAttrKey(value) || value.text === '(') {
-      throw new SourceError(`${subject}: layout: names an arrangement — column, row or venn`, line);
+      throw new SourceError(`${subject}: layout: names an arrangement — column, row, venn or deck`, line);
     }
     setOnce(attrs, 'layout', value.text, subject, line);
     let next = at + 2;
@@ -748,8 +760,8 @@ function readAttr(
     setOnce(attrs, key, names.join(' '), subject, line, { key, value: (v) => v.split(' ').join(', ') });
     return next;
   }
-  if (key === 'deck') {
-    // One quoted text per copy behind the node, back to front, as many as are
+  if (key === 'cards') {
+    // One quoted text per card of a deck, front first, as many as are
     // written. Stored joined on a line break, which no source line can hold.
     const texts: string[] = [];
     let next = at + 1;
@@ -757,8 +769,8 @@ function readAttr(
     if (texts.length === 0) {
       const given = tokens[next];
       throw new SourceError(
-        `${subject}: \`deck:\` takes one quoted text per copy behind the node, as in \`deck: "Drive 2" "Drive 3"\`` +
-          (given && !isAttrKey(given) ? `, not \`deck: ${given.text}\`` : ''),
+        `${subject}: \`cards:\` takes one quoted text per card, front first, as in \`cards: "Drive 1" "Drive 2" "Drive 3"\`` +
+          (given && !isAttrKey(given) ? `, not \`cards: ${given.text}\`` : ''),
         line,
       );
     }
@@ -894,8 +906,12 @@ function attrsOnly(tokens: Token[], start: number, line: number, subject: string
   return attrs;
 }
 
-/** How a text on a line looks, which is a node text's keys less the two that place it in a box. */
-const EDGE_TEXT_LOOK = TEXT_KEYS.filter((key) => key !== 'at' && key !== 'align');
+/**
+ * How a text on a line looks, which is a node text's keys less the two that
+ * place it in a box, and the patch behind it, in a box's words: its `fill:`
+ * and the `padding:` it leaves round the text (design.org 7.3).
+ */
+const EDGE_TEXT_LOOK = [...TEXT_KEYS.filter((key) => key !== 'at' && key !== 'align'), 'fill', 'padding'];
 /** Where a text on a line sits (design.org 7.3). */
 const EDGE_TEXT_PLACE = ['at', 'on', 'gap', 'edge-gap', 'reads'] as const;
 const EDGE_TEXT_KEYS = [...EDGE_TEXT_LOOK, ...EDGE_TEXT_PLACE];
@@ -949,7 +965,7 @@ function readEdgeTextBracket(
       }
       once(key, key);
       i += 2;
-      if (key === 'color') checkColorWord(value, subject, line);
+      if (key === 'color' || key === 'fill') checkColorWord(value, subject, line);
       if (key === 'at') {
         const fraction = /^(\d+)\/(\d+)$/.exec(value);
         const at =
@@ -1847,6 +1863,7 @@ function parseRegion(head: Token[], line: number): RegionStmt {
   }
   const attrs = attrsOnly(head, next, line, subject);
   refuseKeys(attrs, REGION_KEYS, subject, 'a region', line);
+  if (attrs['opacity'] !== undefined) checkOpacity(attrs['opacity'], subject, line);
   return { kind: 'region', name, corners, ...(marked.text ? { text: marked.text } : {}), attrs, line };
 }
 

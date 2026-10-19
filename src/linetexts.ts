@@ -28,6 +28,18 @@ export const TEXT_GAP = 6;
 /** How far the hole a text knocks in its line reaches past the words, either side. */
 export const KNOCKOUT_PAD = 5;
 
+/**
+ * The room the patch behind a text leaves round it, across and up and down:
+ * by default the knockout's reach either side and none above or below, and
+ * `padding:` in its bracket all round, as a box's padding is.
+ */
+export function patchPadding(text: LayoutEdgeText, subject: string, line: number): { x: number; y: number } {
+  const written = text.textAttrs['padding'];
+  if (written === undefined) return { x: KNOCKOUT_PAD, y: 0 };
+  const by = gapPixels(written, `${subject}: the text "${text.text}" padding`, line);
+  return { x: by, y: by };
+}
+
 /** One text, placed. */
 export interface PlacedText {
   text: LayoutEdgeText;
@@ -348,10 +360,11 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
       center = { x: spot.x + (out[0]! * size.width) / 2, y: spot.y + (out[1]! * size.height) / 2 };
     }
     if (place.beside) {
-      const gap = place.edgeGap === undefined ? TEXT_GAP : gapPixels(place.edgeGap, `${subject}: the text "${text.text}": edge-gap:`, edge.line);
+      const gap = place.edgeGap === undefined ? TEXT_GAP : gapPixels(place.edgeGap, `${subject}: the text "${text.text}" edge-gap`, edge.line);
       center = besideLine(whole, s, center, size, place.beside, gap);
     }
-    const knockout = turned(text.width + KNOCKOUT_PAD * 2, text.height, angle);
+    const pad = patchPadding(text, subject, edge.line);
+    const knockout = turned(text.width + pad.x * 2, text.height + pad.y * 2, angle);
     return {
       text,
       center,

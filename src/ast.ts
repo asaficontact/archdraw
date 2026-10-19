@@ -743,7 +743,7 @@ export const POINT_KEYS = ['style', 'fill', 'depth'] as const;
 export const POINT_TEXT_SIDES = ['above', 'below', 'left', 'right', 'above-right', 'above-left', 'below-right', 'below-left'] as const;
 /** What a point's or a region's text takes in its bracket besides its position words. */
 export const MARK_TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'reads', 'gap'] as const;
-export const REGION_KEYS = ['style', 'fill', 'border', 'padding', 'depth'] as const;
+export const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'depth'] as const;
 
 /**
  * `diagram background: #111111` — settings that belong to the drawing as a
@@ -895,7 +895,7 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 export const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'deck', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
   icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
   none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
   edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
@@ -922,7 +922,7 @@ export type NodeCorners = (typeof NODE_CORNERS)[number];
  * not told the word does not exist.
  */
 export const ALL_ATTR_KEYS: readonly string[] = [
-  ...new Set([...Object.values(ATTR_KEYS).flat(), ...DIAGRAM_KEYS]),
+  ...new Set([...Object.values(ATTR_KEYS).flat(), ...DIAGRAM_KEYS, ...REGION_KEYS]),
 ];
 
 export interface StyleStmt {

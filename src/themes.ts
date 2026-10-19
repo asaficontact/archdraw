@@ -65,6 +65,21 @@ export function overlapFill(under: string, theme: Theme): string {
   return mix(theme.secondary.color, base, SUBTLE);
 }
 
+/**
+ * A region's fill when it states none (design.org 8.3): the theme's primary
+ * mixed toward the page, so that drawn at a region's half opacity it reads as
+ * the primary at 12% did, the tint regions have always had. A page color that
+ * can't be measured keeps the primary itself, at a quarter of the opacity.
+ */
+export function regionTint(theme: Theme, opacity: number): { color: string; opacity: number } {
+  const hex = /^#[0-9a-f]{6}$/i;
+  if (!hex.test(theme.primary.color) || !hex.test(theme.background)) return { color: theme.primary.color, opacity: opacity * REGION_TINT };
+  return { color: mix(theme.primary.color, theme.background, REGION_TINT), opacity };
+}
+
+/** How much of the primary a region's own tint keeps, so that at half opacity it is 12% of it. */
+const REGION_TINT = 0.24;
+
 /** `amount` of `color` over `page`, both `#rrggbb`. */
 function mix(color: string, page: string, amount: number): string {
   const channel = (hex: string, at: number) => parseInt(hex.slice(at, at + 2), 16);

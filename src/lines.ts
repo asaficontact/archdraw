@@ -117,8 +117,8 @@ export function planLines(layout: Layout): Map<LayoutEdge, Route> {
 export interface SideEnds {
   node: LayoutNode;
   side: Side;
-  /** Where each end landed, in order along the side, and the line it belongs to. */
-  ends: { at: Point; edge: LayoutEdge }[];
+  /** Where each end landed, in order along the side, the line it belongs to, and which of the line's ends it is. */
+  ends: { at: Point; edge: LayoutEdge; which: 'from' | 'to' }[];
 }
 
 /** Every line, and every side two or more ends share, for the findings to measure. */
@@ -610,10 +610,10 @@ const MET_SIDE: Record<WayWord, Side> = { down: 'top', up: 'bottom', left: 'righ
 /** The drawn rectangle of a node. */
 export function faceOfNode(node: LayoutNode): Face {
   return {
-    x: node.x + node.inset,
-    y: node.y + node.inset,
-    width: node.width - node.inset,
-    height: node.height - node.inset,
+    x: node.x,
+    y: node.y,
+    width: node.width,
+    height: node.height,
     round: node.body.kind === 'shape' && node.body.outline === 'circle',
   };
 }
@@ -964,7 +964,6 @@ function faceThePoint(own: End, other: End): void {
     y: point.y,
     width: 0,
     height: 0,
-    inset: 0,
     parent: undefined,
   } as LayoutNode);
   const side = (spec as { side: Side }).side;
@@ -1234,7 +1233,7 @@ function spreadSides(ends: End[]): SideEnds[] {
       shared.push({
         node: group[0]!.node,
         side,
-        ends: ordered.map((end) => ({ at: end.at!, edge: end.edge })).sort((p, q) => along(p.at) - along(q.at)),
+        ends: ordered.map((end) => ({ at: end.at!, edge: end.edge, which: end.which })).sort((p, q) => along(p.at) - along(q.at)),
       });
     }
   }
@@ -1277,6 +1276,16 @@ interface Segment {
 
 function route(edge: LayoutEdge, start: End, end: End, context: Context): Route {
   const subject = edge.bundle ? `bundle ${edge.name}` : `edge ${describeEdge(edge)}`;
+  // A straight line from a box back to itself has nowhere to go but along
+  // its own border; a loop needs a path that bends round something.
+  const bends = edge.look.path !== 'straight' || (edge.via ?? []).some((entry) => entry.leg?.attrs['path'] !== undefined && entry.leg.attrs['path'] !== 'straight');
+  if (!edge.bundle && edge.from === edge.to && !edge.onLine?.from && !edge.onLine?.to && !bends) {
+    throw new SourceError(
+      `${subject} goes from ${edge.from.name} back to itself, and a straight line can't loop — ` +
+        `write it as a loop round a side, such as from: left  to: right  via: ${edge.from.name} top  line: (path: square)`,
+      edge.line,
+    );
+  }
   // A bundle has no ends: its path is its stops alone (6.6).
   const ways: Way[] = edge.bundle
     ? []

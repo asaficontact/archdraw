@@ -1,4 +1,4 @@
-import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, PlacementTarget, POINT_TEXT_SIDES, PointStmt, RegionStmt, Stmt } from './ast.js';
+import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, NodeStmt, PlacementTarget, POINT_TEXT_SIDES, PointStmt, RegionStmt, Stmt } from './ast.js';
 import { TEXT_GAP } from './linetexts.js';
 import {
   POINT_KEYS,
@@ -19,7 +19,6 @@ import {
   nameTarget,
 } from './ast.js';
 import {
-  DECK_STEP,
   DEFAULT_FONT_SIZE,
   DEFAULT_MARGIN,
   GAPS,
@@ -36,7 +35,7 @@ import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
-import { gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace, type Venn } from './place.js';
+import { checkOpacity, gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace, type Venn } from './place.js';
 
 /**
  * What a node's own contents make of it, before anything is placed: a leaf's
@@ -60,8 +59,11 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   const layout = layoutOf(node);
   const venn = vennOf(node);
   const circle = isCircle(node);
+  // A deck that draws no outline of its own is its cards, with nothing round them.
+  const undrawnDeck =
+    node.appearance['layout'] === 'deck' && node.appearance['fill'] === undefined && node.appearance['border'] === undefined;
   const padding =
-    node.body.kind === 'none'
+    node.body.kind === 'none' || (undrawnDeck && node.appearance['padding'] === undefined)
       ? 0
       : node.appearance['padding'] !== undefined
         ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
@@ -107,12 +109,9 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   if (layout && node.children.length === 0) {
     throw new SourceError(`"${node.name}" has layout: but no children — a node with no children is not a container`, node.line);
   }
-  // A leaf's deck hangs up and to the left of the front card, inside its box,
-  // as a container's does (`frame` in place.ts), so the copies are part of the node.
-  const deck = node.children.length === 0 ? node.deckTexts.length * DECK_STEP : 0;
   return {
-    natural: { width: textWidth + padding * 2 + deck, height: textHeight + padding * 2 + deck },
-    textBox: { x: padding + deck, y: padding + deck, width: textWidth, height: textHeight },
+    natural: { width: textWidth + padding * 2, height: textHeight + padding * 2 },
+    textBox: { x: padding, y: padding, width: textWidth, height: textHeight },
     hasText,
     padding,
     ...measures,
@@ -191,11 +190,21 @@ function gatherOf(node: LayoutNode): NodeFacts['gather'] {
 /** `layout: column (gap: 0, widths: match, align-children: left)`, read and checked. */
 function layoutOf(node: LayoutNode): ChildLayout | undefined {
   const kind = node.appearance['layout'];
+  if (node.attrs['cards'] !== undefined && kind !== 'deck') {
+    throw new SourceError(`"${node.name}" has cards:, which are a deck's — add layout: deck`, node.line);
+  }
   if (kind === undefined || kind === 'venn') return undefined;
-  if (kind !== 'column' && kind !== 'row') {
-    throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row, venn`, node.line);
+  if (kind !== 'column' && kind !== 'row' && kind !== 'deck') {
+    throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row, venn, deck`, node.line);
   }
   const bracket = bracketOf('layout', node.appearance);
+  if (kind === 'deck') {
+    const [key] = Object.keys(bracket);
+    if (key !== undefined) {
+      throw new SourceError(`"${node.name}" has layout: deck (${key}: ${bracket[key]}), and a deck takes nothing in its bracket`, node.line);
+    }
+    return { kind, widths: 'natural', align: 'center' };
+  }
   if (bracket['heights'] !== undefined) {
     throw new SourceError(
       `"${node.name}" has layout: ${kind} (heights: ${bracket['heights']}), and heights: belongs to layout: venn — ` +
@@ -327,7 +336,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   checkStyleKeys(doc.statements);
   const defaults = collectDefaults(doc.statements, styles);
   const icons = collectIcons(doc.statements, options.readIconFile);
-  const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults, icons);
+  const { nodes, byName, roots } = buildTree(writeOutCards(doc.statements), styles, defaults, icons);
   // From here on, `edge each child of a -> b` and `edge a -> b, c` are the lines they stand for.
   const statements = expandEach(doc.statements, byName);
 
@@ -524,6 +533,8 @@ function buildMarks(
         );
       }
     }
+    // A style may carry it, so it is checked as worn.
+    if (appearance['opacity'] !== undefined) checkOpacity(appearance['opacity'], `region "${name}"`, stmt.line);
     const targets = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
     const names = [...new Set(targets.flatMap((target) => namesIn(target, named)))];
     const text = texts.get(name);
@@ -790,12 +801,22 @@ function buildTree(
     // text through `text: (…)`, which arrives here under dotted keys. What the
     // node wrote in its own brackets wins, key by key, exactly as its own
     // attributes win over the style's.
-    const textAttrs = headed
+    const textAttrs: Attrs = headed
       ? {
           ...(stmt.attrs['heading.place'] !== undefined ? { place: stmt.attrs['heading.place'] } : {}),
           ...(stmt.attrs['heading.align'] !== undefined ? { align: stmt.attrs['heading.align'] } : {}),
         }
       : { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    // A card's text sits at its top left, where it shows above the card in
+    // front of it, unless it says where.
+    const deck = byName.get(stmt.name.slice(0, Math.max(stmt.name.lastIndexOf('.'), 0)));
+    if (deck?.appearance['layout'] === 'deck' && textAttrs['place'] === undefined && textAttrs['align'] === undefined) {
+      textAttrs['place'] = 'inside top';
+      textAttrs['align'] = 'left';
+    }
+    // A deck draws no outline of its own for a title to sit inside, so its
+    // title goes above, centered on the stack, unless it says where.
+    if (appearance['layout'] === 'deck' && textAttrs['place'] === undefined) textAttrs['place'] = 'outside top';
 
     const node: LayoutNode = {
       name: stmt.name,
@@ -809,8 +830,6 @@ function buildTree(
       y: 0,
       width: 0,
       height: 0,
-      inset: 0,
-      deckTexts: [],
       headerHeight: 0,
       reach: { left: 0, top: 0, right: 0, bottom: 0 },
       banded: false,
@@ -831,11 +850,6 @@ function buildTree(
     // the renderer does for its colors; its own words beat both.
     const guideLook = stmt.guide ? defaults.get('guide node')?.['corners'] : undefined;
     node.corners = cornersOf(node, stmt.attrs['corners'] ?? guideLook ?? appearance['corners'], stmt.attrs['corners'] !== undefined);
-
-    // `deck:` holds one text per copy, joined on a line break the source cannot
-    // contain. Like a badge, only a box has an outline to repeat.
-    const deck = appearance['deck'];
-    if (deck !== undefined && body.kind === 'shape') node.deckTexts = deck.split('\n');
 
     const cut = stmt.name.lastIndexOf('.');
     if (cut === -1) {
@@ -917,8 +931,52 @@ function buildTree(
     }
     node.heading = heading;
   }
+  for (const node of nodes) joinBesideTitle(node);
 
   return { nodes, byName, roots };
+}
+
+/**
+ * What `cards:` writes out: one child per text, front first, numbered from 1,
+ * declared right after the deck as if written by hand:
+ *
+ *     node <self>.1 "Drive 1"
+ *     node <self>.2 "Drive 2"
+ *
+ * Cards that hold anything are written by hand, every one of them, so a deck
+ * with `cards:` may have no other children.
+ */
+function writeOutCards(statements: Stmt[]): Stmt[] {
+  const out: Stmt[] = [];
+  for (const stmt of statements) {
+    out.push(stmt);
+    if (stmt.kind !== 'node' || stmt.attrs['cards'] === undefined) continue;
+    const texts = stmt.attrs['cards'].split('\n');
+    const written = statements.find(
+      (other): other is NodeStmt =>
+        other.kind === 'node' && other.name.startsWith(`${stmt.name}.`) && other.name !== stmt.attrs['heading'],
+    );
+    if (written) {
+      throw new SourceError(
+        `"${stmt.name}" has cards: and a child written out, "${written.name}" — once a card holds something, every card is ` +
+          `written as a child, front first: ${texts.map((text, index) => `node ${stmt.name}.${index + 1} "${text}"`).join(', ')}`,
+        written.line,
+      );
+    }
+    texts.forEach((text, index) => {
+      out.push({
+        kind: 'node',
+        name: `${stmt.name}.${index + 1}`,
+        text,
+        statedText: true,
+        textAttrs: {},
+        placements: [],
+        attrs: {},
+        line: stmt.line,
+      });
+    });
+  }
+  return out;
 }
 
 /**
@@ -951,8 +1009,6 @@ function writeOutBadge(node: LayoutNode, named: string, icons: ReadonlyMap<strin
     y: 0,
     width: 0,
     height: 0,
-    inset: 0,
-    deckTexts: [],
     headerHeight: 0,
     reach: { left: 0, top: 0, right: 0, bottom: 0 },
     banded: false,
@@ -1028,6 +1084,40 @@ function joinTarget(node: LayoutNode, written: string, byName: Map<string, Layou
     );
   }
   return part === 'text' ? 'text' : byName.get(name)!;
+}
+
+/**
+ * A child placed against a title its side words place goes with the title,
+ * when another child anchors the frame (design.org 7.2): it is joined to the
+ * text as `join-with:` would join it, and so is whatever is placed only
+ * against it. The box then holds two groups nothing relates, each fully
+ * stated; if they land on each other, that is an overlap like any other.
+ */
+function joinBesideTitle(node: LayoutNode): void {
+  if (node.children.length === 0 || node.titlePlacements?.length || node.heading || node.attrs['layout'] !== undefined) return;
+  const free = node.children.filter((child) => !joinedToText(child));
+  if (!free.some((child) => child.placements.length === 0)) return;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const child of free) {
+      if (child.joinWith !== undefined || child.placements.length === 0) continue;
+      let onText = false;
+      let sibling: LayoutNode | undefined;
+      const besideTitle = child.placements.every((placement) =>
+        placement.targets.every((target) => {
+          if (target.point || target.fraction) return false;
+          if (target.name === node.name && target.part === 'text') return (onText = true);
+          const named = node.children.find((one) => one.name === target.name);
+          if (named === undefined || named === child || !joinedToText(named)) return false;
+          sibling ??= named;
+          return true;
+        }),
+      );
+      if (!besideTitle) continue;
+      child.joinWith = onText ? 'text' : sibling!;
+      changed = true;
+    }
+  }
 }
 
 /**
@@ -1112,8 +1202,8 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
 
     // Quoted back the way it was written. A bracketed value arrives one dotted
     // key at a time, and `contents: match` is not a line anybody could look for.
-    // A deck's texts are stored joined on a line break; quote them back as written.
-    const shown = key === 'deck' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+    // A deck's cards are stored joined on a line break; quote them back as written.
+    const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
     const wrote =
       written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
 
@@ -1266,6 +1356,12 @@ function checkStyleKeys(statements: Stmt[]): void {
       if (topKey(key) === 'depth') {
         throw new SourceError(
           `style "${stmt.name}" has depth:, which moves one thing in the drawing order, so it is written on that thing`,
+          stmt.line,
+        );
+      }
+      if (topKey(key) === 'cards') {
+        throw new SourceError(
+          `style "${stmt.name}" has cards:, which are one deck's own children, so it is written on that deck`,
           stmt.line,
         );
       }
@@ -1578,8 +1674,6 @@ function placeholder(name: string, line: number): LayoutNode {
       y: 0,
       width: 0,
       height: 0,
-      inset: 0,
-      deckTexts: [],
       headerHeight: 0,
       reach: { left: 0, top: 0, right: 0, bottom: 0 },
       banded: false,
