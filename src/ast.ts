@@ -383,7 +383,7 @@ export function describePlacement(placement: Placement): string {
     return `on ${targets}`;
   }
   if (placement.kind === 'align') {
-    const side = placement.side === 'center' ? '' : `${placement.side} `;
+    const side = placement.side !== 'center' ? `${placement.side} ` : placement.axis === 'x' ? 'x ' : '';
     return `${side}even with ${targets}`;
   }
   // `inside` and `outside` take no `of`, and are quoted back as the author
@@ -558,10 +558,20 @@ export interface EdgeTextPlace {
   longestLevel?: boolean;
   /** `straight right from c`: where a line that way from c's middle first meets this one. */
   straight?: { way: Way; target: PlacementTarget; written: string };
-  /** `above s1`: a gap from the box, where the line first reaches that height or position across. */
+  /**
+   * `above s1`, `2 above s1`: a gap from the box, centered on it the other way, as a box
+   * placed so would be; with `onLine`, where the line first reaches that height or position across.
+   */
   by?: { side: TextSide; target: PlacementTarget; written: string };
+  /** `on the line`: a text placed by a box stays on its line (design.org 7.3). */
+  onLine?: boolean;
   /** `right of edge`: moved clear of the part of the line it landed on. */
   beside?: TextSide;
+  /**
+   * `left even with x right`: one axis set by a box, at most one per axis; the
+   * other stays where the text would otherwise sit (design.org 7.3).
+   */
+  even?: { placement: AlignPlacement; written: string }[];
   /** `gap:` — from the node, for `at: start`/`end` and a text placed by a box. */
   gap?: string;
   /** `edge-gap:` — off the line, for a text beside it. */
@@ -894,10 +904,13 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 /** The keys that state a size; `size.ts` reads their values. */
 export const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
+/** `right-edge-order: ae, ad, ac`: the lines on one side of a box, in reading order. */
+export const EDGE_ORDER_KEYS = ['top-edge-order', 'bottom-edge-order', 'left-edge-order', 'right-edge-order'] as const;
+
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth'],
-  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth'],
-  none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth'],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
+  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
+  none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
   edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
 };
 

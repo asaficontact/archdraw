@@ -13,7 +13,7 @@
  * can't disagree about where a line is.
  */
 import { GAPS } from './constants.js';
-import { PART_SIDES, WAYS, isPosition, type Position, type ViaStop, type Way as WayWord } from './ast.js';
+import { EDGE_ORDER_KEYS, PART_SIDES, WAYS, isPosition, type Position, type ViaStop, type Way as WayWord } from './ast.js';
 import { SourceError } from './errors.js';
 import type { Attrs } from './ast.js';
 import type { Layout, LayoutEdge, LayoutNode, Rect } from './model.js';
@@ -72,7 +72,7 @@ type EndSpec =
   /** `to: left, even with cat1`: on that side, level with cat1's center (or at its place across, on a top or bottom side). */
   | { kind: 'even'; side: Side; written: string }
   /** `to: down from z3`: where the line straight down from z3's center meets this end's box or line. */
-  | { kind: 'aligned'; way: WayWord; name: string; written: string }
+  | { kind: 'aligned'; way: WayWord; name: string; written: string; fromStart?: boolean }
   /** `straight down` on the edge, at its start: leaving its own box that way, from its center. */
   | { kind: 'own-way'; way: WayWord }
   /** `to: at 1/3`, `to: climb at 1/3`, `from: req end`: a point on a line or a leg. */
@@ -142,7 +142,7 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
 
   // Ends spread along a side first, since where an end lands on a shared side
   // depends on the others there.
-  const sides = spreadSides([...ends.values()].flat());
+  const sides = spreadSides([...ends.values()].flat(), layout.nodes);
   const routes = new Map<LayoutEdge, Route>();
   const context: Context = { layout, legs, lines, ends, routes, shapes: new Map(), lanes: new Map() };
 
@@ -626,17 +626,26 @@ function endOf(edge: LayoutEdge, which: 'from' | 'to'): End {
   const written = edge.attrs[which];
   const subject = `edge ${describeEdge(edge)}`;
   if (edge.bundle) return { edge, which, node, face, far, spec: { kind: 'free' }, headings: [] };
-  if (edge.straight !== undefined && written !== undefined) {
+  // `straight right` leaves from the middle of the side facing right unless
+  // `from:` names a spot on that side, which it then leaves from (design.org 6.2).
+  const startWritten = edge.straight !== undefined ? edge.attrs['from'] : undefined;
+  if (edge.straight !== undefined && which === 'to' && written !== undefined) {
     throw new SourceError(
-      `${subject}: "straight ${edge.straight}" says where both ends are, so "${which}: ${written}" says it twice — keep one`,
+      `${subject}: "straight ${edge.straight}" says where the line ends, so "to: ${written}" says it twice — keep one`,
       edge.line,
     );
   }
   let spec: EndSpec;
   if (edge.straight !== undefined) {
     spec = which === 'from'
-      ? { kind: 'own-way', way: edge.straight }
-      : { kind: 'aligned', way: edge.straight, name: edge.from.name, written: `straight ${edge.straight}` };
+      ? straightStart(edge, edge.straight, subject)
+      : {
+          kind: 'aligned',
+          way: edge.straight,
+          name: edge.from.name,
+          written: `straight ${edge.straight}`,
+          ...(startWritten !== undefined ? { fromStart: true } : {}),
+        };
   } else if (onLine) {
     spec = written === undefined ? { kind: 'online', at: 1 / 2, written: 'its middle' } : readEnd(written, edge, which);
     if (spec.kind !== 'online' && spec.kind !== 'aligned') {
@@ -694,6 +703,33 @@ function endOf(edge: LayoutEdge, which: 'from' | 'to'): End {
     end.headings = [SIDE_NORMAL[side]];
   }
   return end;
+}
+
+/**
+ * The start of a `straight` line. Bare, the middle of the side facing its
+ * way; a `from:` may name another spot on that side, and naming any other
+ * side is refused, since the line could not leave it that way.
+ */
+function straightStart(edge: LayoutEdge, way: WayWord, subject: string): EndSpec {
+  const written = edge.attrs['from'];
+  const facing = MET_SIDE[opposite(way)];
+  if (written === undefined) return { kind: 'own-way', way };
+  const spec = readEnd(written, edge, 'from');
+  if (spec.kind === 'side' && spec.side === facing && spec.after === undefined) return { kind: 'own-way', way };
+  const sides =
+    spec.kind === 'fraction' || spec.kind === 'even'
+      ? [spec.side]
+      : spec.kind === 'point'
+        ? cornerSides(spec.position).filter((side): side is Side => side !== undefined)
+        : [];
+  if (!sides.includes(facing)) {
+    throw new SourceError(
+      `${subject}: "straight ${way}" leaves from ${edge.from.name}'s ${facing} side, and "from: ${written}" is not on it — ` +
+        `name a spot on the ${facing} side, such as from: ${facing} 1/4 ${facing === 'left' || facing === 'right' ? 'down' : 'across'}, or drop one`,
+      edge.line,
+    );
+  }
+  return spec;
 }
 
 function opposite(way: WayWord): WayWord {
@@ -907,7 +943,9 @@ function placeEnd(end: End, context: Context): void {
     if (from === undefined && fromLine === undefined) {
       throw new SourceError(`${subject}: "${end.which}: ${spec.written}" names ${spec.name}, which does not exist`, end.edge.line);
     }
-    const origin = from ? centerOf('body' in from ? faceOfNode(from) : { ...from, round: false }) : alongLength(traceRoute(context.routes.get(fromLine!)!), 1 / 2);
+    const start = spec.fromStart ? context.ends.get(end.edge)![0].at : undefined;
+    const origin = start
+      ?? (from ? centerOf('body' in from ? faceOfNode(from) : { ...from, round: false }) : alongLength(traceRoute(context.routes.get(fromLine!)!), 1 / 2));
     const way = WAY_VECTOR[spec.way];
     if (end.onLine) {
       const hit = rayHit(origin, way, traceRoute(context.routes.get(end.onLine)!));
@@ -927,7 +965,7 @@ function placeEnd(end: End, context: Context): void {
     const ahead = (point.x - origin.x) * way.x + (point.y - origin.y) * way.y;
     if (coordinate < low - 0.5 || coordinate > high + 0.5 || ahead < -0.5) {
       throw new SourceError(
-        `${subject}: the line straight ${spec.way} from ${spec.name}'s center never meets ${end.node.name} — ` +
+        `${subject}: the line straight ${spec.way} from ${spec.fromStart ? 'its start' : `${spec.name}'s center`} never meets ${end.node.name} — ` +
           `${ahead < -0.5 ? `${end.node.name} is not ${spec.way} from it` : end.edge.onMark?.[end.which] === 'point' ? `it passes beside ${end.node.name}` : `it passes ${end.node.name}'s ${side} side`}; nothing is bent to reach it`,
         end.edge.line,
       );
@@ -1152,8 +1190,9 @@ function headingAt(face: Face, at: Point): Point {
  * to a point of that side splits it: the spreading ends before it in that order
  * share the part before the point, the rest the part after.
  */
-function spreadSides(ends: End[]): SideEnds[] {
+function spreadSides(ends: End[], nodes: LayoutNode[]): SideEnds[] {
   const shared: SideEnds[] = [];
+  const listsUsed = new Set<string>();
   const groups = new Map<string, End[]>();
   for (const end of ends) {
     // At a named point every end lands on the point itself, heading out of
@@ -1187,8 +1226,53 @@ function spreadSides(ends: End[]): SideEnds[] {
     const ordered = [...group].sort(
       (a, b) => farAt(a) - farAt(b) || (a.copy?.set ?? a.edge.line) - (b.copy?.set ?? b.edge.line) || lane(a) - lane(b) || a.edge.line - b.edge.line,
     );
-    // `to: top, right of z`: an end that states its place moves just past the line it names.
-    for (const end of group) {
+    // `right-edge-order: ae, ad, ac` on the box: every line spreading on that side, in reading order.
+    const listKey = `${side}-edge-order`;
+    const list = group[0]!.node.attrs[listKey];
+    if (list !== undefined) {
+      listsUsed.add(`${group[0]!.node.name}\n${listKey}`);
+      const names = list.split(', ');
+      const subject = `node "${group[0]!.node.name}"`;
+      const spreading = ordered.filter((end) => end.spec.kind === 'side');
+      const stated = spreading.find((end) => end.spec.kind === 'side' && end.spec.after !== undefined);
+      if (stated !== undefined) {
+        throw new SourceError(
+          `edge ${describeEdge(stated.edge)}: states its own place on ${stated.node.name}'s ${side} side, and ${listKey}: already orders that side — keep one`,
+          stated.edge.line,
+        );
+      }
+      const pinned = ordered.find((end) => end.spec.kind !== 'side');
+      if (pinned !== undefined) {
+        throw new SourceError(
+          `edge ${describeEdge(pinned.edge)}: is pinned to a spot on ${pinned.node.name}'s ${side} side, and ${listKey}: orders lines that spread along it — take it off the side or drop the list`,
+          pinned.edge.line,
+        );
+      }
+      if (new Set(names).size !== names.length) throw new SourceError(`${subject}: ${listKey}: lists a line twice — each line has one place`, group[0]!.node.line);
+      const listed = names.map((name) => {
+        const end = spreading.find((other) => other.edge.name === name);
+        if (end === undefined) {
+          throw new SourceError(`${subject}: ${listKey}: lists ${name}, and no line named ${name} meets ${group[0]!.node.name}'s ${side} side`, group[0]!.node.line);
+        }
+        return end;
+      });
+      const left = spreading.find((end) => !listed.includes(end));
+      if (left !== undefined) {
+        throw new SourceError(
+          `edge ${describeEdge(left.edge)}: meets ${left.node.name}'s ${side} side, whose ${listKey}: lists every line there and leaves this one out` +
+            (left.edge.name === undefined ? ' — name it, as in edge ab a -> b, and add it to the list' : ''),
+          left.edge.line,
+        );
+      }
+      ordered.splice(0, ordered.length, ...listed);
+    }
+    // `to: top, right of z`: an end that states its place sits just past the line it names,
+    // and takes along whatever is placed against it, so a chain (`ac below ad`, `ad below ae`)
+    // holds whichever order it is written in.
+    const before = new Map<End, End[]>();
+    const after = new Map<End, End[]>();
+    const attached = new Set<End>();
+    for (const end of ordered) {
       if (end.spec.kind !== 'side' || end.spec.after === undefined) continue;
       const { name, way } = end.spec.after;
       const anchor = ordered.find((other) => other !== end && other.edge.name === name);
@@ -1198,11 +1282,26 @@ function spreadSides(ends: End[]): SideEnds[] {
           end.edge.line,
         );
       }
-      const before = way === 'left of' || way === 'above';
-      ordered.splice(ordered.indexOf(end), 1);
-      const at = ordered.indexOf(anchor);
-      ordered.splice(before ? at : at + 1, 0, end);
+      const into = way === 'left of' || way === 'above' ? before : after;
+      into.set(anchor, [...(into.get(anchor) ?? []), end]);
+      attached.add(end);
     }
+    const chained: End[] = [];
+    const emit = (end: End): void => {
+      (before.get(end) ?? []).forEach(emit);
+      chained.push(end);
+      (after.get(end) ?? []).forEach(emit);
+    };
+    ordered.filter((end) => !attached.has(end)).forEach(emit);
+    const looped = ordered.find((end) => !chained.includes(end));
+    if (looped !== undefined && looped.spec.kind === 'side' && looped.spec.after !== undefined) {
+      const { name, way } = looped.spec.after;
+      throw new SourceError(
+        `edge ${describeEdge(looped.edge)}: "${looped.which}: ${side}, ${way} ${name}" — the lines on ${looped.node.name}'s ${side} side are placed against each other in a loop, so none of them has a place to start from`,
+        looped.edge.line,
+      );
+    }
+    ordered.splice(0, ordered.length, ...chained);
     // Pinned ends keep their slots in that order but take them in the order
     // they sit along the side, so the side is split from one end to the other
     // even where their far boxes tie (`to: left, even with cat1` from one box).
@@ -1235,6 +1334,12 @@ function spreadSides(ends: End[]): SideEnds[] {
         side,
         ends: ordered.map((end) => ({ at: end.at!, edge: end.edge, which: end.which })).sort((p, q) => along(p.at) - along(q.at)),
       });
+    }
+  }
+  for (const node of nodes) {
+    for (const key of EDGE_ORDER_KEYS) {
+      if (node.attrs[key] === undefined || listsUsed.has(`${node.name}\n${key}`)) continue;
+      throw new SourceError(`node "${node.name}": ${key}: lists ${node.attrs[key]}, and no line spreads along ${node.name}'s ${key.split('-')[0]} side`, node.line);
     }
   }
   return shared;

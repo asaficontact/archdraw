@@ -895,14 +895,14 @@
         // The example the editor holds unchanged, or null once it is edited.
         var current = null;
 
-        /* ---- the source in the URL, so a diagram is a link ---- */
+        /* ---- the source kept in the browser, and old links read once ---- */
 
-        function encode(text) {
-          var bytes = new TextEncoder().encode(text);
-          var binary = '';
-          for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-        }
+        // Until 2026-10 every edit was written into the URL, so a diagram was a
+        // link. That stopped: the source is short text, better pasted than
+        // hidden in an address, and a changing file:// address made Chrome drop
+        // its zoom. A link made before then still opens, and the address is
+        // cleared once it has, so a reload shows the edits rather than the link.
+        // Drop the reading after the next release.
 
         function decode(fragment) {
           var padded = fragment.replace(/-/g, '+').replace(/_/g, '/');
@@ -914,13 +914,6 @@
         }
 
         function stow() {
-          // replaceState rather than location.hash: one entry per keystroke
-          // would make the back button useless.
-          try {
-            history.replaceState(null, '', '#' + encode(source.value));
-          } catch (e) {
-            /* an over-long URL is not worth failing the page for */
-          }
           try {
             localStorage.setItem(STORE, source.value);
           } catch (e) {
@@ -928,15 +921,22 @@
           }
         }
 
-        function opening() {
+        // The source an old link carries, or null, with the address cleared.
+        function linked() {
           var fragment = location.hash.slice(1);
-          if (fragment) {
-            try {
-              return decode(fragment);
-            } catch (e) {
-              /* a mangled link falls through to what was last edited */
-            }
+          if (!fragment) return null;
+          history.replaceState(null, '', location.pathname + location.search);
+          try {
+            return decode(fragment);
+          } catch (e) {
+            /* a mangled link falls through to what was last edited */
+            return null;
           }
+        }
+
+        function opening() {
+          var text = linked();
+          if (text !== null) return text;
           try {
             var kept = localStorage.getItem(STORE);
             if (kept !== null) return kept;
@@ -1457,27 +1457,23 @@
         source.addEventListener('input', function () {
           draw();
           current = named(source.value);
-          // The URL and the stored copy trail the typing rather than following
-          // every keystroke: neither is looked at until the page is left.
+          // The stored copy trails the typing rather than following every
+          // keystroke: it isn't looked at until the page is left.
           if (pending) clearTimeout(pending);
           pending = setTimeout(stow, 400);
         });
 
         window.addEventListener('hashchange', function () {
-          var fragment = location.hash.slice(1);
-          if (!fragment) return;
-          try {
-            var text = decode(fragment);
-            if (text !== source.value) load(text, named(text));
-          } catch (e) {
-            /* not ours */
-          }
+          var text = linked();
+          if (text !== null && text !== source.value) load(text, named(text));
         });
 
-        // No stow() on the way in: an untouched visit keeps a clean URL, and the
-        // page only starts writing one once there is an edit worth sharing.
+        // An old link's source is stored as it opens, so a reload, which no
+        // longer has the link, still shows it.
+        var fromLink = location.hash.length > 1;
         source.value = opening();
         current = named(source.value);
+        if (fromLink) stow();
         draw();
       })();
     </script>

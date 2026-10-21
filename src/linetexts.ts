@@ -314,6 +314,11 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
       }
       return toWhole(s);
     }
+    if (place.by && !place.onLine) {
+      // Off the line by the box; it lands on the line where the line comes nearest, for ordering the rest.
+      const gap = place.gap === undefined ? TEXT_GAP : gapPixels(place.gap, `${about}: gap:`, edge.line);
+      return distanceTo(whole, byBox(place.by.side, text.target!, gap, turned(text.width, text.height, angleOf(text, { x: 1, y: 0 }))));
+    }
     if (place.by) {
       const box = text.target!;
       const gap = place.gap === undefined ? TEXT_GAP : gapPixels(place.gap, `${about}: gap:`, edge.line);
@@ -354,7 +359,10 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
     const angle = angleOf(text, headingAlong(whole, s));
     const size = turned(text.width, text.height, angle);
     let center = spot;
-    if (place.by) {
+    if (place.by && !place.onLine) {
+      const gap = place.gap === undefined ? TEXT_GAP : gapPixels(place.gap, `${subject}: the text "${text.text}" gap:`, edge.line);
+      center = byBox(place.by.side, text.target!, gap, size);
+    } else if (place.by) {
       // The text's own edge facing the box is on the crossing, its middle at the line there.
       const out = { above: [0, -1], below: [0, 1], 'left of': [-1, 0], 'right of': [1, 0] }[place.by.side];
       center = { x: spot.x + (out[0]! * size.width) / 2, y: spot.y + (out[1]! * size.height) / 2 };
@@ -365,6 +373,14 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
     }
     const pad = patchPadding(text, subject, edge.line);
     const knockout = turned(text.width + pad.x * 2, text.height + pad.y * 2, angle);
+    for (const even of text.evenAt ?? []) {
+      // `left even with x right` sets one axis, measured to the patch's edge, the edge that is seen; the other stays where the line put it.
+      const half = (even.axis === 'x' ? knockout.width : knockout.height) / 2;
+      const start = even.axis === 'x' ? even.rect.x : even.rect.y;
+      const length = even.axis === 'x' ? even.rect.width : even.rect.height;
+      const value = even.side === 'start' ? start + half : even.side === 'end' ? start + length - half : start + length / 2;
+      center = even.axis === 'x' ? { x: value, y: center.y } : { x: center.x, y: value };
+    }
     return {
       text,
       center,
@@ -380,7 +396,22 @@ export function placeLineTexts(edge: LayoutEdge, route: Route): PlacedText[] {
   });
 }
 
-/** For `above s1` and the rest: the axis the line must reach, and where along it, a gap off the box. */
+/** For `2 above s1` and the rest: the text's middle, a gap off the box and centered on it the other way, as a box placed so would be. */
+function byBox(side: TextSide, box: { x: number; y: number; width: number; height: number }, gap: number, size: { width: number; height: number }): Point {
+  const middle = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  switch (side) {
+    case 'above':
+      return { x: middle.x, y: box.y - gap - size.height / 2 };
+    case 'below':
+      return { x: middle.x, y: box.y + box.height + gap + size.height / 2 };
+    case 'left of':
+      return { x: box.x - gap - size.width / 2, y: middle.y };
+    case 'right of':
+      return { x: box.x + box.width + gap + size.width / 2, y: middle.y };
+  }
+}
+
+/** For `above s1, on the line` and the rest: the axis the line must reach, and where along it, a gap off the box. */
 function reachFor(side: TextSide, box: { x: number; y: number; width: number; height: number }, gap: number): ['x' | 'y', number] {
   switch (side) {
     case 'above':

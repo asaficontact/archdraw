@@ -938,7 +938,8 @@ function drawEdge(
   } else if (route.pieces.some((piece) => 'c1' in piece)) {
     // A curved line is a spline through its points (design.org 6.3); a
     // straight leg of it, or a run along a side, stays straight.
-    const d = piecesPath(route);
+    const lead = arrowLength(edge.look.thickness);
+    const d = piecesPath(route, { start: edge.marks.from !== 'none' ? lead : 0, end: edge.marks.to !== 'none' ? lead : 0 });
     parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
     ink = extentOfPoints(traceRoute(route));
   } else if (points.length > 2) {
@@ -1033,15 +1034,38 @@ function sharpPath(points: Point[]): string {
 }
 
 /** A line's path, from its pieces. */
-function piecesPath(route: { start: Point; pieces: Route['pieces'] }): string {
-  return [
-    `M ${round(route.start.x)} ${round(route.start.y)}`,
-    ...route.pieces.map((piece) =>
-      'c1' in piece
-        ? `C ${round(piece.c1.x)} ${round(piece.c1.y)}, ${round(piece.c2.x)} ${round(piece.c2.y)}, ${round(piece.to.x)} ${round(piece.to.y)}`
-        : `L ${round(piece.to.x)} ${round(piece.to.y)}`,
-    ),
-  ].join(' ');
+function piecesPath(route: { start: Point; pieces: Route['pieces'] }, leads: { start: number; end: number } = { start: 0, end: 0 }): string {
+  const parts = [`M ${round(route.start.x)} ${round(route.start.y)}`];
+  let from = route.start;
+  const last = route.pieces.length - 1;
+  for (const [index, piece] of route.pieces.entries()) {
+    if (!('c1' in piece)) {
+      parts.push(`L ${round(piece.to.x)} ${round(piece.to.y)}`);
+      from = piece.to;
+      continue;
+    }
+    // Under a mark the curve runs straight, so the line goes into the mark
+    // along its axis instead of bending out of its side. The handles stay
+    // put, on the same axis, so the curve leaves and arrives the same way.
+    const { c1, c2, to } = piece;
+    const room = Math.hypot(to.x - from.x, to.y - from.y);
+    const lead = (length: number, toward: Point, at: Point): Point | undefined => {
+      const span = Math.hypot(toward.x - at.x, toward.y - at.y);
+      if (length <= 0 || span < 1e-6 || room < length * 3) return undefined;
+      return { x: ((toward.x - at.x) / span) * length, y: ((toward.y - at.y) / span) * length };
+    };
+    const head = index === 0 ? lead(leads.start, c1, from) : undefined;
+    const tail = index === last ? lead(leads.end, c2, to) : undefined;
+    if (head) {
+      from = { x: from.x + head.x, y: from.y + head.y };
+      parts.push(`L ${round(from.x)} ${round(from.y)}`);
+    }
+    const end = tail ? { x: to.x + tail.x, y: to.y + tail.y } : to;
+    parts.push(`C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}`);
+    if (tail) parts.push(`L ${round(to.x)} ${round(to.y)}`);
+    from = to;
+  }
+  return parts.join(' ');
 }
 
 /**

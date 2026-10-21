@@ -359,6 +359,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
     ...edges.flatMap((edge) => (edge.viaAt ?? []).filter((at) => at !== undefined)),
     ...edges.flatMap((edge) => [edge.evenAt?.from, edge.evenAt?.to].filter((at) => at !== undefined)),
     ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.target ? [text.target] : []))),
+    ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.evenAt ?? []).map((even) => even.rect))),
   ]);
   standInForMarks(edges, marks);
 
@@ -1707,6 +1708,18 @@ function locateTextTargets(edges: LayoutEdge[], placer: Placer): void {
       }
       const by = text.place.straight ?? text.place.by;
       if (by) text.target = placer.locate(by.target, subject, edge.line);
+      if (text.place.even) {
+        text.evenAt = text.place.even.map(({ placement }) => {
+          // Several targets line up with the stretch round them all, as in a placement.
+          const rects = placement.targets.map((target) => placer.locate(target, subject, edge.line));
+          const x = Math.min(...rects.map((rect) => rect.x));
+          const y = Math.min(...rects.map((rect) => rect.y));
+          const width = Math.max(...rects.map((rect) => rect.x + rect.width)) - x;
+          const height = Math.max(...rects.map((rect) => rect.y + rect.height)) - y;
+          const side = placement.side === 'left' || placement.side === 'top' ? 'start' : placement.side === 'center' ? 'center' : 'end';
+          return { axis: placement.axis, side, rect: { x, y, width, height } };
+        });
+      }
     }
   }
 }

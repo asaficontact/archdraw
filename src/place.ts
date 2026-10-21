@@ -286,6 +286,7 @@ export class Placer {
       node.width = this.size(node, 'x');
       node.height = this.size(node, 'y');
     }
+    for (const node of this.byName.values()) this.checkYielded(node);
     for (const node of this.byName.values()) this.finish(node);
   }
 
@@ -633,7 +634,7 @@ export class Placer {
       const said = node.placements.map((placement) => `"${describePlacement(placement)}"`).join(' and ');
       throw new SourceError(
         `"${node.name}" says where it goes ${AXIS_SAID[axis === 'x' ? 'y' : 'x']} (${said}) but not ` +
-          `${AXIS_SAID[axis]} — add a placement that says ${axis === 'x' ? 'how far across, such as left even with' : 'how high, such as even with'} one of them`,
+          `${AXIS_SAID[axis]} — add a placement that says ${axis === 'x' ? 'how far across, such as x even with' :'how high, such as even with'} one of them`,
         node.line,
       );
     }
@@ -665,6 +666,21 @@ export class Placer {
     const said = [...new Set(statements.map((statement) => statement.placement))]
       .map((placement) => `"${describePlacement(placement)}"`)
       .join(' and ');
+    const directions = statements.filter((statement) => statement.kind !== 'align');
+    if (directions.length === 1 && directions.length < statements.length) {
+      // Bare, the direction would give way to the pins (`checkYielded`); it is
+      // the distance written on it that they would overrule.
+      const [direction] = directions;
+      const pins = statements
+        .filter((statement) => statement.kind === 'align')
+        .map((statement) => `"${describePlacement(statement.placement)}"`)
+        .join(' and ');
+      return new SourceError(
+        `"${node.name}" says how far away "${describePlacement(direction!.placement)}" is, but ${pins} already ` +
+          `say where it goes ${AXIS_SAID[axis]} — drop the distance to keep only the direction, or drop the direction`,
+        direction!.placement.line,
+      );
+    }
     return new SourceError(
       `"${node.name}" says where it goes ${AXIS_SAID[axis]} more than once: ${said}. Each axis is stated ` +
         'once — keep one, or pin two opposite edges with even with to give it a size',
@@ -700,7 +716,59 @@ export class Placer {
         found.push({ kind: 'align', placement, side: 'center', at: () => this.region(node, placement, axis) });
       }
     }
-    return found;
+    // A bare direction beside an edge pinned on its axis gives up its distance
+    // to the pin and keeps only its side, checked once everything is placed:
+    // `below host.trx  top even with cat0` (design.org 5.3).
+    if (!found.some((statement) => statement.kind === 'align')) return found;
+    return found.filter((statement) => statement.kind === 'align' || !this.yields(statement.placement));
+  }
+
+  /** A direction with nothing said about its distance, which a pin on its axis may refine. */
+  private yields(placement: Placement): placement is OffsetPlacement {
+    return (
+      placement.kind === 'offset' &&
+      placement.gap === undefined &&
+      placement.gaps === undefined &&
+      placement.own === undefined &&
+      placement.written === undefined
+    );
+  }
+
+  /**
+   * The sides that gave up their distance to a pin still have to hold: a box
+   * said to be below another, and pinned beside it, is refused.
+   */
+  private checkYielded(node: LayoutNode): void {
+    for (const axis of BOTH_AXES) {
+      const pinned = node.placements.some((placement) => placement.kind === 'align' && placement.axis === axis);
+      if (!pinned) continue;
+      for (const placement of node.placements) {
+        if (!this.yields(placement)) continue;
+        const way = component(placement.direction, axis);
+        if (way === undefined) continue;
+        const starts = placement.targets.map((target) => this.locate(target, node.name, placement.line));
+        const begin = axis === 'x' ? node.x : node.y;
+        const end = begin + (axis === 'x' ? node.width : node.height);
+        const held =
+          way === 'after'
+            ? starts.every((at) => begin >= (axis === 'x' ? at.x + at.width : at.y + at.height) - 0.5)
+            : starts.every((at) => end <= (axis === 'x' ? at.x : at.y) + 0.5);
+        if (held) continue;
+        const pins = node.placements
+          .filter((other) => other.kind === 'align' && other.axis === axis)
+          .map((other) => `"${describePlacement(other)}"`)
+          .join(' and ');
+        const [own, theirs, past] =
+          axis === 'y'
+            ? way === 'after' ? ['top', 'bottom', 'above'] : ['bottom', 'top', 'below']
+            : way === 'after' ? ['left', 'right', 'left of'] : ['right', 'left', 'right of'];
+        throw new SourceError(
+          `"${node.name}" is said to be ${describePlacement(placement)}, but ${pins} put its ${own} ${past} ` +
+            `the ${theirs} of what it names — move what it is pinned to, or drop "${describePlacement(placement)}"`,
+          placement.line,
+        );
+      }
+    }
   }
 
   /**

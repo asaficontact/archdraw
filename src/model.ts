@@ -194,6 +194,8 @@ export interface LayoutEdgeText {
   height: number;
   /** Where the box a `straight … from` or a box relation names is, once placed. */
   target?: Rect;
+  /** Where each `even with` in its bracket lines up, once placed: the axis, which part of the text, and what it lines up with. */
+  evenAt?: { axis: 'x' | 'y'; side: 'start' | 'center' | 'end'; rect: Rect }[];
 }
 
 export interface LayoutEdge {

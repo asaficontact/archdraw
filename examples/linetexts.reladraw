@@ -24,7 +24,7 @@ edge accept -> broker  "publish message" (on: climb, straight right from confirm
 // line coming down into it.
 node service "Service"  below confirm (gap: 16)  style: plain
 node queue "Queue"  right of service (gap: 10)  6 above service  style: plain
-edge queue -> service  "ack" (above service, left of edge)  from: left  to: top  line: (path: square)
+edge queue -> service  "ack" (above service, on the line, left of edge)  from: left  to: top  line: (path: square)
 
 // Which way a text reads: turned up beside a tall line, and along a slope.
 node top "Top"  right of queue (gap: wide)  style: plain

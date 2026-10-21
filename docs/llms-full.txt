@@ -424,6 +424,8 @@ A comma promises another target, so `right of a, gap: tight` is refused, naming 
 
 `even with x` shares `x`'s horizontal center line and says nothing across. A side word in front lines that side up instead: `top even with x` puts this box's top on `x`'s top. A part after the target lines up with that part: `top even with x bottom`, `top even with x center`. A side on the other axis, `top even with x left`, names no one height and is refused.
 
+To name the axis rather than a side, put `x` or `y` in front. `x even with a` shares `a`'s vertical center line, so this box's middle across is `a`'s middle across, and says nothing about height. `y even with a` says what the bare `even with a` says: the same height.
+
 ```
 node a
 node b  right of a  top even with a
@@ -447,10 +449,18 @@ Two distances, one per axis, are accepted in any placement: `3 below and 2 right
 
 A box's position across and its position up and down each come from exactly one statement. Pinning one edge positions the box; pinning two opposite edges, `top even with a  bottom even with c`, positions and sizes it, and counts as one statement. Refused by name:
 
-- **Said twice.** Two statements on one axis, even where they happen to agree, so a file is never right by coincidence.
+- **Said twice.** Two statements on one axis, even where they happen to agree, so a file is never right by coincidence. A bare direction beside a pin doesn't count; see below.
 - **Inside out.** Two pinned edges that would give a negative size.
 - **Circular.** A box measured from something measured from it.
 - **An axis left open.** `right of a  left of b` with nothing up and down: centering on one or the other would decide which row the box shares, so the error names the axis.
+
+**A direction beside a pin on its own axis gives up its distance and keeps its side.** `below trx` says two things: underneath `trx`, lined up with it across, and one gap down. A pin says how far down instead:
+
+```
+node host.bin  below host.trx  top even with cat0  bottom even with nice
+```
+
+`bin` is under `trx` across, and runs from `cat0`'s top to `nice`'s bottom. The side still has to hold: if the pins put `bin` beside or above `trx`, that is refused. A distance written on the direction, `below host.trx (gap: wide)` or `2 below host.trx`, beside a pin is refused too, since the pin would overrule it.
 
 **Opposite placements on one axis center the box between them**, at its own size: `node c  right of a  left of b  even with a` sits in the middle of the space `a` and `b` already leave. It doesn't move `a` or `b`. If the space is too narrow, `c` overlaps them and that is reported; to make room, state how far apart `a` and `b` are.
 
@@ -887,7 +897,7 @@ A square or curved line heading out of a bare corner takes whichever way gives f
 
 `from: center` aims from the box's center at the far end and starts where that aim crosses the outline, so the start slides round the box as the far end moves.
 
-**An end may be even with another thing.** `from: right, even with cat1` is on the right side, level with `cat1`'s center; on a top or bottom side it is at `cat1`'s place across. The line heads straight out of the side, as with a bare side. The thing is anything a placement's `even with` takes: a box, a part of one (`even with cat1 top`), a fraction (`even with 3/4 down cat1`), a named point, or several (`even with a and b`, the middle of the region round them). Where that height misses the side, the end is refused, never bent. It already says where along the side, so a fraction, `, right of z` or `straight right` written with it is refused as saying it twice.
+**An end may be even with another thing.** `from: right, even with cat1` is on the right side, level with `cat1`'s center; on a top or bottom side it is at `cat1`'s place across. The line heads straight out of the side, as with a bare side. The thing is anything a placement's `even with` takes: a box, a part of one (`even with cat1 top`), a fraction (`even with 3/4 down cat1`), a named point, or several (`even with a and b`, the middle of the region round them). Where that height misses the side, the end is refused, never bent. It already says where along the side, so a fraction or `, right of z` written with it is refused as saying it twice. With `straight right` it says where the line leaves from (below).
 
 ```
 node bin  height: 12
@@ -900,13 +910,22 @@ edge bin -> engine  from: right, even with a  to: left, even with a
 edge bin -> engine  from: right, even with b  to: left, even with b
 ```
 
-**Several ends on one side spread evenly**, ordered by where each far box sits along the side: on a top side, the line from the leftmost box takes the leftmost slot. A line states its own place among the others with `to: top, right of z`, where `z` is a named line ending on that side; on a left or right side the words are `above` and `below`. An end pinned to a point, or even with something, splits the side, so the others spread on either side of it.
+**Several ends on one side spread evenly**, ordered by where each far box sits along the side: on a top side, the line from the leftmost box takes the leftmost slot. A line states its own place among the others with `to: top, right of z` or `from: top, right of z`, where `z` is a named line on that side; on a left or right side the words are `above` and `below`. Places stated against each other form one chain, whatever order they are written in, and a loop of them is refused. Or the box lists the whole order once, in reading order, top to bottom on a left or right side and left to right on a top or bottom one:
+
+```
+node a  right-edge-order: ae, ad, ac
+edge ae a -> e  from: right
+edge ad a -> d  from: right
+edge ac a -> c  from: right
+```
+
+The list names every line spreading on that side, so a line left off, a name that isn't there, a line stating its own place as well, or an end pinned on that side is refused. The keys are `top-edge-order:`, `bottom-edge-order:`, `left-edge-order:` and `right-edge-order:`, written on the node itself. An end pinned to a point, or even with something, splits the side, so the others spread on either side of it.
 
 **An end may be on another line.** `edge audit -> req` ends on the line `req`, at its middle, and `to: at 1/3` a third of the way along it. An end may also start where another line meets the same box: on a line out of `api`, `from: req end` leaves from the point where `req` ends on `api`; naming a box the line doesn't start at is refused. Lines ending on lines must be drawable in some order, so a loop of them is refused.
 
 **A line may go from a box back to itself**, as a loop round one of its sides: `edge job -> job  from: left  to: right  via: job top  line: (path: square)` leaves the left side, runs over the top and comes back into the right side. A straight line can't loop, so a line to itself without a square or curved path is refused, quoting this form.
 
-**A line may leave straight one way and stop at what it meets.** `edge d1 -- bus  straight down` ends where the line straight down from `d1`'s center meets `bus`. A miss is refused, never bent. This is also how a line runs level: `straight right` leaves at its own height. The longer form names any box or named point or region: `to: down from z3`, or `from: left from bin` to take the height from the far end.
+**A line may leave straight one way and stop at what it meets.** `edge d1 -- bus  straight down` ends where the line straight down from `d1`'s center meets `bus`. A miss is refused, never bent. This is also how a line runs level: `straight right` leaves at its own height. **`from:` may name another spot on the side it leaves from**, and the line leaves from there instead of the middle: `edge bin -> engine  from: right 1/4 down  straight right` runs level a quarter of the way down `bin`. A `from:` on any other side is refused, since the line couldn't leave it that way, and so is a `to:`, since `straight` already says where the line ends. The longer form names any box or named point or region: `to: down from z3`, or `from: left from bin` to take the height from the far end.
 
 ```
 node bus "bus"  width: 40
@@ -1071,9 +1090,12 @@ A line may carry several texts, one after another, each with its own bracket. **
 **By a box:**
 
 - `(straight right from c)`: where a line straight right from `c`'s center first meets this line.
-- `(above s1)`: just above `s1`, where the line first reaches that height. `below`, `left of` and `right of` likewise.
+- `(above s1)`: just above `s1` and centered on it, as a box placed `above s1` would be, off the line if need be. A distance goes in front, as a box writes it: `(2 above s1)`. `below`, `left of` and `right of` likewise.
+- `(above s1, on the line)`: stays on the line, where it first reaches that height. `gap:` sets how far above.
 
 **Beside the line:** `(right of edge)`, `(left of edge)`, `(above edge)`, `(below edge)` move the text out the stated way until it is clear of the part of the line it landed on.
+
+**Lined up with a box on one axis:** `(left even with x right)` puts the left edge of the patch behind the text at `x`'s right side, and leaves its height where it would otherwise sit; `(x even with mid1)` centers the text across on `mid1`. Any `even with` a box takes works, one per axis, and the other axis comes from the line. On a level stretch it slides the text along the line; on an upright one, it moves the text off the line sideways. With a relation that already says the same axis, such as `right of edge`, it is refused. Separate it from the bracket's next item with a comma.
 
 **Which way it reads:** `reads: up` and `reads: down` turn it a quarter turn; `reads: along` takes the line's angle where it sits, never upside down.
 
@@ -1332,7 +1354,7 @@ Designed and absent from the code.
 - `widths: match` on a hand-placed container, so "as wide as the widest of them" doesn't go stale.
 - A text in a heading starts small, as bare text does, so a hand-built heading needs `(size: normal)` on its text. Whether it should start at a box's size is open.
 - How a file sets its own unit.
-- Spreading one side's line ends over the whole side, with a list of their order written once on the box.
+- Spreading one side's line ends over the whole side.
 - More layouts: `grid`, `star`, `circle`.
 - Which side "faces" for two boxes placed diagonally. Today it is the side the line between their centers crosses; always across first is the other reading.
 
@@ -1402,6 +1424,13 @@ New:
 - **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`; the patch behind one takes `fill:` and `padding:`.
 - **A line from a box back to itself**, as a loop round a side: `edge job -> job  from: left  to: right  via: job top  line: (path: square)`.
 - **Placing across containers**: a child may be placed against a box outside its container, `node host.bin  top even with cat0`, and a container whose children are placed that way, with none unplaced, goes where they put it.
+- **A direction beside a pin**: `below trx  top even with cat0  bottom even with nice` keeps `below` for lining up under `trx` and checking it holds, and takes how far down from the pins.
+- **The order of the lines on a side, listed on the box**: `node a  right-edge-order: ae, ad, ac`. A line's own `below ae` works on `from:` as on `to:`, and several form one chain whatever order they are written in.
+- **`straight` from a spot on its side**: `from: right 1/4 down  straight right` leaves from that spot rather than the side's middle.
+- **A curved line runs straight under its arrowhead**, so it goes into the head along its axis instead of bending out of its side.
+- **A line's text lined up with a box on one axis**: `"a > b" (left even with x right)`, its other axis left where the line put it.
+- **A line's text placed by a box as a box would be**: `"ack" (2 above service)` centers the text over `service`, two units up, off the line if need be; `(above service, on the line)` keeps it on the line, where the line passes above `service`. Before, `(above service)` meant the second; a file that relies on that adds `, on the line`.
+- **The axis named in front of `even with`**: `x even with a` shares `a`'s middle across, on a box or a line's text; `y even with a` is the bare `even with a` said outright.
 - **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down x`), and a part of the target (`top even with x bottom`).
 - **Sizes**: `width:`, `height:` and the four limits, from numbers, measurements of other boxes, sums, spans and `larger of`.
 - **Layouts**: `layout: column` and `row`, with `gap:`, `widths:`, `align-children:` and `centers:`; `gather-children:` on any container.

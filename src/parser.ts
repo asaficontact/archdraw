@@ -1,4 +1,5 @@
 import type {
+  AlignPlacement,
   Attrs,
   Axis,
   BundleStmt,
@@ -51,6 +52,7 @@ import {
   LINE_KEYS,
   LINE_VALUES,
   CONTENTS_KEYS,
+  EDGE_ORDER_KEYS,
   LAYOUT_KEYS,
   PLACEMENT_KEYS,
   BOUNDARY_PARTS,
@@ -638,6 +640,33 @@ function readAttr(
     if (even) attrs[`${key}.even`] = JSON.stringify(even);
     return next;
   }
+  if ((EDGE_ORDER_KEYS as readonly string[]).includes(key)) {
+    // `right-edge-order: ae, ad, ac`: names separated by commas, as a bundle's order: lists them.
+    if (!subject.startsWith('node ')) {
+      throw new SourceError(`${subject}: ${key}: names the lines on one box's side, so it is written on the node itself`, line);
+    }
+    const names: string[] = [];
+    let next = at + 1;
+    for (;;) {
+      const item = tokens[next];
+      if (!item || item.quoted || isAttrKey(item) || item.text === '(' || item.text === ',') {
+        throw new SourceError(
+          `${subject}: ${key}: lists the named lines on that side in order, such as ${key}: ae, ad, ac${names.length > 0 ? ' — the comma at the end promises another' : ''}`,
+          line,
+        );
+      }
+      const listed = item.text.endsWith(',');
+      names.push(listed ? item.text.slice(0, -1) : item.text);
+      next += 1;
+      if (!listed && follows(tokens, next, ',')) {
+        next += 1;
+        continue;
+      }
+      if (!listed) break;
+    }
+    setOnce(attrs, key, names.join(', '), subject, line);
+    return next;
+  }
   if (key === 'join-with') {
     // `join-with: hub text` or `join-with: hub.icon` — what the node moves with.
     const value = tokens[at + 1];
@@ -1005,28 +1034,67 @@ function readEdgeTextBracket(
     }
     const word = plain(token)!;
     const from = i;
+    if (word === 'even' || ((isSideWord(word) || isAxisWord(word)) && plain(tokens[i + 1]) === 'even')) {
+      // `left even with x right`: one axis from a box, the other from the line.
+      // A comma ends it, as it ends every item in the bracket, so read only up to one.
+      let end = i;
+      while (end < tokens.length && plain(tokens[end]) !== ')' && !(tokens[end]!.text.endsWith(',') && !tokens[end]!.quoted)) end += 1;
+      const comma = end < tokens.length && plain(tokens[end]) !== ')';
+      const item = tokens.slice(i, end + (comma ? 1 : 0)).map((t, k, all) => (comma && k === all.length - 1 ? { ...t, text: t.text.slice(0, -1) } : t));
+      const read = readPlacement(item, 0, line, subject);
+      const placement = read.placement as AlignPlacement;
+      const written = item.slice(0, read.next).map((t) => t.text).join(' ');
+      if (read.next < item.length) {
+        const after = item[read.next]!.text;
+        if (AXIS_ADVERBS.has(after)) throw new SourceError(`${about}: ${axisAdverb(after, listTargets((read.placement as AlignPlacement).targets))}`, line);
+        throw new SourceError(`${about}: "${written}" is followed by "${after}" — put a comma between them`, line);
+      }
+      once(placement.axis === 'x' ? 'where it sits across' : 'how high it sits', written);
+      (place.even ??= []).push({ placement, written });
+      i += item.length;
+      continue;
+    }
+    if (word === 'on' && plain(tokens[i + 1]) === 'the' && plain(tokens[i + 2]) === 'line') {
+      // `above s1, on the line`: the text stays on its line, where it passes above s1.
+      once('on the line', 'on the line');
+      place.onLine = true;
+      i += 3;
+      continue;
+    }
+    // `2 above s1`: the distance from the box, written in front as a box writes it.
+    const distance = /^\d*\.?\d+$/.test(word) && /^(above|below|left|right)$/.test(plain(tokens[i + 1]) ?? '') ? word : undefined;
+    if (distance !== undefined) {
+      if (place.gap !== undefined) throw new SourceError(`${about} says its distance from the box twice (gap: ${place.gap}, ${distance}) — keep one`, line);
+      place.gap = distance;
+      seen.add('gap');
+      i += 1;
+    }
+    const said = distance === undefined ? word : plain(tokens[i])!;
     let relation: 'straight' | TextSide;
-    if (word === 'straight') {
+    if (said === 'straight') {
       const way = plain(tokens[i + 1]);
       if (!(WAYS as readonly string[]).includes(way ?? '') || plain(tokens[i + 2]) !== 'from') {
         throw new SourceError(`${about}: "straight" is followed by a way and the box it starts from, such as \`straight right from c\``, line);
       }
       relation = 'straight';
       i += 3;
-    } else if (word === 'above' || word === 'below') {
-      relation = word;
+    } else if (said === 'above' || said === 'below') {
+      relation = said;
       i += 1;
-    } else if ((word === 'left' || word === 'right') && plain(tokens[i + 1]) === 'of') {
-      relation = `${word} of`;
+    } else if ((said === 'left' || said === 'right') && plain(tokens[i + 1]) === 'of') {
+      relation = `${said} of`;
       i += 2;
     } else {
       throw new SourceError(
         `${about}: "${word}" in its brackets is not something a text on a line takes — it takes ` +
-          `${EDGE_TEXT_KEYS.join(':, ')}:, and relations such as \`above s1\`, \`straight right from c\` or \`right of edge\``,
+          `${EDGE_TEXT_KEYS.join(':, ')}:, relations such as \`2 above s1\`, \`straight right from c\` or \`right of edge\`, \`x even with s1\`, and \`on the line\``,
         line,
       );
     }
     const besideIt = relation !== 'straight' && plain(tokens[i]) === 'edge';
+    if (besideIt && distance !== undefined) {
+      throw new SourceError(`${about}: "${distance} ${relation} edge" — the distance off the line is written \`edge-gap: ${distance}\``, line);
+    }
     if (besideIt) {
       once('a side of the line', `${relation} edge`);
       place.beside = relation as TextSide;
@@ -1065,12 +1133,38 @@ function readEdgeTextBracket(
       line,
     );
   }
+  if (place.onLine && !place.by) {
+    throw new SourceError(
+      `${about}: "on the line" keeps a text placed by a box on its line, as in \`above s1, on the line\`, and nothing here places it by a box` +
+        (place.straight ? ` — "${place.straight.written}" is on the line already` : ''),
+      line,
+    );
+  }
+  if (place.by && !place.onLine && place.beside) {
+    throw new SourceError(
+      `${about}: "${place.beside} edge" moves a text off its line, and "${place.by.written}" puts it by the box, off the line already — ` +
+        `keep one, or write \`${place.by.written}, on the line, ${place.beside} edge\` to start from the line`,
+      line,
+    );
+  }
   if (place.gap !== undefined && place.at !== 'start' && place.at !== 'end' && !place.by) {
     throw new SourceError(
       `${about}: gap: is the distance from a box, which only \`at: start\`, \`at: end\` and a box relation such as \`above s1\` have` +
         (place.beside ? ' — the distance off the line is edge-gap:' : ''),
       line,
     );
+  }
+  for (const { placement, written } of place.even ?? []) {
+    // A relation already says where the text sits on its own axis.
+    const axisOf = (side: TextSide): Axis => (side === 'above' || side === 'below' ? 'y' : 'x');
+    const other = [
+      ...(place.by ? [{ axis: axisOf(place.by.side), said: place.by.written }] : []),
+      ...(place.beside ? [{ axis: axisOf(place.beside), said: `${place.beside} edge` }] : []),
+      ...(place.straight ? [{ axis: (place.straight.way === 'up' || place.straight.way === 'down' ? 'x' : 'y') as Axis, said: place.straight.written }] : []),
+    ].find((each) => each.axis === placement.axis);
+    if (other) {
+      throw new SourceError(`${about}: "${written}" and "${other.said}" both say where it sits ${placement.axis === 'x' ? 'across' : 'up and down'} — keep one`, line);
+    }
   }
   if (place.edgeGap !== undefined && !place.beside) {
     throw new SourceError(`${about}: edge-gap: is the distance off the line for a text beside it, and it says no side — add \`right of edge\` or another`, line);
@@ -1161,7 +1255,7 @@ function takeTitlePlacements(tokens: Token[], open: number, subject: string, lin
   const kept: Token[][] = [];
   for (const each of items) {
     const head = each[0];
-    if (head && !isAttrKey(head) && startsPlacement(head)) {
+    if (head && !isAttrKey(head) && startsPlacement(head, each[1])) {
       for (let at = 0; at < each.length; ) {
         const read = readPlacement(each, at, line, subject);
         placements.push(read.placement);
@@ -1206,7 +1300,7 @@ function parseNode(head: Token[], line: number): NodeStmt {
   // A bare word here is a text somebody forgot to quote far more often than
   // it is anything else, and `"Parser" is not a direction` would send them
   // looking in the wrong place.
-  if (written && !textToken && !isAttrKey(written) && !startsPlacement(written) && written.text !== '(') {
+  if (written && !textToken && !isAttrKey(written) && !startsPlacement(written, head[3]) && written.text !== '(') {
     throw new SourceError(
       `node "${name}": a text is quoted — write "${written.text}" rather than ${written.text}`,
       line,
@@ -2179,16 +2273,20 @@ function readPlacement(
   // and `right` are sides as well as directions, so it is the word after them
   // that says which was meant — "left of drive" against "left level with drive".
   const side = isSideWord(word.text) && follows(tokens, at + 1, 'even') ? word.text : undefined;
-  const head = side ? tokens[at + 1]! : word;
+  // `x even with a` and `y even with a` name the axis outright, centers shared
+  // on it; `y` says what the bare `even with a` says.
+  const named = isAxisWord(word.text) && follows(tokens, at + 1, 'even') ? word.text : undefined;
+  const front = side ?? named;
+  const head = front ? tokens[at + 1]! : word;
 
   if (head.text === 'even' && !head.quoted) {
-    const from = side ? at + 1 : at;
-    const written = side ? `${side} even with` : 'even with';
+    const from = front ? at + 1 : at;
+    const written = front ? `${front} even with` : 'even with';
     if (!follows(tokens, from + 1, 'with')) {
       throw new SourceError(`${subject}: an alignment reads "${written} <node>"`, line);
     }
     const read = readTargets(tokens, from + 2, subject, written, line);
-    const axis = SIDE_AXIS[side ?? 'center'];
+    const axis = named ?? SIDE_AXIS[side ?? 'center'];
     checkEvenTargets(read.targets, axis, written, subject, line);
     const modifiers = readModifiers(tokens, read.next, subject, `${written} ${listTargets(read.targets)}`, line);
     // An alignment shares a line outright, so there is no distance in it for
@@ -2228,6 +2326,9 @@ function readPlacement(
     }
     // A semicolon is reserved rather than ordinary, and someone writing one
     // between clauses wants to know that spaces already do that job.
+    if (AXIS_ADVERBS.has(word.text)) {
+      throw new SourceError(`${subject}: ${axisAdverb(word.text, tokens[at - 1]?.text ?? '…')}`, line);
+    }
     if (word.text.startsWith(';')) {
       throw new SourceError(`${subject}: ";" separates nothing — clauses are separated by spaces alone`, line);
     }
@@ -2563,9 +2664,11 @@ function follows(tokens: Token[], at: number, word: string): boolean {
  * `on` opens an overlay. Used only to tell a forgotten pair of quotes after a
  * node's name from a placement, so a word that is nearly one counts.
  */
-function startsPlacement(token: Token): boolean {
+function startsPlacement(token: Token, next?: Token): boolean {
   if (token.quoted) return false;
   return (
+    // `x even with a`: x and y open a placement only before `even`, so a box named x stays a name.
+    (isAxisWord(token.text) && next !== undefined && !next.quoted && next.text === 'even') ||
     isDirection(token.text) ||
     /^-?\d*\.?\d+(px)?$/.test(token.text) ||
     token.text === 'level' ||
@@ -2576,6 +2679,17 @@ function startsPlacement(token: Token): boolean {
     (SIDES as readonly string[]).includes(token.text) ||
     isPart(token.text)
   );
+}
+
+/** Words someone reaches for to say which way `even with` lines up; the axis goes in front instead. */
+const AXIS_ADVERBS = new Set(['vertically', 'horizontally', 'across']);
+
+function axisAdverb(word: string, target: string): string {
+  return `"${word}" says nothing here — to line up on one axis, name it in front: \`x even with ${target}\` shares ${target}'s place across, \`y even with ${target}\` its height`;
+}
+
+function isAxisWord(word: string): word is Axis {
+  return word === 'x' || word === 'y';
 }
 
 function isSideWord(word: string): word is Side {
