@@ -19,7 +19,7 @@
  * page is its container's plus its offset in that frame.
  */
 import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget, PointExpr, PointStmt, RegionStmt, Side } from './ast.js';
-import { describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES } from './ast.js';
+import { describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES, partWordHint } from './ast.js';
 import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
 import { isWithin, joinedToText, type LayoutNode } from './model.js';
@@ -1054,7 +1054,7 @@ export class Placer {
   private nodeExtent(node: LayoutNode, target: PlacementTarget, axis: Axis, placement: Placement): Extent {
     const named = this.byName.get(target.name);
     if (!named) {
-      throw new SourceError(`"${node.name}" is placed against "${target.name}", which does not exist`, placement.line);
+      throw new SourceError(`"${node.name}" is placed against "${target.name}", which does not exist${partWordHint(target.name, this.byName.keys())}`, placement.line);
     }
     if (named === node || isWithin(named, node)) {
       throw new SourceError(
@@ -1374,7 +1374,7 @@ export class Placer {
         node.line,
       );
     }
-    throw new SourceError(`"${node.name}" ${key}: measures "${name}", which does not exist`, node.line);
+    throw new SourceError(`"${node.name}" ${key}: measures "${name}", which does not exist${partWordHint(name, this.byName.keys())}`, node.line);
   }
 
   /**

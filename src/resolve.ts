@@ -18,6 +18,7 @@ import {
   type NodeCorners,
   describePlacement,
   nameTarget,
+  partWordHint,
 } from './ast.js';
 import {
   DEFAULT_FONT_SIZE,
@@ -1775,7 +1776,7 @@ function locateEvenWith(edges: LayoutEdge[], placer: Placer, byName: Map<string,
           throw new SourceError(
             lineNames.has(target.name)
               ? `${subject}: "${which}: ${edge.attrs[which]}" — ${target.name} is a line; an end is even with a box, a part of one, or a point`
-              : `${subject}: "${which}: ${edge.attrs[which]}" names ${target.name}, which does not exist`,
+              : `${subject}: "${which}: ${edge.attrs[which]}" names ${target.name}, which does not exist${partWordHint(target.name, byName.keys())}`,
             edge.line,
           );
         }
@@ -1856,7 +1857,7 @@ function locateStops(edges: LayoutEdge[], placer: Placer, byName: Map<string, La
         return undefined;
       }
       if (target.point === undefined && !byName.has(target.name) && !named.has(target.name)) {
-        throw new SourceError(`${subject}: "via: ${stop.written}" names ${target.name}, which does not exist`, edge.line);
+        throw new SourceError(`${subject}: "via: ${stop.written}" names ${target.name}, which does not exist${partWordHint(target.name, byName.keys())}`, edge.line);
       }
       return placer.locate(target, subject, edge.line);
     });

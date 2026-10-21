@@ -81,6 +81,22 @@ export function isPosition(word: string): word is Position {
 }
 
 /**
+ * For a missing name like `bin.left`, whose last part is a side or a point:
+ * the hint that the part is a separate word after the box's full name,
+ * `host.bin left`. `names` is every box's name; empty when there is no such box.
+ */
+export function partWordHint(name: string, names: Iterable<string>): string {
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return '';
+  const part = name.slice(dot + 1);
+  if (!isPosition(part) && !(PART_SIDES as readonly string[]).includes(part) && part !== 'text') return '';
+  const base = name.slice(0, dot);
+  const all = [...names];
+  const found = all.includes(base) ? [base] : all.filter((each) => each.endsWith(`.${base}`));
+  return found.length === 1 ? ` — a side or point is a separate word after the box's full name: ${found[0]} ${part}` : '';
+}
+
+/**
  * A part of a node that a placement may name: its text, one of its four sides,
  * or one of its nine points. Written as a separate word after the node's name
  * — `hub text`, `server right`, `board top-right`.

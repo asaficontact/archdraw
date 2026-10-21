@@ -171,10 +171,11 @@ export const DARK_THEME: Theme = {
   iconInk: '#8d8d8e',
   iconShade: '#3e3d58',
   // The reference's two colored boxes: `synced` is the green, `dump` the red.
-  // Their fills are sampled rather than mixed, so the benchmark written in
-  // theme colors renders exactly as it did in hex.
+  // The green's fill is sampled rather than mixed, so the benchmark written in
+  // theme colors renders as it did in hex. The red's is mixed, as every other
+  // theme's is: the sampled #460000 glared across a venn's whole set.
   primary: accent('#486544', '#111111', '#d9d9d9', '#142814'),
-  secondary: accent('#8f3a3a', '#111111', '#d9d9d9', '#460000'),
+  secondary: accent('#8f3a3a', '#111111', '#d9d9d9'),
 };
 
 /** The dark theme's counterpart: the same roles, on a white page. */

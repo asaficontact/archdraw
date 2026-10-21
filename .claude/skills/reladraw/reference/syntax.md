@@ -51,9 +51,9 @@ node server "Home Server" (inside top)  left of cluster  badge: desktop
 //   name   text          its bracket   a placement      an attribute
 ```
 
-What every statement of a kind has is positional; what is optional is a key. A word ending in a colon opens an attribute and nothing else does, so the two never need telling apart by position. A key may touch its value: `gap:tight` is `gap: tight`. Relations stay phrases, `right of api` or `between c and d`, because a phrase is the sentence a person would say and a key like `right-of: x` falls apart with several targets, a gap or a part.
+What every statement of a kind has is positional; what is optional is a key. A word ending in a colon opens an attribute and nothing else does, so the two never need telling apart by position. A key may touch its value: `gap:tight` is `gap: tight`. Relations stay phrases, `right of api` or `between c and d`, because a phrase is the sentence a person would say and a key like `right-of: a` falls apart with several targets, a gap or a part.
 
-**A value ends when its own shape is complete.** `height: 0.5 group height  right of x` reads a size, then a placement. `to: top, right of z` keeps `right of z` inside `to:`, because it is part of that value. So word order stays free and nothing is ambiguous.
+**A value ends when its own shape is complete.** `height: 0.5 group height  right of a` reads a size, then a placement. `to: top, right of z` keeps `right of z` inside `to:`, because it is part of that value. So word order stays free and nothing is ambiguous.
 
 **A bracket modifies the one thing it follows.** A setting that belongs to one part of a statement is written in brackets right after that part: a placement's `(gap: wide)`, a text's `(size: small, wrap: 30)`, a line's `line: (path: square)`, a layout's `layout: column (gap: none)`, a waypoint's `b top (gap: wide)`. The scope is visible instead of inferred. Inside a bracket the comma is optional.
 
@@ -75,7 +75,7 @@ A `"""` string takes everything between its marks as written, quotes and line br
 
 ### Numbers and the file's unit
 
-A distance (a gap, a size, a padding, `2 right of x`) is measured in the file's unit, which is small: an ordinary one-line box is about 4 units tall. The gap words are whole numbers of it:
+A distance (a gap, a size, a padding, `2 right of a`) is measured in the file's unit, which is small: an ordinary one-line box is about 4 units tall. The gap words are whole numbers of it:
 
 | word | units |
 |---|---|
@@ -182,7 +182,7 @@ node drive "External HD"
 node drive.badge  icon: disk  1 right of drive text  join-with: drive text
 ```
 
-The text keeps its own position words, so `node d1 "Desktop 1 / Linux" (inside top, align: left)  badge: desktop` puts the label, picture and all, in the top-left corner. On a box with nothing else in it the label is centered; on a box with children it takes the title's place and the children go under it. The picture is two lines of text tall and can be named like any child (`below drive.badge`, `edge x -> drive.badge`). Declaring `drive.badge` yourself beside a `badge:` is an error naming both ways out. Only a box can wear one.
+The text keeps its own position words, so `node d1 "Desktop 1 / Linux" (inside top, align: left)  badge: desktop` puts the label, picture and all, in the top-left corner. On a box with nothing else in it the label is centered; on a box with children it takes the title's place and the children go under it. The picture is two lines of text tall and can be named like any child (`below drive.badge`, `edge a -> drive.badge`). Declaring `drive.badge` yourself beside a `badge:` is an error naming both ways out. Only a box can wear one.
 
 With an empty text, `node flag "" badge: disk`, the node is exactly the picture and its padding, since an empty text takes no room.
 
@@ -205,7 +205,7 @@ above X           below X           left of X         right of X
 above-left of X   above-right of X  below-left of X   below-right of X
 ```
 
-**A gap is exactly what was said.** `right of a` puts the box a `normal` gap from `a`'s right side. The gap goes in the placement's bracket, `right of a (gap: tight)`, or as a distance in front, `2 right of a`; writing both is refused as said twice. A diagonal distance is per axis: `2 below-right of x` is 2 across and 2 down.
+**A gap is exactly what was said.** `right of a` puts the box a `normal` gap from `a`'s right side. The gap goes in the placement's bracket, `right of a (gap: tight)`, or as a distance in front, `2 right of a`; writing both is refused as said twice. A diagonal distance is per axis: `2 below-right of a` is 2 across and 2 down.
 
 **A lone direction also centers on its target.** `right of a` alone puts the box level with `a`'s center, because walking right from something keeps you on its center line. That half gives way as soon as another placement says how high.
 
@@ -236,7 +236,7 @@ A comma promises another target, so `right of a, gap: tight` is refused, naming 
 
 ### Lining up: `even with`
 
-`even with x` shares `x`'s horizontal center line and says nothing across. A side word in front lines that side up instead: `top even with x` puts this box's top on `x`'s top. A part after the target lines up with that part: `top even with x bottom`, `top even with x center`. A side on the other axis, `top even with x left`, names no one height and is refused.
+`even with a` shares `a`'s horizontal center line and says nothing across. A side word in front lines that side up instead: `top even with a` puts this box's top on `a`'s top. A part after the target lines up with that part: `top even with a bottom`, `top even with a center`. A side on the other axis, `top even with a left`, names no one height and is refused.
 
 To name the axis rather than a side, put `x` or `y` in front. `x even with a` shares `a`'s vertical center line, so this box's middle across is `a`'s middle across, and says nothing about height. `y even with a` says what the bare `even with a` says: the same height.
 
@@ -247,7 +247,7 @@ node c  below a (gap: wide)
 node d  right of c  even with c
 ```
 
-A fraction of the way across a box is written fraction first: `top even with 3/4 down x` puts this box's top three quarters of the way down `x` (`1/4 up x` says the same). Across, `left even with 1/3 across x`, counted from the left unless `from right` follows.
+A fraction of the way across a box is written fraction first: `top even with 3/4 down a` puts this box's top three quarters of the way down `a` (`1/4 up a` says the same). Across, `left even with 1/3 across a`, counted from the left unless `from right` follows.
 
 `even with a and b` lines up with the region round both. An alignment takes no gap, since sharing a line leaves no distance, and `(gap: …)` on one is refused.
 
@@ -331,7 +331,7 @@ A part is written as the name, then the part: `b top`, `e bottom-left`, `hub tex
 ### Points
 
 - **Between two things.** `between a and b` is the center of the space between them: halfway between their facing sides, not their centers. `between a and b at 1/3` is a third of the way across, from `a`. It always joins exactly two things with `and`; `between a, b` is refused.
-- **From two things.** `down from a and left from b` is where a line straight down from `a`'s center meets a line straight left from `b`'s. A line may start from a part (`down from a left`) or a point (`left from 1 above b top-left`); from a whole side, such as `up from c top`, it starts at the side's middle. The direction words also say which way the point lies from each box, and that is checked: lines that don't meet are refused. Either half may be `even with x` instead, the level line through `x`: `up from c and even with tall top` is straight above `c`, level with `tall`'s top. It says no way the point lies, so only the other half is checked.
+- **From two things.** `down from a and left from b` is where a line straight down from `a`'s center meets a line straight left from `b`'s. A line may start from a part (`down from a left`) or a point (`left from 1 above b top-left`); from a whole side, such as `up from c top`, it starts at the side's middle. The direction words also say which way the point lies from each box, and that is checked: lines that don't meet are refused. Either half may be `even with a` instead, the level line through `a`: `up from c and even with tall top` is straight above `c`, level with `tall`'s top. It says no way the point lies, so only the other half is checked.
 - **Moved by a distance.** `2 below c bottom` is 2 units below `c`'s bottom. What is moved is a point or a side, so `2 below c` is refused, asking which. A moved side is still a side: `1 above tall top` works wherever `tall top` does. A named point moves the same way: `2 above over_c`. `c bottom + 2` is refused too, since `+` adds lengths and doesn't say up or down.
 - **On a line.** `req start`, `req end`, `req at 1/3` ([Points on a line](#points-on-a-line)).
 
@@ -519,14 +519,14 @@ The heading child places nothing itself and isn't the anchor. Refused by name: a
 
 ### Joined to the text
 
-`join-with: x` makes a node and `x` one unit for positioning. The node's placements still say where it sits against `x`; the join says the two move together wherever something places `x`.
+`join-with: a` makes a node and `a` one unit for positioning. The node's placements still say where it sits against `a`; the join says the two move together wherever something places `a`.
 
 ```
 node tall "Top"  height: 8
 node tall.disk  icon: disk  1 right of tall text  top even with tall text  join-with: tall text
 ```
 
-A unit that includes a box's text is placed by the text's position words: on a leaf it is centered as a pair, on a container it takes the title's place. Joins chain. In a container whose title its side words place and which has an unplaced child, a child placed only against the text, or against what is joined to it, is joined without saying so: `node d1.nw "3"  right of d1 text  even with d1 text` goes with the title. The box then holds two groups nothing relates, each fully stated; if they land on each other, that is reported as an overlap. `x` must be something one of the node's placements is against, and must be its own container's text or a sibling. A node joined to the text may be placed only against the text and what is joined to it. A box whose every child is joined to its text draws as a leaf. `badge:` is the short form.
+A unit that includes a box's text is placed by the text's position words: on a leaf it is centered as a pair, on a container it takes the title's place. Joins chain. In a container whose title its side words place and which has an unplaced child, a child placed only against the text, or against what is joined to it, is joined without saying so: `node d1.nw "3"  right of d1 text  even with d1 text` goes with the title. The box then holds two groups nothing relates, each fully stated; if they land on each other, that is reported as an overlap. `a` must be something one of the node's placements is against, and must be its own container's text or a sibling. A node joined to the text may be placed only against the text and what is joined to it. A box whose every child is joined to its text draws as a leaf. `badge:` is the short form.
 
 ### Against its own parent
 
@@ -536,7 +536,7 @@ A title inside the border counts as content, so the box makes room for it. So do
 
 ### Invisible containers
 
-`shape: none` on a container draws no box: its edges are a tight bounding box round the children, with no padding, and anything outside can be placed against the group as one shape. Its text, if it has one, is a bare heading over the children. `node x "" shape: none` is a pure group.
+`shape: none` on a container draws no box: its edges are a tight bounding box round the children, with no padding, and anything outside can be placed against the group as one shape. Its text, if it has one, is a bare heading over the children. `node a "" shape: none` is a pure group.
 
 ```
 node cluster ""  shape: none
@@ -909,7 +909,7 @@ A line may carry several texts, one after another, each with its own bracket. **
 
 **Beside the line:** `(right of edge)`, `(left of edge)`, `(above edge)`, `(below edge)` move the text out the stated way until it is clear of the part of the line it landed on.
 
-**Lined up with a box on one axis:** `(left even with x right)` puts the left edge of the patch behind the text at `x`'s right side, and leaves its height where it would otherwise sit; `(x even with mid1)` centers the text across on `mid1`. Any `even with` a box takes works, one per axis, and the other axis comes from the line. On a level stretch it slides the text along the line; on an upright one, it moves the text off the line sideways. With a relation that already says the same axis, such as `right of edge`, it is refused. Separate it from the bracket's next item with a comma.
+**Lined up with a box on one axis:** `(left even with a right)` puts the left edge of the patch behind the text at `a`'s right side, and leaves its height where it would otherwise sit; `(x even with mid1)` centers the text across on `mid1`. Any `even with` a box takes works, one per axis, and the other axis comes from the line. On a level stretch it slides the text along the line; on an upright one, it moves the text off the line sideways. With a relation that already says the same axis, such as `right of edge`, it is refused. Separate it from the bracket's next item with a comma.
 
 **Which way it reads:** `reads: up` and `reads: down` turn it a quarter turn; `reads: along` takes the line's angle where it sits, never upside down.
 
@@ -1207,7 +1207,7 @@ Breaking, in spelling:
 
 | 0.16.0 | now |
 |---|---|
-| `level with x`, `top level with x` | `even with x`, `top even with x` |
+| `level with a`, `top level with a` | `even with a`, `top even with a` |
 | `gap: wide` on a node | in the placement's bracket: `right of a (gap: wide)`, or `8 right of a` |
 | `contents: (widths: match, align: center)` | `layout: column (widths: match)`; `gather-children: center` for where the group sits |
 | `align:` in a layout's bracket | `align-children:` in the bracket, or `gather-children:` on the box |
@@ -1243,13 +1243,14 @@ New:
 - **The order of the lines on a side, listed on the box**: `node a  right-edge-order: ae, ad, ac`. A line's own `below ae` works on `from:` as on `to:`, and several form one chain whatever order they are written in.
 - **`straight` from a spot on its side**: `from: right 1/4 down  straight right` leaves from that spot rather than the side's middle.
 - **A curved line runs straight under its arrowhead**, so it goes into the head along its axis instead of bending out of its side.
+- **The dark theme's `theme-secondary-subtle` is quieter**, `#311b1b` where it was `#460000`, mixed toward the page as every other theme's is; the deep red glared across a venn's whole set.
 - **One side's padding**: `padding-right: 4`, and `padding-top:`, `padding-bottom:`, `padding-left:`, over `padding:` on that side, on a box or a region.
 - **A text running out of its container is reported**, as `text-overlap`, naming the side and how far: a text never moves a border, so the room is the writer's to make.
 - **A venn's sets lined up by their tops or bottoms**: `layout: venn (align-children: top)`, or `top even with` on either set, which draws the same.
-- **A line's text lined up with a box on one axis**: `"a > b" (left even with x right)`, its other axis left where the line put it.
+- **A line's text lined up with a box on one axis**: `"a > b" (left even with a right)`, its other axis left where the line put it.
 - **A line's text placed by a box as a box would be**: `"ack" (2 above service)` centers the text over `service`, two units up, off the line if need be; `(above service, on the line)` keeps it on the line, where the line passes above `service`. Before, `(above service)` meant the second; a file that relies on that adds `, on the line`.
 - **The axis named in front of `even with`**: `x even with a` shares `a`'s middle across, on a box or a line's text; `y even with a` is the bare `even with a` said outright.
-- **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down x`), and a part of the target (`top even with x bottom`).
+- **Exact placement**: a distance in front (`2 right of a`), part against part (`center 12 right of a center`), two distances (`3 below and 2 right of a`), a fraction along a side (`right of server 3/4 down`), a fraction of a box (`top even with 3/4 down a`), and a part of the target (`top even with a bottom`).
 - **Sizes**: `width:`, `height:` and the four limits, from numbers, measurements of other boxes, sums, spans and `larger of`.
 - **Layouts**: `layout: column` and `row`, with `gap:`, `widths:`, `align-children:` and `centers:`; `gather-children:` on any container.
 - **Titles placed** against any side, inside, on or outside the border, or against the box's own children, centered between two with opposite placements, and turned with `reads:`; `heading:`; `join-with:`, which a child placed only against a title its side words place takes without saying so.
@@ -1259,7 +1260,7 @@ New:
 - **Square-cornered boxes**: `corners: sharp` on a node, a style or a default draws a box's corners square, a document's too, fold aside. Boxes are still rounded unless told, so no existing diagram changes. A circle refuses it, having no corners.
 - **`padding:`** on a box or region.
 - **Guides**: `guide` before any node, line, point or region, shown with `--guides`, the playground's Guides box, or `diagram guides: show`.
-- **Drawing order**: `depth: behind x`, `depth: in front of x`.
+- **Drawing order**: `depth: behind a`, `depth: in front of a`.
 - **Findings**, eight kinds, printed one per line, with `reladraw check`, `checks:`, `--checks` and `--no-checks`. In the playground, a Check button lists them under the diagram.
 - **Numbers**: `px` on any number, a number starting at its decimal point (`.5`), and `size:` and `thickness:` as multiples.
 

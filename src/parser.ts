@@ -966,6 +966,8 @@ function readEdgeTextBracket(
   const plain = (token: Token | undefined): string | undefined =>
     token && !token.quoted ? token.text.replace(/(.),$/, '$1') : undefined;
   const seen = new Set<string>();
+  // What each key in the bracket was given, so a repeat can name both values.
+  const given = new Map<string, string>();
   let atWritten = '';
   const once = (what: string, written: string): void => {
     if (seen.has(what)) throw new SourceError(`${about} says ${written === what ? what : `${what} (${written})`} twice — keep one`, line);
@@ -992,6 +994,12 @@ function readEdgeTextBracket(
       if (value === undefined || isAttrKey(tokens[i + 1]!) || value === ')') {
         throw new SourceError(`${about}: "${key}" has no value`, line);
       }
+      if (key === 'gap' && place.gap !== undefined && !given.has('gap')) {
+        throw new SourceError(`${about} says its distance from the box twice (${place.gap} in front, gap: ${value}) — keep one`, line);
+      }
+      const before = given.get(key);
+      if (before !== undefined) throw new SourceError(`${about} says ${key} twice (${key}: ${before}, ${key}: ${value}) — keep one`, line);
+      given.set(key, value);
       once(key, key);
       i += 2;
       if (key === 'color' || key === 'fill') checkColorWord(value, subject, line);
@@ -1064,7 +1072,7 @@ function readEdgeTextBracket(
     // `2 above s1`: the distance from the box, written in front as a box writes it.
     const distance = /^\d*\.?\d+$/.test(word) && /^(above|below|left|right)$/.test(plain(tokens[i + 1]) ?? '') ? word : undefined;
     if (distance !== undefined) {
-      if (place.gap !== undefined) throw new SourceError(`${about} says its distance from the box twice (gap: ${place.gap}, ${distance}) — keep one`, line);
+      if (place.gap !== undefined) throw new SourceError(`${about} says its distance from the box twice (gap: ${place.gap}, ${distance} in front) — keep one`, line);
       place.gap = distance;
       seen.add('gap');
       i += 1;
