@@ -333,6 +333,12 @@ export class Placer {
   private refusePlacedTwice(node: LayoutNode, axis: Axis): void {
     const own = this.statements(node, axis);
     if (own.length === 0) return;
+    // A venn set's stagger places only its box when what it holds is placed across (`vennAlign`).
+    const part = this.vennPart(node);
+    if (part === 0 || part === 2) {
+      const parts = this.facts.get(node.parent!)!.venn!.parts;
+      if (staggerOf(own[0]!.placement, parts[2 - part]!) !== undefined) return;
+    }
     for (const child of this.contentOf(node)) {
       for (const { placement } of this.statements(child, axis)) {
         const outside = placement.targets.flatMap((target) => this.boxesNamed(target, [])).some((name) => {
@@ -1598,7 +1604,13 @@ export class Placer {
     // The children sit in the room where gather-children: says, the middle
     // unless it says; the box grows away from them.
     const share = { start: 0, center: 0.5, end: 1 };
-    const grow = extra * share[this.facts.get(node)!.gather[axis]];
+    const part = this.vennPart(node);
+    // A venn's set whose box is said grows to it, not about its middle.
+    const box = axis === 'y' && part !== undefined && part !== 1 ? this.vennBox(node) : undefined;
+    const grow =
+      box !== undefined
+        ? outline.boxStart + this.vennPlan(node.parent!, 'y')[part!] - box.start
+        : extra * share[this.facts.get(node)!.gather[axis]];
     let shift = 0;
     if (!anchored && title.how !== 'center' && title.side !== 'center' && !this.titleStates(node, axis)) {
       const toward = axis === across ? title.along : title.side === 'top' || title.side === 'left' ? 'start' : 'end';
@@ -1886,7 +1898,7 @@ export class Placer {
       const [left, shared, right] = this.facts.get(venn)!.venn!.parts;
       const own = this.partContent(part, axis);
       const align = this.vennAlign(venn);
-      if (part === shared || align?.mover !== part) return -(own.start + own.size / 2);
+      if (part === shared || align?.mover !== part || align.boxOnly) return -(own.start + own.size / 2);
       const side = align.side;
       const otherSet = part === left ? right : left;
       const other = this.partContent(otherSet, axis);
@@ -1897,7 +1909,7 @@ export class Placer {
       // edge is the further of the two; this set's children go even with that.
       const low = Math.min(other.start + otherShift, o.start + sharedShift);
       const high = Math.max(other.start + other.size + otherShift, o.start + o.size + sharedShift);
-      return side === 'start' ? low - own.start : high - own.start - own.size;
+      return (side === 'start' ? low - own.start : high - own.start - own.size) + align.by;
     });
     this.vennShifts.set(key, worked);
     return worked;
@@ -1910,8 +1922,11 @@ export class Placer {
    * shows, since the venn wraps them both. So the set it's written on moves,
    * unless what it would move to meet moves with it (the overlap or the other
    * set placed against it); then the other set moves, if nothing holds it.
+   * A stagger on a set whose contents are held in place says where its box
+   * goes, not its contents (`boxOnly`): the box starts there and still holds
+   * what it wraps.
    */
-  private vennAlign(venn: LayoutNode): { mover: LayoutNode; side: 'start' | 'end' } | undefined {
+  private vennAlign(venn: LayoutNode): { mover: LayoutNode; side: 'start' | 'end'; by: number; boxOnly: boolean } | undefined {
     const { parts, align } = this.facts.get(venn)!.venn!;
     const [left, shared, right] = parts;
     for (const written of [right, left]) {
@@ -1923,8 +1938,14 @@ export class Placer {
       // A set can move if nothing holds it and nothing it would be moved to meet moves with it.
       const free = (set: LayoutNode, against: LayoutNode): boolean =>
         this.anchorPart(set) === undefined && !this.leansOn(shared, set) && !this.leansOn(against, set);
-      if (free(written, other)) return { mover: written, side };
-      if (free(other, written)) return { mover: other, side };
+      // `top even with 2 below design top`: how much lower the set it's written on sits.
+      const stagger = placement === undefined ? undefined : staggerOf(placement, other);
+      const by = stagger === undefined
+        ? 0
+        : gapPixels(stagger.distance, `"${describePoint(stagger)}"`, placement!.line) * (stagger.direction === 'below' ? 1 : -1);
+      if (free(written, other)) return { mover: written, side, by, boxOnly: false };
+      if (stagger !== undefined) return { mover: written, side, by, boxOnly: true };
+      if (free(other, written)) return { mover: other, side, by: -by, boxOnly: false };
       const held = [other, written, shared]
         .flatMap((part) => this.contentOf(part))
         .find((child) => this.acrossParts(child))!;
@@ -1995,15 +2016,58 @@ export class Placer {
     return this.frame(node, axis).boxStart + this.vennPlan(node.parent!, axis)[part];
   }
 
-  /** A venn's part's size: a set wraps what it holds, or takes the taller set's height; the overlap is where they cross. */
+  /** A venn's part's size: a set wraps what it holds, or takes the box `vennBox` gives it; the overlap is where they cross. */
   private vennSize(node: LayoutNode, axis: Axis): number {
     const venn = node.parent!;
-    const facts = this.facts.get(venn)!.venn!;
     if (this.vennPart(node) === 1) return this.strip(venn, axis).size;
-    if (axis === 'y' && facts.heights === 'equal') {
-      return Math.max(this.ownSize(facts.parts[0], 'y'), this.ownSize(facts.parts[2], 'y'));
+    const box = axis === 'y' ? this.vennBox(node) : undefined;
+    return box === undefined ? this.ownSize(node, axis) : box.size;
+  }
+
+  /**
+   * A set's box up and down in the venn's frame, where it is not just the
+   * outline round what it holds. With `heights: equal`, the span from the
+   * higher set's top to the lower one's bottom, which both boxes then cover,
+   * so they start and end together however their contents are lined up; a set
+   * staggered by `top even with 2 below …` keeps its stagger, its box the span
+   * moved by that much. A stagger that places only the box (`vennAlign`'s
+   * `boxOnly`) moves the side it names, and the box must still hold its contents.
+   */
+  private vennBox(set: LayoutNode): Extent | undefined {
+    const venn = set.parent!;
+    const facts = this.facts.get(venn)!.venn!;
+    const plan = this.vennPlan(venn, 'y');
+    const natural = (part: LayoutNode): { start: number; end: number } => {
+      const outline = this.outline(part, 'y');
+      const at = outline.boxStart + plan[this.vennPart(part)!];
+      return { start: at, end: at + outline.boxSize };
+    };
+    const align = this.vennAlign(venn);
+    const by = align?.mover === set ? align.by : 0;
+    if (facts.heights === 'equal') {
+      const [low, high] = [facts.parts[0], facts.parts[2]].map((part) => {
+        const shift = align?.mover === part ? align.by : 0;
+        const box = natural(part);
+        return { start: box.start - shift, end: box.end - shift };
+      }) as [{ start: number; end: number }, { start: number; end: number }];
+      const start = Math.min(low.start, high.start);
+      return { start: start + by, size: Math.max(low.end, high.end) - start };
     }
-    return this.ownSize(node, axis);
+    if (align?.mover !== set || !align.boxOnly) return undefined;
+    const own = natural(set);
+    const other = natural(set === facts.parts[0] ? facts.parts[2] : facts.parts[0]);
+    const placement = set.placements[0]!;
+    const start = align.side === 'start' ? other.start + by : own.start;
+    const end = align.side === 'end' ? other.end + by : own.end;
+    const short = Math.max(start - own.start, own.end - end);
+    if (short > 0) {
+      throw new SourceError(
+        `"${set.name}" has "${describePlacement(placement)}", which would cut ${short / UNIT} units into what it holds, ` +
+          `since what it holds is placed against another part — move it ${align.side === 'start' ? 'up' : 'down'} by at least that`,
+        placement.line,
+      );
+    }
+    return { start, size: end - start };
   }
 
   /** Where a venn's two sets cross, in the venn's frame. */
@@ -2058,15 +2122,17 @@ export class Placer {
     const venn = parent ? this.facts.get(parent)!.venn : undefined;
     if (parent && venn) {
       // The venn places its three parts. A set may line its top or bottom up
-      // with the other set's instead of being centered on it, and nothing else.
+      // with the other set's instead of being centered on it, or with that
+      // side moved up or down by a distance, and nothing else.
       const [left, shared, right] = venn.parts;
       for (const child of members) {
         const other = child === left ? right : child === right ? left : undefined;
         for (const placement of child.placements) {
           const [target] = placement.targets;
           const lines = other !== undefined && placement.kind === 'align' && placement.axis === 'y' &&
-            placement.targets.length === 1 && target!.name === other.name && target!.part === undefined &&
-            target!.fraction === undefined && target!.point === undefined;
+            placement.targets.length === 1 &&
+            ((target!.name === other.name && target!.part === undefined && target!.fraction === undefined && target!.point === undefined) ||
+              staggerOf(placement, other) !== undefined);
           if (lines && child.placements.length === 1) continue;
           throw new SourceError(
             child === shared
@@ -2077,7 +2143,7 @@ export class Placer {
                     'which places each of its parts — drop the placement'
                 : `"${child.name}" places itself ("${describePlacement(placement)}"), but it is a set of venn "${parent.name}", ` +
                     `which sets it beside the other and centers it — the one thing a set may say is top even with ${other.name} ` +
-                    `or bottom even with ${other.name}`,
+                    `or bottom even with ${other.name}, or that side moved, such as top even with 2 below ${other.name} top`,
             placement.line,
           );
         }
@@ -2169,7 +2235,10 @@ export class Placer {
         placement.line,
       );
     }
-    if (part.placements.length > 0) {
+    // A stagger on the part then places only its box (`vennAlign`), so the two say different things.
+    const [left, , right] = this.facts.get(part.parent!)!.venn!.parts;
+    const otherSet = part === left ? right : left;
+    if (part.placements.length > 0 && staggerOf(part.placements[0]!, otherSet) === undefined) {
       throw new SourceError(
         `"${part.name}" is lined up by "${describePlacement(part.placements[0]!)}" and also by "${node.name}" ` +
           `being placed against another part — say it once`,
@@ -2286,6 +2355,20 @@ interface FrameAxis {
   /** The text alone, which is the title unless something is joined to it. */
   textStart: number;
   textSize: number;
+}
+
+/**
+ * `top even with 2 below design top` on a venn's set: the other set's same
+ * side, moved up or down. Anything else, such as its bottom or a sideways
+ * move, is not a stagger.
+ */
+function staggerOf(placement: Placement, other: LayoutNode): Extract<PointExpr, { kind: 'moved' }> | undefined {
+  if (placement.kind !== 'align' || placement.axis !== 'y' || placement.targets.length !== 1) return undefined;
+  const point = placement.targets[0]!.point;
+  if (point?.kind !== 'moved' || (point.direction !== 'above' && point.direction !== 'below')) return undefined;
+  const from = point.from;
+  const same = from.name === other.name && from.part === placement.side && from.fraction === undefined && from.point === undefined;
+  return same ? point : undefined;
 }
 
 function sideAlong(side: Side): 'start' | 'center' | 'end' {
