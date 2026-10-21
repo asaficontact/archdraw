@@ -378,7 +378,7 @@ With an empty text, `node flag "" badge: disk`, the node is exactly the picture 
 
 A stack of cards, which `deck:` used to draw, is a container: [`layout: deck`](#a-stack-of-cards-layout-deck).
 
-`padding:` is the room between a box's edge and what it holds, in the file's unit: `padding: 2`. On a region it is measured outward instead ([Points and regions](#points-and-regions)).
+`padding:` is the room between a box's edge and what it holds, in the file's unit: `padding: 2`. On a region it is measured outward instead ([Points and regions](#points-and-regions)). One side's padding is `padding-top:`, `padding-right:`, `padding-bottom:` or `padding-left:`, over `padding:` on that side only: `padding: 2  padding-right: 4` is 2 all round and 4 on the right. A container's title keeps `padding:` from the edge, so a side's padding widens the room round the children without moving the title out of its corner. A circle has no sides, so a side's padding on one is refused.
 
 ## Placing a box
 
@@ -631,7 +631,7 @@ The layout's bracket takes:
 | `gap:` | the space between children; by default the same as the container's padding |
 | `widths: match` | every child as wide as the widest |
 | `widths: fill` | every child across the whole box; a column only |
-| `align-children:` | how the children line up with each other: in a column `left`, `center` (the default) or `right`; in a row `top`, `center` or `bottom` |
+| `align-children:` | how the children line up with each other: in a column `left`, `center` (the default) or `right`; in a row `top`, `center` or `bottom`; in a venn, the two sets, `top`, `center` or `bottom` |
 | `centers: 5 apart` | space the children by their centers, not their facing sides: the even ticks of a timeline |
 
 `centers:` beside `gap:` is refused as said twice. `layout:` on a node with no children is refused. The bare `align:` in a layout is refused, naming `align-children:` and `gather-children:`, so `align:` means one thing everywhere: where along a side.
@@ -651,7 +651,7 @@ node phases.both.template  "PDF template"
 node phases.runtime.python "Python Lib"
 ```
 
-Each set wraps its own children and the overlap's, and the two cross over the overlap. Inside each part, children are placed by hand as in any container, against their own siblings. Nothing lines boxes up across parts unless you say so: a part's anchor may be placed against a box in another part, up and down only, and its whole part moves to keep it there. `node phases.runtime.python "Python Lib"  even with phases.both.template` puts Python Lib level with the template, whatever else Runtime holds. Otherwise a shorter set is centered on the taller; `top even with phases.design` (or `bottom even with`) on the other set lines them up instead, and is the only placement a part may have. `layout: venn (heights: equal)` gives both sets the taller one's height. Across, each crossing border sits the set's padding from what is inside it and a normal gap from what is outside it; `layout: venn (gap: wide)` widens that gap, to make room for a line's text between parts.
+Each set wraps its own children and the overlap's, and the two cross over the overlap. Inside each part, children are placed by hand as in any container, against their own siblings. Nothing lines boxes up across parts unless you say so: a part's anchor may be placed against a box in another part, up and down only, and its whole part moves to keep it there. `node phases.runtime.python "Python Lib"  even with phases.both.template` puts Python Lib level with the template, whatever else Runtime holds. Otherwise a shorter set is centered on the taller; `layout: venn (align-children: top)` (or `bottom`) lines the two sets up by their tops instead, as a row lines up its children. The same can be said on a set, `top even with phases.design` (or `bottom even with`) naming the other, which is the only placement a part may have; saying it both ways is refused. Either set may carry it, and either form is refused only when boxes placed across parts already decide where the sets sit. `layout: venn (heights: equal)` gives both sets the taller one's height. Across, each crossing border sits the set's padding from what is inside it and a normal gap from what is outside it; `layout: venn (gap: wide)` widens that gap, to make room for a line's text between parts.
 
 The overlap has no border of its own. Its title follows every container's rule: drawn if it has one, nothing for `""`, and it sits centered at the top of the strip. The venn itself draws no box unless it states a fill or border. Each part gets a different fill unless it states one: the left set the theme's primary-subtle, the right its secondary-subtle, and the overlap the two laid over each other. A venn's sets crossing, and what is in the overlap sitting inside both, is never reported.
 
@@ -1257,7 +1257,7 @@ An **error** means the file can't be drawn: an unknown key, two placements on on
 
 | kind | reports | default |
 |---|---|---|
-| `text-overlap` | a text on another text, on a line it doesn't belong to, or on a node it doesn't belong to; a node over its container's title | on |
+| `text-overlap` | a text on another text, on a line it doesn't belong to, or on a node it doesn't belong to; a text running out past the border of the container it sits in; a node over its container's title | on |
 | `text-overflow` | a text running out of a box whose stated size is too small for it | on |
 | `edge-node-overlap` | a line across a node that isn't one of its ends, or through its own ends | on |
 | `edge-overlap` | two lines on one run for a stretch, however short; a collapsed bundle's bus, and lines from one statement such as `edge a -> b, c`, shared on purpose, are not reported | on |
@@ -1316,6 +1316,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `heading` | ✓ | | ✓ | | the child that is the title |
 | `join-with` | ✓ | ✓ | ✓ | | the thing this moves with |
 | `padding` | ✓ | | ✓ | | room inside the edge |
+| `padding-top`, `-right`, `-bottom`, `-left` | ✓ | | ✓ | | one side's room, over `padding` |
 | `width`, `height`, `min-…`, `max-…` | ✓ | | ✓ | | a stated size |
 | `overlap` | ✓ | ✓ | ✓ | | `allow`: an overlap is meant |
 | `depth` | ✓ | ✓ | ✓ | ✓ | drawn behind or in front of something |
@@ -1428,6 +1429,9 @@ New:
 - **The order of the lines on a side, listed on the box**: `node a  right-edge-order: ae, ad, ac`. A line's own `below ae` works on `from:` as on `to:`, and several form one chain whatever order they are written in.
 - **`straight` from a spot on its side**: `from: right 1/4 down  straight right` leaves from that spot rather than the side's middle.
 - **A curved line runs straight under its arrowhead**, so it goes into the head along its axis instead of bending out of its side.
+- **One side's padding**: `padding-right: 4`, and `padding-top:`, `padding-bottom:`, `padding-left:`, over `padding:` on that side, on a box or a region.
+- **A text running out of its container is reported**, as `text-overlap`, naming the side and how far: a text never moves a border, so the room is the writer's to make.
+- **A venn's sets lined up by their tops or bottoms**: `layout: venn (align-children: top)`, or `top even with` on either set, which draws the same.
 - **A line's text lined up with a box on one axis**: `"a > b" (left even with x right)`, its other axis left where the line put it.
 - **A line's text placed by a box as a box would be**: `"ack" (2 above service)` centers the text over `service`, two units up, off the line if need be; `(above service, on the line)` keeps it on the line, where the line passes above `service`. Before, `(above service)` meant the second; a file that relies on that adds `, on the line`.
 - **The axis named in front of `even with`**: `x even with a` shares `a`'s middle across, on a box or a line's text; `y even with a` is the bare `even with a` said outright.

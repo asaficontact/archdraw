@@ -14,6 +14,7 @@ import {
   SIZE_KEY_NAMES,
   LINE_VALUES,
   NODE_CORNERS,
+  PADDING_SIDES,
   type NodeCorners,
   describePlacement,
   nameTarget,
@@ -68,6 +69,16 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
       : node.appearance['padding'] !== undefined
         ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
         : PAD;
+  // `padding-right: 4`: one side's padding, over `padding:` there.
+  const pad = { top: padding, right: padding, bottom: padding, left: padding };
+  for (const side of PADDING_SIDES) {
+    const written = node.appearance[`padding-${side}`];
+    if (written === undefined) continue;
+    if (circle) {
+      throw new SourceError(`"${node.name}" padding-${side}: a circle has no sides to pad one of — use padding:`, node.line);
+    }
+    pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line);
+  }
   node.textSide = 'center';
   const measures = {
     lineHeight,
@@ -88,6 +99,7 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
       textBox: { x: (width - textWidth) / 2, y: glyphSide + ICON_GAP, width: textWidth, height: textHeight },
       hasText,
       padding,
+      pad,
       ...measures,
       title,
       ...(layout ? { layout } : {}),
@@ -101,6 +113,7 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
       textBox: { x: (side - textWidth) / 2, y: (side - textHeight) / 2, width: textWidth, height: textHeight },
       hasText,
       padding,
+      pad,
       ...measures,
       title,
       circle,
@@ -110,10 +123,11 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
     throw new SourceError(`"${node.name}" has layout: but no children — a node with no children is not a container`, node.line);
   }
   return {
-    natural: { width: textWidth + padding * 2, height: textHeight + padding * 2 },
-    textBox: { x: padding, y: padding, width: textWidth, height: textHeight },
+    natural: { width: textWidth + pad.left + pad.right, height: textHeight + pad.top + pad.bottom },
+    textBox: { x: pad.left, y: pad.top, width: textWidth, height: textHeight },
     hasText,
     padding,
+    pad,
     ...measures,
     title,
     ...(layout ? { layout } : {}),
@@ -260,9 +274,9 @@ function vennOf(node: LayoutNode): Venn | undefined {
   if (node.appearance['layout'] !== 'venn') return undefined;
   const bracket = bracketOf('layout', node.appearance);
   for (const key of Object.keys(bracket)) {
-    if (key === 'heights' || key === 'gap') continue;
+    if (key === 'heights' || key === 'gap' || key === 'align-children') continue;
     throw new SourceError(
-      `"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights: and gap: in its bracket`,
+      `"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights:, gap: and align-children: in its bracket`,
       node.line,
     );
   }
@@ -299,7 +313,25 @@ function vennOf(node: LayoutNode): Venn | undefined {
     }
   }
   const gap = bracket['gap'] === undefined ? GAPS['normal']! : gapPixels(bracket['gap'], `"${node.name}" layout: venn (gap: …)`, node.line);
-  return { heights, gap, parts: parts as [LayoutNode, LayoutNode, LayoutNode] };
+  // `align-children: top` lines the two sets' tops up, as a row lines up its children.
+  const alignWord = bracket['align-children'] ?? 'center';
+  const align = ({ top: 'start', center: 'center', bottom: 'end' } as const)[alignWord as 'top' | 'center' | 'bottom'];
+  if (align === undefined) {
+    throw new SourceError(
+      `"${node.name}" has layout: venn (align-children: ${alignWord}) — a venn lines its two sets up by top, center or bottom`,
+      node.line,
+    );
+  }
+  if (align !== 'center') {
+    const stated = [parts[0]!, parts[2]!].find((part) => part.placements.length > 0);
+    if (stated !== undefined) {
+      throw new SourceError(
+        `"${stated.name}" is lined up by "${describePlacement(stated.placements[0]!)}", and venn "${node.name}" already says align-children: ${alignWord} — say it once`,
+        stated.line,
+      );
+    }
+  }
+  return { heights, gap, align, parts: parts as [LayoutNode, LayoutNode, LayoutNode] };
 }
 
 export interface ResolveOptions {

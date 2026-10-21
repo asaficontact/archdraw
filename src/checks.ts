@@ -705,7 +705,22 @@ function textOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
         );
         continue;
       }
-      if (holds(node.node!, text.box)) continue;
+      if (holds(node.node!, text.box)) {
+        // Held, but a text never moves a border, so one that runs out past it
+        // is the writer's to make room for.
+        const out = pokesOut(text.box, node.box);
+        if (out !== undefined) {
+          found.push(
+            new Finding(
+              'text-overlap',
+              `text "${text.words}" runs out of node ${node.node!.name} past its ${out.sides}, by ${out.by} — ` +
+                `give ${node.node!.name} more padding:, or move the text`,
+              text.line,
+            ),
+          );
+        }
+        continue;
+      }
       found.push(
         new Finding(
           'text-overlap',
@@ -842,6 +857,21 @@ function within(inner: Box, outer: Box): boolean {
     inner.x >= outer.x - EPSILON && inner.y >= outer.y - EPSILON &&
     inner.x + inner.width <= outer.x + outer.width + EPSILON && inner.y + inner.height <= outer.y + outer.height + EPSILON
   );
+}
+
+/** The sides of `outer` that `inner` crosses, and by how far at most, or undefined when it is inside. */
+function pokesOut(inner: Box, outer: Box): { sides: string; by: string } | undefined {
+  const past: [string, number][] = [
+    ['top', outer.y - inner.y],
+    ['bottom', inner.y + inner.height - (outer.y + outer.height)],
+    ['left', outer.x - inner.x],
+    ['right', inner.x + inner.width - (outer.x + outer.width)],
+  ];
+  const crossed = past.filter(([, by]) => by > EPSILON);
+  if (crossed.length === 0) return undefined;
+  const names = crossed.map(([side]) => side);
+  const sides = names.length === 1 ? `${names[0]} side` : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} sides`;
+  return { sides, by: units(Math.max(...crossed.map(([, by]) => by))) };
 }
 
 function coveredPart(under: Box, over: Box): string {

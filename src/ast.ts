@@ -753,7 +753,7 @@ export const POINT_KEYS = ['style', 'fill', 'depth'] as const;
 export const POINT_TEXT_SIDES = ['above', 'below', 'left', 'right', 'above-right', 'above-left', 'below-right', 'below-left'] as const;
 /** What a point's or a region's text takes in its bracket besides its position words. */
 export const MARK_TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'reads', 'gap'] as const;
-export const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'depth'] as const;
+export const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'depth'] as const;
 
 /**
  * `diagram background: #111111` — settings that belong to the drawing as a
@@ -904,11 +904,15 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
 /** The keys that state a size; `size.ts` reads their values. */
 export const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
 
+/** `padding-right: 4`: one side's padding, over `padding:` on that side. */
+export const PADDING_SIDES = ['top', 'right', 'bottom', 'left'] as const;
+export const PADDING_SIDE_KEYS = PADDING_SIDES.map((side) => `padding-${side}`);
+
 /** `right-edge-order: ae, ad, ac`: the lines on one side of a box, in reading order. */
 export const EDGE_ORDER_KEYS = ['top-edge-order', 'bottom-edge-order', 'left-edge-order', 'right-edge-order'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...PADDING_SIDE_KEYS, ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
   icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
   none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
   edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],

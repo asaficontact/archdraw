@@ -113,6 +113,8 @@ export interface Layout {
 export interface Venn {
   heights: 'natural' | 'equal';
   gap: number;
+  /** `align-children:`: the two sets lined up by their tops, middles or bottoms. */
+  align: 'start' | 'center' | 'end';
   /** The left set, the overlap, the right set. */
   parts: [LayoutNode, LayoutNode, LayoutNode];
 }
@@ -125,7 +127,10 @@ export interface NodeFacts {
   textBox: { x: number; y: number; width: number; height: number };
   /** Whether the node has any text. An empty text takes no room. */
   hasText: boolean;
+  /** `padding:`, which a title keeps its inset by. */
   padding: number;
+  /** Each side's padding: `padding:`, or `padding-right:` and the rest over it. */
+  pad: Record<'top' | 'right' | 'bottom' | 'left', number>;
   /** One line of the node's text, and one character, for sizes in `lines` and `chars`. */
   lineHeight: number;
   charWidth: number;
@@ -812,7 +817,14 @@ export class Placer {
       // room, and that includes the gap beside it.
       return parent.heading !== undefined || this.facts.get(parent)!.hasText ? UNIT : 0;
     }
-    if (placement.written === 'inside') return own ? this.facts.get(parent)!.padding : GAPS['tight']!;
+    if (placement.written === 'inside') {
+      if (!own) return GAPS['tight']!;
+      // `inside hub top-right` clears the padding of the sides it names.
+      const facts = this.facts.get(parent)!;
+      const part = placement.targets.find((target) => target.name === parent.name)?.part ?? '';
+      if (axis === 'x') return part.includes('left') ? facts.pad.left : part.includes('right') ? facts.pad.right : facts.padding;
+      return part.includes('top') ? facts.pad.top : part.includes('bottom') ? facts.pad.bottom : facts.padding;
+    }
     return GAPS['normal']!;
   }
 
@@ -891,11 +903,15 @@ export class Placer {
         const start = Math.min(a.start, b.start);
         extent = { start, size: Math.max(a.start + a.size, b.start + b.size) - start };
       }
-      const padding = stmt.attrs['padding'];
-      if (padding !== undefined) {
-        const by = gapPixels(padding, `region "${stmt.name}" padding:`, stmt.line);
-        extent = { start: extent.start - by, size: extent.size + by * 2 };
-      }
+      // Outward, all round, then `padding-left:` and the rest over it on their side.
+      const outward = (key: string, fallback: number): number => {
+        const written = stmt.attrs[key];
+        return written === undefined ? fallback : gapPixels(written, `region "${stmt.name}" ${key}:`, stmt.line);
+      };
+      const all = outward('padding', 0);
+      const before = outward(axis === 'x' ? 'padding-left' : 'padding-top', all);
+      const after = outward(axis === 'x' ? 'padding-right' : 'padding-bottom', all);
+      extent = { start: extent.start - before, size: extent.size + before + after };
       const text = this.regionTexts.get(stmt.name);
       return text ? regionGrown(extent, text, axis) : extent;
     } finally {
@@ -1321,7 +1337,7 @@ export class Placer {
         if (size.unit === 'px') return size.value;
         if (size.unit === 'unit') return size.value * UNIT;
         // Room for this much text: the lines or characters, and the padding round them.
-        return size.value * (size.unit === 'lines' ? facts.lineHeight : facts.charWidth) + facts.padding * 2;
+        return size.value * (size.unit === 'lines' ? facts.lineHeight : facts.charWidth) + padBefore(facts, DIMENSION_AXIS[dimension]) + padAfter(facts, DIMENSION_AXIS[dimension]);
       case 'own':
         if (size.dimension === dimension) {
           throw new SourceError(`"${node.name}" ${key}: ${size.dimension} measures itself — measure it from something else`, node.line);
@@ -1500,8 +1516,15 @@ export class Placer {
       boxLow = Math.min(boxLow, titleStart);
       boxHigh = Math.max(boxHigh, titleStart + titleSize);
     }
-    boxLow -= facts.padding;
-    boxHigh += facts.padding;
+    boxLow -= padBefore(facts, axis);
+    boxHigh += padAfter(facts, axis);
+    // A title along a side keeps `padding:` from the box's edge, so a side's
+    // own padding (`padding-right: 4`) widens the room round the children
+    // without walking the title in from the corner.
+    if (inBox && !empty && placedTitle === undefined && axis === across && title.how !== 'center' && title.side !== 'center') {
+      if (title.along === 'start') titleStart -= Math.max(0, padBefore(facts, axis) - facts.padding);
+      if (title.along === 'end') titleStart += Math.max(0, padAfter(facts, axis) - facts.padding);
+    }
 
     // On the border: the box's edge on that side runs through the title's middle.
     if (title.how === 'on' && hasTitle && axis !== across) {
@@ -1830,8 +1853,8 @@ export class Placer {
       const [l, o, r] = [left, shared, right].map((part) => this.partContent(part, axis)) as [Extent, Extent, Extent];
       const between = this.facts.get(venn)!.venn!.gap;
       const dl = -l.start;
-      const dO = dl + l.start + l.size + between + this.facts.get(right)!.padding - o.start;
-      const dr = dO + o.start + o.size + this.facts.get(left)!.padding + between - r.start;
+      const dO = dl + l.start + l.size + between + this.facts.get(right)!.pad.left - o.start;
+      const dr = dO + o.start + o.size + this.facts.get(left)!.pad.right + between - r.start;
       plan = [dl, dO, dr];
     } else {
       plan = [this.vennShift(left, axis), this.vennShift(shared, axis), this.vennShift(right, axis)];
@@ -1843,8 +1866,9 @@ export class Placer {
   /**
    * Where a part's frame sits in the venn's up and down. A part whose anchor
    * is placed against a box in another part goes where that puts the anchor;
-   * a set lined up with the other set's top or bottom goes there; otherwise
-   * its contents are centered on the line every unplaced part shares.
+   * the set that moves to line the two sets' tops or bottoms up goes there
+   * (`vennAlign`); otherwise its contents are centered on the line every
+   * unplaced part shares.
    */
   private vennShift(part: LayoutNode, axis: Axis): number {
     if (axis === 'x') return this.vennPlan(part.parent!, axis)[this.vennPart(part)!];
@@ -1861,9 +1885,9 @@ export class Placer {
       const venn = part.parent!;
       const [left, shared, right] = this.facts.get(venn)!.venn!.parts;
       const own = this.partContent(part, axis);
-      const [placement] = part.placements;
-      const side = placement?.kind === 'align' ? sideAlong(placement.side) : 'center';
-      if (part === shared || side === 'center') return -(own.start + own.size / 2);
+      const align = this.vennAlign(venn);
+      if (part === shared || align?.mover !== part) return -(own.start + own.size / 2);
+      const side = align.side;
       const otherSet = part === left ? right : left;
       const other = this.partContent(otherSet, axis);
       const otherShift = this.vennShift(otherSet, axis);
@@ -1877,6 +1901,63 @@ export class Placer {
     });
     this.vennShifts.set(key, worked);
     return worked;
+  }
+
+  /**
+   * Which set moves to line up the two sets' tops or bottoms, and by which edge.
+   * `top even with` between the sets is a relation between them, not an order
+   * to move the one it's written on: only where they sit against each other
+   * shows, since the venn wraps them both. So the set it's written on moves,
+   * unless what it would move to meet moves with it (the overlap or the other
+   * set placed against it); then the other set moves, if nothing holds it.
+   */
+  private vennAlign(venn: LayoutNode): { mover: LayoutNode; side: 'start' | 'end' } | undefined {
+    const { parts, align } = this.facts.get(venn)!.venn!;
+    const [left, shared, right] = parts;
+    for (const written of [right, left]) {
+      const [placement] = written.placements;
+      // `layout: venn (align-children: top)` reads as the right set's `top even with` the left.
+      const side = placement?.kind === 'align' ? sideAlong(placement.side) : written === right ? align : 'center';
+      if (side === 'center') continue;
+      const other = written === left ? right : left;
+      // A set can move if nothing holds it and nothing it would be moved to meet moves with it.
+      const free = (set: LayoutNode, against: LayoutNode): boolean =>
+        this.anchorPart(set) === undefined && !this.leansOn(shared, set) && !this.leansOn(against, set);
+      if (free(written, other)) return { mover: written, side };
+      if (free(other, written)) return { mover: other, side };
+      const held = [other, written, shared]
+        .flatMap((part) => this.contentOf(part))
+        .find((child) => this.acrossParts(child))!;
+      const said = placement ? `"${written.name}" has "${describePlacement(placement)}"` : `venn "${venn.name}" has align-children: ${side === 'start' ? 'top' : 'bottom'}`;
+      throw new SourceError(
+        `${said}, and "${held.name}" being placed against another part already decides where the two sets sit up and down — say it once`,
+        placement ? written.line : venn.line,
+      );
+    }
+    return undefined;
+  }
+
+  /** Whether a venn part moves with `part`: its anchor is placed against a box in `part`, directly or through the third part. */
+  private leansOn(from: LayoutNode, part: LayoutNode): boolean {
+    let at: LayoutNode | undefined = from;
+    for (let step = 0; step < 3 && at !== undefined; step++) {
+      at = this.anchorPart(at);
+      if (at === part) return true;
+    }
+    return false;
+  }
+
+  /** The part of the same venn that this part's anchor is placed against, if it has one. */
+  private anchorPart(part: LayoutNode): LayoutNode | undefined {
+    const anchor = this.contentOf(part).find((child) => this.acrossParts(child));
+    if (!anchor) return undefined;
+    for (const placement of anchor.placements) {
+      for (const target of placement.targets) {
+        const named = this.byName.get(target.name);
+        if (named !== undefined && this.inOtherPart(anchor, named)) return named.parent;
+      }
+    }
+    return undefined;
   }
 
   /** Whether `named` is a child of a different part of the venn `node`'s part belongs to. */
@@ -2215,6 +2296,17 @@ function sideAlong(side: Side): 'start' | 'center' | 'end' {
 
 /** The width or height a size key on an axis states. */
 const DIMENSION: Record<Axis, Dimension> = { x: 'width', y: 'height' };
+const DIMENSION_AXIS: Record<Dimension, Axis> = { width: 'x', height: 'y' };
+
+/** The padding on the low side of an axis, the left or the top. */
+function padBefore(facts: NodeFacts, axis: Axis): number {
+  return axis === 'x' ? facts.pad.left : facts.pad.top;
+}
+
+/** The padding on the high side of an axis, the right or the bottom. */
+function padAfter(facts: NodeFacts, axis: Axis): number {
+  return axis === 'x' ? facts.pad.right : facts.pad.bottom;
+}
 
 /** The size keys a node states on one axis, as written, for quoting back. */
 function sizeKeysOn(node: LayoutNode, axis: Axis): string[] {
