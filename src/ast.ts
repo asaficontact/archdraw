@@ -744,7 +744,10 @@ export interface BundleStmt {
   name: string;
   /** A path out in space. A bundle has this or `between`, never both. */
   via?: ViaEntry[];
-  /** `bundle calls  a -> b`: the direct way between two boxes, with no path of its own. */
+  /**
+   * `bundle calls  a -> b`: between two boxes, the direct way unless its
+   * `from:`, `to:` or `line: (path: …)` route it as one line would go.
+   */
   between?: [string, string];
   /**
    * `layout: parallel (gap: tight)`, the default; `layout: collapsed`, a bus;
@@ -755,13 +758,16 @@ export interface BundleStmt {
   gap?: string;
   /** `order: y, z, x`: every member, in reading order across where the bundle starts. */
   order?: string[];
-  /** `line:`, `from-mark:`, `to-mark:`: how a collapsed bundle's shared stretch is drawn. */
+  /**
+   * `line:`, `from-mark:`, `to-mark:`: how a collapsed bundle's shared stretch
+   * is drawn; between two boxes, `from:`, `to:` and `line: (path: …)` route it.
+   */
   attrs: Attrs;
   line: number;
 }
 
 /** What a bundle may say besides `via:`, `layout:` and `order:`. */
-export const BUNDLE_KEYS = ['via', 'layout', 'order', 'line', 'from-mark', 'to-mark'] as const;
+export const BUNDLE_KEYS = ['via', 'layout', 'order', 'line', 'from-mark', 'to-mark', 'from', 'to'] as const;
 
 /** What a point and a region may say. A region's padding pushes every edge out. */
 export const POINT_KEYS = ['style', 'fill', 'depth'] as const;

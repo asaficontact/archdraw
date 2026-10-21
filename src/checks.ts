@@ -482,6 +482,11 @@ function edgeOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
     }
   }
   segments.sort((p, q) => p.minX - q.minX);
+  // A collapsed bundle between two boxes is all bus: its members share the
+  // whole way, box to box, with nothing off it to report.
+  const buses = new Set(layout.edges.filter((edge) => edge.bundle?.between && edge.bundle.arrangement === 'collapsed').map((edge) => edge.name));
+  const busOf = (edge: LayoutEdge): string | undefined =>
+    (edge.via ?? []).map((entry) => entry.stop).find((stop) => stop?.kind === 'bundle' && buses.has(stop.bundle))?.written;
   const reach = SAME_RUN + Math.max(0, ...segments.map((segment) => segment.edge.look.thickness));
 
   const shared = new Map<string, { earlier: LayoutEdge; later: LayoutEdge; length: number; longest: { length: number; a: Point; b: Point } }>();
@@ -492,6 +497,8 @@ function edgeOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Finding[]
       // Lines one statement draws, `edge a -> b, c` or `each child of`, share
       // their way on purpose, as a collapsed bundle's members do.
       if (other.edge === segment.edge || other.edge.line === segment.edge.line) continue;
+      const bus = busOf(segment.edge);
+      if (bus !== undefined && bus === busOf(other.edge)) continue;
       const length = runShared(segment, other, SAME_RUN + Math.max(segment.edge.look.thickness, other.edge.look.thickness));
       if (length < EPSILON) continue;
       const [earlier, later] = other.edge.line <= segment.edge.line ? [other.edge, segment.edge] : [segment.edge, other.edge];

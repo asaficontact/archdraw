@@ -1886,6 +1886,19 @@ function parseBundle(head: Token[], line: number): BundleStmt {
   if (arrangement === 'fan' && between === undefined) {
     throw new SourceError(`${subject}: layout: fan spreads lines between two boxes, and this bundle has a path — write the boxes, such as \`bundle ${name}  a -> b  layout: fan\`, or say parallel`, line);
   }
+  for (const which of ['from', 'to'] as const) {
+    if (attrs[which] !== undefined && between === undefined) {
+      throw new SourceError(
+        `${subject}: "${which}: ${attrs[which]}" — a bundle with a path ${which === 'from' ? 'starts' : 'ends'} where its path does; ${which}: belongs to a bundle between two boxes, such as \`bundle ${name}  a -> b  ${which}: ${attrs[which]}\``,
+        line,
+      );
+    }
+  }
+  const routedBy = ['from', 'to', 'line.path'].find((key) => attrs[key] !== undefined);
+  if (arrangement === 'fan' && routedBy !== undefined) {
+    const written = routedBy === 'line.path' ? `line: (path: ${attrs[routedBy]})` : `${routedBy}: ${attrs[routedBy]}`;
+    throw new SourceError(`${subject}: layout: fan bows its lines along the direct way between the boxes, and "${written}" routes the bundle — keep one, or say parallel`, line);
+  }
   const gap = attrs['layout.gap'];
   for (const key of Object.keys(attrs)) {
     if (key.startsWith('layout.') && key !== 'layout.gap') {

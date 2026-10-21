@@ -844,6 +844,19 @@ Its arrangement is `layout:`:
 
 **A bundle may name two boxes instead of a path**: `bundle calls  a -> b  layout: fan` is the direct way between them, for copies of one line. Members must join those two boxes; `from:`, `to:` and `path:` on a member are refused, since the bundle says where its lines land.
 
+**A bundle between two boxes can say how it gets there, as a line does**, with `from:`, `to:` and `line: (path: …)`, and `turn:` and `step-out:` in the same bracket:
+
+```
+node web "Web tier"
+node ops "Ops"  below web (gap: 6)  right of web (gap: 4)
+bundle logs  web -> ops  from: bottom  to: top  line: (path: square)
+edge web -> ops  via: logs
+edge web -> ops  via: logs
+edge web -> ops  via: logs
+```
+
+The bundle's middle is routed as one line from Web's bottom to Ops's top would be. Each member runs its own lane beside it and lands where its lane meets the box, so the three leave Web side by side and arrive at Ops the same way. Where a side is too short to take the lanes at their gap, they draw closer all the way. `from:` and `to:` name a side or a point on it; `layout: fan` keeps to the direct way and is refused with any of these.
+
 A parallel bundle's path is drawn only with guides; a collapsed one is drawn, styled with the line's own keys. A member joining or leaving partway is not built.
 
 ### A line from each child
@@ -1235,7 +1248,7 @@ New:
 - **A line's end even with another thing**: `from: right, even with cat1` leaves the right side level with `cat1`, and heads straight out. Lines out of a tall box can each run level with a box beside it without working out fractions of its height. A height that misses the side is refused.
 - **Named lines** and points on them: `req start`, `req end`, `req at 1/3`.
 - **A line between points and regions**: `edge a -> b` where `a` and `b` are named points, regions or boxes, in any mix, guide lines included. A point end is exactly on the point; a region end is like a box's.
-- **Bundles**, parallel, collapsed or fanned, with a stated `order:`, `edge each child of a -> b`, and lines to several ends, `edge a -> b, c, d`.
+- **Bundles**, parallel, collapsed or fanned, with a stated `order:`; a bundle between two boxes routed as a line is, `bundle logs  web -> ops  from: bottom  to: top  line: (path: square)`, its lines side by side the whole way; `edge each child of a -> b`, and lines to several ends, `edge a -> b, c, d`.
 - **Texts on lines placed** along the line, on a leg, on its longest level piece, by a box, or beside the line, and turned with `reads:`; the patch behind one takes `fill:` and `padding:`.
 - **A line from a box back to itself**, as a loop round a side: `edge job -> job  from: left  to: right  via: job top  line: (path: square)`.
 - **Placing across containers**: a child may be placed against a box outside its container, `node host.bin  top even with cat0`, and a container whose children are placed that way, with none unplaced, goes where they put it.

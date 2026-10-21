@@ -139,10 +139,32 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
     }
   }
   const directDrawn = new Map<DirectSet, Map<LayoutEdge, Route>>();
+  // A bundle between two boxes that says how it goes is routed as one line
+  // between them would be (6.6); its members are laid either side of it.
+  const middles = new Map<LayoutEdge, { line: LayoutEdge; ends: [End, End] }>();
+  for (const edge of layout.edges) {
+    const between = edge.bundle?.between;
+    if (!between || !['from', 'to', 'line.path'].some((key) => edge.attrs[key] !== undefined)) continue;
+    const { bundle: _, ...rest } = edge;
+    const line: LayoutEdge = { ...rest, from: between[0], to: between[1] };
+    for (const which of ['from', 'to'] as const) {
+      const written = edge.attrs[which];
+      if (written !== undefined && !['side', 'fraction', 'point', 'center'].includes(readEnd(written, line, which).kind)) {
+        throw new SourceError(
+          `bundle ${edge.name}: "${which}: ${written}" — a bundle's ${which}: names a side of ${(which === 'from' ? line.from : line.to).name} or a point on it, such as ${which}: bottom or ${which}: bottom 1/4 across`,
+          edge.line,
+        );
+      }
+    }
+    middles.set(edge, { line, ends: [endOf(line, 'from'), endOf(line, 'to')] });
+  }
 
   // Ends spread along a side first, since where an end lands on a shared side
   // depends on the others there.
-  const sides = spreadSides([...ends.values()].flat(), layout.nodes);
+  const middleLines = new Set([...middles.values()].map((middle) => middle.line));
+  const sides = spreadSides([...ends.values(), ...[...middles.values()].map((middle) => middle.ends)].flat(), layout.nodes)
+    .map((side) => ({ ...side, ends: side.ends.filter((end) => !middleLines.has(end.edge)) }))
+    .filter((side) => side.ends.length > 1);
   const routes = new Map<LayoutEdge, Route>();
   const context: Context = { layout, legs, lines, ends, routes, shapes: new Map(), lanes: new Map() };
 
@@ -162,9 +184,19 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
     working.push(edge);
     for (const other of needs(edge, context)) draw(other);
     working.pop();
+    const middle = middles.get(edge);
+    if (middle) {
+      const [start, end] = middle.ends;
+      for (const one of [start, end]) placeEnd(one, context);
+      for (const [own, other] of [[start, end], [end, start]] as [End, End][]) faceThePoint(own, other);
+      for (const [own, other] of [[start, end], [end, start]] as [End, End][]) aimCenter(own, other);
+      routes.set(edge, { ...route(middle.line, start, end, context), edge });
+      done.add(edge);
+      return;
+    }
     if (edge.bundle?.between) {
-      // A bundle between two boxes has no path of its own: shown with the
-      // guides, it is the line between the two centers, box to box.
+      // A bundle between two boxes that says nothing of its way is the direct
+      // way: shown with the guides, the line between the two centers.
       const [a, b] = edge.bundle.between.map(faceOfNode) as [Face, Face];
       const from = outlineToward(a, centerOf(b));
       const to = outlineToward(b, centerOf(a));
@@ -176,7 +208,7 @@ export function planSides(layout: Layout): { routes: Map<LayoutEdge, Route>; sid
     if (group) {
       let drawn = directDrawn.get(group);
       if (!drawn) {
-        drawn = directRoutes(group);
+        drawn = group.bundle && middles.has(group.bundle) ? laneRoutes(group, routes.get(group.bundle)!) : directRoutes(group);
         directDrawn.set(group, drawn);
       }
       routes.set(edge, drawn.get(edge)!);
@@ -367,6 +399,8 @@ interface DirectSet {
   members: LayoutEdge[];
   arrangement: 'parallel' | 'collapsed' | 'fan';
   gap: number;
+  /** The bundle written `a -> b` that holds them; none for plain copies. */
+  bundle?: LayoutEdge;
 }
 
 /**
@@ -416,7 +450,7 @@ function directSets(edges: LayoutEdge[], ends: Map<LayoutEdge, [End, End]>, copi
         edge.line,
       );
     }
-    const set = named.get(bundle) ?? { a, b, members: [], arrangement: bundle.bundle!.arrangement, gap: bundle.bundle!.gap };
+    const set = named.get(bundle) ?? { a, b, members: [], arrangement: bundle.bundle!.arrangement, gap: bundle.bundle!.gap, bundle };
     set.members.push(edge);
     named.set(bundle, set);
   }
@@ -514,6 +548,73 @@ function directRoutes(set: DirectSet): Map<LayoutEdge, Route> {
     routes.set(edge, { edge, start, pieces, points: 'c1' in pieces[0]! ? tracePieces(start, pieces) : [start, pieces[0]!.to], legs: new Map(), stops: [] });
   });
   return routes;
+}
+
+/**
+ * The members of a bundle between two boxes that is routed as a line (6.6):
+ * each runs its lane, the bundle's way shifted across, in order across where
+ * it starts as `lanesOf` reads it, and ends where its lane meets the box.
+ */
+function laneRoutes(set: DirectSet, middle: Route): Map<LayoutEdge, Route> {
+  const trace = tidyCorners(traceRoute(middle));
+  const fa = faceOfNode(set.a);
+  const fb = faceOfNode(set.b);
+  const first = unit(trace[0]!, trace[1]!);
+  const reading = Math.abs(first.x) >= Math.abs(first.y) ? { x: 0, y: 1 } : { x: 1, y: 0 };
+  const left = { x: first.y, y: -first.x };
+  const sign = reading.x * left.x + reading.y * left.y;
+  const n = set.members.length;
+  // Where a box's side is too short to take the lanes at their gap, they draw
+  // closer all the way, as the direct way's parallel lanes do.
+  const widest = ((n - 1) / 2) * (set.arrangement === 'collapsed' ? 0 : set.gap);
+  const room = (face: Face, way: Point): number => {
+    const half = face.round ? face.width / 2 : (Math.abs(way.y) * face.width + Math.abs(way.x) * face.height) / 2;
+    return Math.max(0, half - Math.min(8, half * 0.3));
+  };
+  const lastWay = unit(trace[trace.length - 2]!, trace[trace.length - 1]!);
+  const scale = widest <= 0 ? 1 : Math.min(1, room(fa, first) / widest, room(fb, lastWay) / widest);
+  const gap = (set.arrangement === 'collapsed' ? 0 : set.gap) * scale;
+  const routes = new Map<LayoutEdge, Route>();
+  set.members.forEach((edge, k) => {
+    const lane = offsetLine(trace, (k - (n - 1) / 2) * gap * sign);
+    const last = lane.length - 1;
+    lane[0] = meetOutline(fa, lane[0]!, unit(lane[0]!, lane[1]!));
+    lane[last] = meetOutline(fb, lane[last]!, unit(lane[last - 1]!, lane[last]!));
+    // Meeting the box may shorten a first or last leg to nothing.
+    const kept = tidyCorners(lane);
+    const points = edge.from === set.a ? kept : [...kept].reverse();
+    routes.set(edge, { edge, start: points[0]!, pieces: points.slice(1).map((to) => ({ to })), points, legs: new Map(), stops: [] });
+  });
+  return routes;
+}
+
+/** A point moved along `way`, forward or back, the least distance that puts it on a face's outline; unmoved if that line misses the face. */
+function meetOutline(face: Face, at: Point, way: Point): Point {
+  const hits: number[] = [];
+  if (face.round) {
+    const c = centerOf(face);
+    const r = face.width / 2;
+    const fx = at.x - c.x;
+    const fy = at.y - c.y;
+    const b = fx * way.x + fy * way.y;
+    const disc = b * b - (fx * fx + fy * fy - r * r);
+    if (disc >= 0) hits.push(-b - Math.sqrt(disc), -b + Math.sqrt(disc));
+  } else {
+    const within = (value: number, low: number, size: number): boolean => value >= low - 0.5 && value <= low + size + 0.5;
+    for (const x of [face.x, face.x + face.width]) {
+      if (Math.abs(way.x) < 1e-9) continue;
+      const t = (x - at.x) / way.x;
+      if (within(at.y + way.y * t, face.y, face.height)) hits.push(t);
+    }
+    for (const y of [face.y, face.y + face.height]) {
+      if (Math.abs(way.y) < 1e-9) continue;
+      const t = (y - at.y) / way.y;
+      if (within(at.x + way.x * t, face.x, face.width)) hits.push(t);
+    }
+  }
+  if (hits.length === 0) return at;
+  const t = hits.reduce((best, one) => (Math.abs(one) < Math.abs(best) ? one : best));
+  return { x: at.x + way.x * t, y: at.y + way.y * t };
 }
 
 /** Where a ray from a point inside a face, heading `way`, leaves its outline. */
