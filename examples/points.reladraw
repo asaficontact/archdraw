@@ -1,0 +1,28 @@
+// Points and regions: a place said in words, worked out from named things, so
+// moving them moves it. Render with --guides to see the construction.
+
+node gw "Gateway"  height: 12
+
+// A fraction of the way along the side the direction faces.
+node users  "Users"   right of gw 1/4 down (gap: wide)
+node orders "Orders"  right of gw 3/4 down (gap: wide)
+
+// A named point, with a text of its own: above the dot unless it says which way.
+point split "by path" (below)  between gw and orders
+
+// Part against part: centers exactly 5 apart, as on a timeline.
+node v1 "v1"  center 5 below gw bottom-center
+node v2 "v2"  center 5 right of v1 center
+node v3 "v3"  center 5 right of v2 center
+
+// Where a line straight down from one thing meets one straight right from another.
+node tag "latest"  shape: none  on down from orders and right from v3
+
+// A region is drawn in front of the boxes it doesn't name and behind the ones it does.
+// Its text takes a title's words, and inside, the region makes room for it.
+region services "services" (inside top, align: left)  users top-left to orders bottom-right  padding: 1
+
+// A guide does everything but draw: a rail the versions hang from, and a line
+// shown only while working.
+guide region rail  v1 top-left to v3 top-right
+guide edge gw -> users

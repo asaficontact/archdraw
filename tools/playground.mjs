@@ -25,10 +25,11 @@ const template = join(root, 'tools', 'playground.html');
 const target = process.argv[2] ? resolvePath(process.argv[2]) : join(root, 'docs', 'index.html');
 
 /**
- * What the page is allowed to reach: the pipeline, what it needs to report an
- * error, and the line scanner behind the editor's syntax coloring.
+ * What the page is allowed to reach: the pipeline (`draw` for the findings its
+ * Check button lists), what it needs to report an error, and the line scanner
+ * behind the editor's syntax coloring.
  */
-const EXPOSED = ['compile', 'SourceError', 'highlightLine', 'THEMES', 'THEME_NAMES', 'DEFAULT_THEME'];
+const EXPOSED = ['compile', 'draw', 'SourceError', 'highlightLine', 'THEMES', 'THEME_NAMES', 'DEFAULT_THEME'];
 
 // The examples the page offers, in the order its picker lists them. Every
 // construct in the language is demonstrated by one of these files and by nothing
@@ -45,21 +46,24 @@ const EXPOSED = ['compile', 'SourceError', 'highlightLine', 'THEMES', 'THEME_NAM
 const OFFERED = [
   ['arch', 'architecture', "A home network's file sync and backups, redrawn from a draw.io diagram."],
   ['regions', 'beside a group', 'A node placed against several others at once.'],
-  ['gaps', 'gap sizes', 'Tight and wide gaps, and which one wins when both ends ask.'],
-  ['snug', 'as close as allowed', 'A node sits as close to what it names as its placements allow.'],
-  ['separation', 'no overlaps', 'Nodes never overlap, even where nothing says which way to move.'],
+  ['points', 'points and regions', 'Places said in words and worked out from named things; tick Guides to see how.'],
+  ['gaps', 'gap sizes', 'Tight, wide and no gap, each on its own placement; a node has none of its own.'],
+  ['snug', 'exactly as far', 'A gap is the distance asked for, not a minimum.'],
   ['contents', 'inside a container', 'How children line up in a container wider than they are.'],
   ['shapes', 'shapes', 'The outlines a node can be drawn with, and the pictures it can be drawn as.'],
   ['icons', 'icons', 'The seven icons, and the ways to use one.'],
   ['overlays', 'sides and corners', 'Nodes placed against part of another node: a side, a corner, or its text.'],
   ['frames', "on the parent's edge", "A child placed on its own container's side or corner."],
-  ['text', 'edge labels', "An edge's text widens the gap it crosses."],
-  ['lanes', 'nested edges', 'Edges between the same two sides nest instead of crossing.'],
-  ['coincident', 'parallel edges', 'Several edges between the same two nodes stay parallel.'],
-  ['corridors', 'through a gap', 'Edges sent through the gap between two named nodes.'],
-  ['overhang', 'outside the nodes', 'Edges that run past the nodes, and the page grows to hold them.'],
-  ['routing', 'going round boxes', 'Every routing bug reported so far, each line now going the shortest way round.'],
-  ['lines', 'line styles', 'Curved, square and straight lines, dashes, and how crossings are drawn.'],
+  ['text', 'room for labels', "A line's text takes no room of its own; the gap it sits in is stated."],
+  ['lanes', 'side by side', 'Lines between the same two sides fan out as copies, and copies never cross.'],
+  ['coincident', 'parallel edges', 'Several lines between the same two nodes: copies, or a bundle that bows them apart.'],
+  ['bundles', 'bundles', 'Lines that travel together, each in its own lane, in one order across.'],
+  ['corridors', 'through a gap', 'Lines sent through the point between two named nodes with via:.'],
+  ['passes', 'saying where a line goes', 'Sides and points a line passes, named with via:.'],
+  ['overhang', 'outside the nodes', 'Lines that run past the nodes, and the page grows to hold them.'],
+  ['routing', 'going round boxes', 'Every routing bug reported so far, each line now stating its course.'],
+  ['lines', 'line styles', 'Straight, square and curved lines, dashes, and how crossings are drawn.'],
+  ['linetexts', 'texts on lines', "Where a line's text sits: the middle, a fraction along, beside, or a gap from an end."],
   ['marks', 'line ends', 'Arrowheads, dots, diamonds and bars at either end of a line, or none.'],
 ];
 
@@ -154,7 +158,12 @@ function fill(text, marker, replacement) {
   if (!text.includes(marker)) throw new Error(`${template} has no ${marker} to replace`);
   // A literal </script> in the inlined text would close the tag early. Nothing
   // emits one today; escaping it costs nothing and removes the whole class.
-  return text.replace(marker, `<script>\n${replacement.replace(/<\/script/gi, '<\\/script')}\n</script>`);
+  // A function, not a string, as the replacement: a string's `$&`, `` $` ``
+  // and `$'` are expanded, and the bundle is code full of them. `$&` in the icon
+  // code's regex escape became the marker itself, and a `` $` `` once pasted
+  // the whole top of the page into the middle of the script.
+  const script = `<script>\n${replacement.replace(/<\/script/gi, '<\\/script')}\n</script>`;
+  return text.replace(marker, () => script);
 }
 
 const catalogueScript = `globalThis.reladrawExamples = ${JSON.stringify(catalogue)};`;

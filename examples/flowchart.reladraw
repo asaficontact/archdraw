@@ -1,0 +1,23 @@
+// An agent's work loop as a flowchart, from GitHub issue #18. A decision is a
+// diamond, the ends are pills, a step drawn as its own chart is a subprocess,
+// and a wait is the standard's delay, so the chart reads with no legend.
+
+node start   "start"                           shape: pill
+node read    "read the request"                below start
+node valid   "valid?"                          below read  shape: diamond
+node handle  "handle the request"              below valid (gap: wide)  shape: flow-subprocess
+node review  "wait for review"                 below handle  shape: flow-delay
+node report  "report"                          left of review (gap: wide)  shape: flow-document
+node reject  "reject / with a reason"          right of valid (gap: wide)
+node done    "end"                             below review (gap: wide)  shape: pill
+
+edge start -> read
+edge read -> valid
+// Out of the diamond's points: a side of a shape is the stretch of its
+// outline between the lines from its middle to two corners of its box.
+edge valid -> handle "yes"
+edge valid -> reject "no"  from: right  to: left
+edge handle -> review
+edge review -> report  from: left  to: right
+edge review -> done
+edge reject -> done  from: bottom  to: right  line: (path: square)
