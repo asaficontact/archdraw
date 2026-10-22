@@ -10,20 +10,20 @@ style dim    text: (color: theme-muted)
 
 node app "archdraw server  [dim]Node · Hono · one process[/dim]"  style: zone
 node app.ui "UI / [dim]React: canvas, inbox, chat[/dim]"  style: ours
-node app.api "API + gate / [dim]token, tailnet or local[/dim]"  right of app.ui  style: ours
+node app.api "API + gate / [dim]token, tailnet or local[/dim]"  right of app.ui (gap: 6)  style: ours
 node app.engine "Engine / [dim]reladraw fork: parse, layout, SVG[/dim]"  below app.ui  style: ours
-node app.lib "Library / [dim]clone, worktree, commit, push[/dim]"  right of app.engine  level with app.engine  style: ours
+node app.lib "Library / [dim]clone, worktree, commit, push[/dim]"  right of app.engine (gap: 12)  even with app.engine  style: ours
 node app.agent "Agent / [dim]skills · read-only tools · propose[/dim]"  below app.engine  style: ours
-node app.sync "Hourly sync / [dim]triage, then draft[/dim]"  right of app.agent  style: job
+node app.sync "Hourly sync / [dim]triage, then draft[/dim]"  right of app.agent (gap: 12)  style: job
 
-node desktop "Desktop shell / [dim]Electron: window, tray, keychain[/dim]"  left of app (gap: wide)  top level with app  style: ours
+node desktop "Desktop shell / [dim]Electron: window, tray, keychain[/dim]"  left of app (gap: 14)  top even with app  style: ours
 
-node you "You / [dim]browser or desktop app[/dim]"  right of app (gap: wide)  level with app.ui  icon: laptop
-node repo "Your repo / [dim].archdraw/ on main · archdraw/update[/dim]"  right of app (gap: wide)  level with app.lib  style: store
-node model "AI provider / [dim]your key: OpenAI, Anthropic, Google, OpenRouter[/dim]"  below app (gap: wide)  left level with app  style: ext
+node you "You / [dim]browser or desktop app[/dim]"  right of app (gap: 14)  even with app.ui  icon: laptop
+node repo "Your repo / [dim].archdraw/ on main · archdraw/update[/dim]"  right of app (gap: 14)  even with app.lib  style: store
+node model "AI provider / [dim]your key: OpenAI, Anthropic, Google, OpenRouter[/dim]"  below app (gap: wide)  left even with app  style: ext
 node upstream "reladraw / [dim]upstream engine[/dim]"  below desktop (gap: wide)  style: ext
 
-edge you -> app.api  "open"  from: left  to: right
+edge you -> app.api  "open" (at: 1/4)  from: left  to: right
 edge desktop -> app  "starts in-process"  from: right  to: left
 edge app.ui -> app.api  "JSON"  from: right  to: left
 edge app.api -> app.lib  "read · save"  from: bottom  to: top
