@@ -14,7 +14,7 @@ node app.api "API + gate / [dim]token, tailnet or local[/dim]"  right of app.ui 
 node app.engine "Engine / [dim]reladraw fork: parse, layout, SVG[/dim]"  below app.ui  style: ours
 node app.lib "Library / [dim]clone, worktree, commit, push[/dim]"  right of app.engine (gap: 12)  even with app.engine  style: ours
 node app.agent "Agent / [dim]skills · read-only tools · propose[/dim]"  below app.engine  style: ours
-node app.sync "Hourly sync / [dim]triage, then draft[/dim]"  right of app.agent (gap: 12)  style: job
+node app.sync "Hourly sync / [dim]triage, then draft[/dim]"  right of app.agent (gap: 14)  style: job
 
 node desktop "Desktop shell / [dim]Electron: window, tray, keychain[/dim]"  left of app (gap: 14)  top even with app  style: ours
 
