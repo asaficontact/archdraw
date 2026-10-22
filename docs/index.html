@@ -671,7 +671,14 @@
 
     <main>
       <section>
-        <div class="bar"><h2>Source</h2></div>
+        <div class="bar">
+          <h2>Source</h2>
+          <div>
+            <button id="open" type="button" title="Open a .reladraw file into the source">Open…</button>
+            <button id="save" type="button" title="Save the source as a .reladraw file">Save…</button>
+            <input id="file" type="file" accept=".reladraw,text/plain" hidden />
+          </div>
+        </div>
         <div class="editor">
           <pre id="highlight" aria-hidden="true"></pre>
           <textarea id="source" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
@@ -15441,6 +15448,9 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
         var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
         var download = document.getElementById('download');
+        var openButton = document.getElementById('open');
+        var saveButton = document.getElementById('save');
+        var file = document.getElementById('file');
         var guides = document.getElementById('guides');
         var checkButton = document.getElementById('check');
         var findings = document.getElementById('findings');
@@ -16007,6 +16017,102 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
             URL.revokeObjectURL(url);
           }, 0);
         });
+
+        /* ---- the source as a file ---- */
+
+        // The text as last saved or opened, and the file's name, so opening
+        // another file only asks first when there is something to lose, and a
+        // save suggests the name it came from. Both are stored, or a reload
+        // would make every saved diagram look unsaved.
+        var KEPT = 'reladraw.kept';
+        var NAME = 'reladraw.name';
+        var kept = null;
+        var fileName = 'diagram.reladraw';
+        try {
+          kept = localStorage.getItem(KEPT);
+          fileName = localStorage.getItem(NAME) || fileName;
+        } catch (e) {
+          /* as above */
+        }
+
+        function keep(text, name) {
+          kept = text;
+          fileName = name;
+          try {
+            localStorage.setItem(KEPT, text);
+            localStorage.setItem(NAME, name);
+          } catch (e) {
+            /* as above */
+          }
+        }
+
+        // An example opened and left alone is not work: it is one click away.
+        function unsaved() {
+          return source.value !== kept && current === null;
+        }
+
+        openButton.addEventListener('click', function () {
+          if (unsaved() && !confirm('Your edits have not been saved to a file. Open another file in their place?')) return;
+          file.value = '';
+          file.click();
+        });
+
+        file.addEventListener('change', function () {
+          var picked = file.files[0];
+          if (!picked) return;
+          picked.text().then(function (text) {
+            load(text, named(text));
+            keep(text, picked.name);
+            source.focus();
+            source.setSelectionRange(0, 0);
+            source.scrollTop = 0;
+          });
+        });
+
+        // Chrome and Edge ask for the name and the folder; elsewhere the file
+        // goes where the browser puts downloads, under the suggested name.
+        saveButton.addEventListener('click', function () {
+          var text = source.value;
+          if (!window.showSaveFilePicker) {
+            saveAsDownload(text);
+            return;
+          }
+          window
+            .showSaveFilePicker({
+              suggestedName: fileName,
+              types: [{ description: 'reladraw source', accept: { 'text/plain': ['.reladraw'] } }],
+            })
+            .then(function (handle) {
+              return handle.createWritable().then(function (out) {
+                return out
+                  .write(text)
+                  .then(function () {
+                    return out.close();
+                  })
+                  .then(function () {
+                    keep(text, handle.name);
+                    flash(saveButton, 'Saved');
+                  });
+              });
+            })
+            .catch(function (e) {
+              if (e && e.name === 'AbortError') return;
+              // Refused outright, as inside a cross-origin frame.
+              saveAsDownload(text);
+            });
+        });
+
+        function saveAsDownload(text) {
+          var url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = fileName;
+          link.click();
+          setTimeout(function () {
+            URL.revokeObjectURL(url);
+          }, 0);
+          keep(text, fileName);
+        }
 
         zoom.addEventListener('click', function () {
           var actual = diagram.classList.toggle('actual');

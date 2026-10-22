@@ -1228,6 +1228,10 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
+**Unreleased**
+
+- **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
+
 **0.18.0**
 
 - **More shapes, for flowcharts and the rest** (#18): `diamond`, `pill`, `parallelogram`, `hexagon`, `trapezoid`, `triangle` and `cylinder`, named for how they look, and the flowchart standard's shapes that have no geometric name as `flow-` and what they mean, from `flow-subprocess` and `flow-delay` to `flow-collate`. A shape's settings go in a bracket after its name: `shape: parallelogram (slant: 2, lean: left)`, `shape: cylinder (lying)`, `shape: document (fold: 1.5)`.
