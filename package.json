@@ -1,6 +1,6 @@
 {
   "name": "reladraw",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "description": "A diagram language where you say where things go.",
   "type": "module",
   "bin": {
@@ -36,7 +36,7 @@
     "prepublishOnly": "npm run build",
     "preversion": "./dev.sh check-version \"$npm_new_version\"",
     "dev": "tsc --watch",
-    "example": "npm run build && node dist/cli.js examples/arch.reladraw -o examples/out/arch.svg"
+    "example": "npm run build && node dist/cli.js render examples/arch.reladraw -o examples/out/arch.svg"
   },
   "engines": {
     "node": ">=18"
