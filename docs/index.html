@@ -7628,7 +7628,7 @@ function crossingCircle(trace, node, face) {
     const center = centerOf(face);
     const polygon = face.outline;
     const inside = polygon
-        ? (p) => insidePolygon(polygon, p) && clearOf(polygon, p, 1)
+        ? (p) => insideOutline(polygon, p) && clearOf(polygon, p, 1)
         : (p) => Math.hypot(p.x - center.x, p.y - center.y) < radius;
     const sideAt = (p) => {
         const dx = p.x - center.x;
@@ -7942,7 +7942,7 @@ function textOverflows(layout) {
             // Any other outline than a box's: the text spills where it passes the outline.
             const { outline, look } = node.body;
             const corners = [0, 0.5, 1].flatMap((fx) => [0, 0.5, 1].map((fy) => ({ x: node.x + text.x + text.width * fx, y: node.y + text.y + text.height * fy })));
-            if (corners.every((p) => insidePolygon(face.outline, p)))
+            if (corners.every((p) => insideOutline(face.outline, p)))
                 continue;
             const needs = sizeFor(outline, look, text.width, text.height);
             const wider = Math.max(0, needs.width - node.width);
@@ -12530,7 +12530,7 @@ function patchSvg(patch, beneath, theme) {
     const { x, y } = patch.center;
     const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
         if (fill.polygon)
-            return insidePolygon(fill.polygon, { x, y });
+            return insideOutline(fill.polygon, { x, y });
         if (!fill.round)
             return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
         const r = Math.min(fill.width, fill.height) / 2;

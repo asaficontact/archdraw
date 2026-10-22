@@ -13,7 +13,7 @@ import {
 import type { Attrs, Mark, NodeCorners } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
-import { insideOutline as insidePolygon, isBoxy, isRound, placePath, shapeOf, SUBPROCESS_INSET, type ShapeLook } from './outline.js';
+import { insideOutline,isBoxy, isRound, placePath, shapeOf, SUBPROCESS_INSET, type ShapeLook } from './outline.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, overlapFill, regionTint, textOnFill, themeColor, type Theme } from './themes.js';
@@ -308,7 +308,7 @@ function patchSvg(patch: Patch, beneath: Drawn[], theme: Theme): string {
   if (patch.fill !== undefined) return `  <rect ${rect} fill="${themeColor(patch.fill, theme)}"/>`;
   const { x, y } = patch.center;
   const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
-    if (fill.polygon) return insidePolygon(fill.polygon, { x, y });
+    if (fill.polygon) return insideOutline(fill.polygon, { x, y });
     if (!fill.round) return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
     const r = Math.min(fill.width, fill.height) / 2;
     return Math.hypot(x - (fill.x + fill.width / 2), y - (fill.y + fill.height / 2)) <= r;

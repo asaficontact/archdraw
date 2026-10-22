@@ -9,8 +9,9 @@
 // module here — static single-line imports at the top, `export` on top-level
 // declarations, no defaults, no cycles — so dropping the import lines and the
 // `export` keywords and joining the files in dependency order gives one scope
-// that behaves identically. The one thing that would break it silently is two
-// modules declaring the same top-level name, so that is checked and refused.
+// that behaves identically. Two things would break it silently, so both are
+// checked and refused: two modules declaring the same top-level name, and an
+// import that renames (`import { a as b }`), whose `b` vanishes with the line.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
@@ -96,6 +97,12 @@ function order(entry) {
     // would otherwise be left out of the bundle with no complaint until the
     // page called something that was not there.
     for (const match of [...source.matchAll(IMPORT), ...source.matchAll(REEXPORT)]) {
+      // Types are erased by now, so any rename left here is a value. Once the
+      // import line is dropped its new name is never declared, and the page
+      // throws "insidePolygon is not defined" only when a diagram reaches it.
+      if (/\{[^}]*\bas\b/.test(match[0])) {
+        throw new Error(`${name} renames an import (${match[0]}) — flat concatenation drops the new name; use the original`);
+      }
       visit(match[1].replace(/^\.\//, ''));
     }
     open.delete(name);
