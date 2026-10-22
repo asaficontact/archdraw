@@ -560,7 +560,9 @@ case "$cmd" in
     (
       cd "$t/probe"
       npm init -y >/dev/null 2>&1
-      npm install "$t"/reladraw-*.tgz >/dev/null 2>&1
+      # No audit: the package has no dependencies to audit, and the audit's
+      # request once hung for minutes with the registry otherwise answering.
+      npm install --no-audit --no-fund "$t"/reladraw-*.tgz >/dev/null 2>&1
       ./node_modules/.bin/reladraw render probe.reladraw -o probe.svg >/dev/null 2>&1
     )
     if [ -s "$t/probe/probe.svg" ]; then
