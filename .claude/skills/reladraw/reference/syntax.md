@@ -1,4 +1,4 @@
-# Syntax reference — 0.17.1
+# Syntax reference — 0.18.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1228,7 +1228,7 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.18.0**
 
 - **More shapes, for flowcharts and the rest** (#18): `diamond`, `pill`, `parallelogram`, `hexagon`, `trapezoid`, `triangle` and `cylinder`, named for how they look, and the flowchart standard's shapes that have no geometric name as `flow-` and what they mean, from `flow-subprocess` and `flow-delay` to `flow-collate`. A shape's settings go in a bracket after its name: `shape: parallelogram (slant: 2, lean: left)`, `shape: cylinder (lying)`, `shape: document (fold: 1.5)`.
 - **A shape grows to hold its text at its middle**, and a stated `width:` and `height:` stretch it. Its sides are the stretches of outline round its points, so `from: right` leaves a diamond from its right point.
