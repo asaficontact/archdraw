@@ -62,7 +62,7 @@ node <name> ["<text>" [(<text settings>)]] [<placement> | <attribute>] ...
 
 Leave the text out and the node shows its name (`node parser` reads "parser"). Write `""` for a deliberately blank node. Inside a text, ` / ` (a slash with a space on each side) is a line break; `TCP/IP` and URLs survive.
 
-The body is `shape: rectangle | document | circle | none` (`none` is bare text, for notes and captions) or `icon: disk | desktop | laptop | package | cubes | cube | database`, a picture with no box. `badge: <icon>` puts a picture beside the text as part of the label. A picture outside the set is declared with `icon <name>` and SVG between `"""` marks; prefer the built-ins.
+The body is `shape: rectangle | document | circle | diamond | pill | parallelogram | hexagon | trapezoid | triangle | cylinder | none` (`none` is bare text, for notes and captions; a flowchart shape with no geometric name is `flow-` and its meaning, such as `flow-subprocess` or `flow-delay`; settings follow in a bracket, `shape: triangle (aim: up)`) or `icon: disk | desktop | laptop | package | cubes | cube | database`, a picture with no box. `badge: <icon>` puts a picture beside the text as part of the label. A picture outside the set is declared with `icon <name>` and SVG between `"""` marks; prefer the built-ins.
 
 ```
 node dump  "nightly dump"  shape: document
@@ -290,14 +290,44 @@ node <name> ["<text>" [(<text settings>)]] [<placement> | <attribute>] ...
 
 Every node has one body, the thing drawn where it is, named by one of two keys.
 
-`shape:` is the outline:
+`shape:` is the outline. A shape geometry has a word for is named by it, and takes settings in a bracket after its name for what its box doesn't decide: an amount, in the file's unit, and a direction, whose first word below is the default.
+
+| shape | draws | its bracket |
+|---|---|---|
+| `rectangle` | the plain box, its corners rounded unless `corners: sharp`; the default | |
+| `document` | the box with its top-right corner folded, for an artifact rather than a process; its other corners follow `corners:` | `fold:` |
+| `circle` | a circle sized to hold its text; given a `width:` and a `height:` that differ, an ellipse | |
+| `diamond` | a diamond, a flowchart's decision | |
+| `pill` | a box with both ends round, a flowchart's start or end | |
+| `parallelogram` | a slanted box, a flowchart's input or output | `slant:`, `lean: right \| left` |
+| `hexagon` | a box with pointed ends, a flowchart's preparation | `point:` |
+| `trapezoid` | a box narrower at one end, a flowchart's manual operation | `taper:`, `narrow: bottom \| top` |
+| `triangle` | a triangle, a flowchart's merge (down) or extract (up) | `aim: down \| up \| left \| right` |
+| `cylinder` | a cylinder standing, or `lying` on its side, for stored data | `cap:`, `lying` |
+| `none` | no outline, fill or padding: bare text, or an invisible container | |
+
+```
+node in    "read input"  shape: parallelogram (slant: 2, lean: left)
+node queue "queue"       shape: cylinder (cap: 1.5, lying)  right of in
+node flat  "valid?"      shape: diamond  width: 20  height: 5  below in
+```
+
+A flowchart shape geometry has no word for is named `flow-` and what it means, and drawn the way the flowchart standard draws it, with no settings:
 
 | shape | draws |
 |---|---|
-| `rectangle` | the plain box, its corners rounded unless `corners: sharp`; the default |
-| `document` | the box with its top-right corner folded, for an artifact rather than a process; its other corners follow `corners:` |
-| `circle` | a circle sized to hold its text, always round |
-| `none` | no outline, fill or padding: bare text, or an invisible container |
+| `flow-subprocess` | a step drawn as its own chart: a box with a bar inside each side |
+| `flow-document` | a document as the standard draws it, its bottom wavy |
+| `flow-off-page` | continued on another page: a box pointed at the bottom |
+| `flow-delay` | a delay or a wait: a box with its right end round |
+| `flow-manual-input` | typed in by hand: a box whose top slopes |
+| `flow-stored-data` | the standard's other storage: curved ends, the right one hollow |
+| `flow-loop-start`, `flow-loop-end` | the start and end of a loop: a box with two corners cut, at the top or the bottom |
+| `flow-card` | a punched card: a box with its top-left corner cut |
+| `flow-display` | a screen: pointed on the left, round on the right |
+| `flow-tape` | magnetic tape: a circle with a tail |
+| `flow-punched-tape` | paper tape: wavy top and bottom |
+| `flow-collate` | collate: two triangles point to point, its text on a patch where they meet |
 
 `icon:` is a picture the node is drawn *as*, with no box:
 
@@ -317,11 +347,15 @@ node aside "Written by a nightly cron job." (wrap: 30)  shape: none  below dump 
 node svc  icon: cube  right of dump
 ```
 
-Writing both keys is an error naming both. An unknown name is refused with the whole set. A name says what a thing is, never what the picture looks like: `document`, not `folded-corner`. The exception is a picture with no single meaning, such as `circle` or `cube`.
+Writing both keys is an error naming both. An unknown name is refused with the whole set, and so is a setting the shape doesn't take. A shape is named for how it looks, `diamond` and never `decision`, and no picture has two names. An icon is named for what it is: `package`, not `open-box`.
 
-A picture can't contain anything. A `shape: none` node with children is an invisible container ([Containers](#containers)). A circle can hold other nodes, centered in it. A side of a circle is the quarter of it about that compass point, so `from: right` means the same on every shape; several line ends on one side spread round that arc, each meeting the circle square on.
+**Size and text.** A shape grows until its text, with its padding, fits at the shape's middle, the center of its area: a diamond is twice the padded text each way, and a triangle's text sits a third of the way from its base. A stated `width:` and `height:` stretch the shape to fill them, which is how a diamond is made flatter; a text that no longer fits is drawn as it is and reported as `text-overflow`. The text-position words of a [node's text](#where-it-sits), such as `(inside bottom)`, move it off the middle. `flow-collate`'s text sits on a patch of its own fill where its two triangles meet; `(fill: none)` in the text's bracket draws it without one.
 
-**Corners.** `corners: sharp` draws a box's corners square, and `corners: rounded`, the default, draws them as they always were. It is the same word and values as a line's `corners:`. It reaches every outline with corners: a rectangle, a container, and a document's three round corners, whose fold stays as it is. A circle has none, so `corners:` written on a circle is refused; from a style or a default it lands only on the nodes with corners. A picture and bare text have no outline, so they refuse it too. Like a color, it never moves anything.
+**Sides.** A side of a shape is the stretch of its outline between the lines from its middle to two corners of its box: a rectangle's sides, a circle's quarters, and on a diamond the stretch round each point. So `from: right` leaves a diamond from its right point, as a flowchart's "no" does, and means the same on every shape. A corner such as `top-right` is where the line from the middle to that corner of the box meets the outline: on a circle halfway between its sides, on a diamond the middle of an edge. Several line ends on one side spread along it.
+
+A picture can't contain anything. A `shape: none` node with children is an invisible container ([Containers](#containers)). A circle can hold other nodes, centered in it; the other shapes don't hold nodes yet, and one with children is refused.
+
+**Corners.** `corners: sharp` draws a box's corners square, and `corners: rounded`, the default, draws them as they always were. It is the same word and values as a line's `corners:`. It reaches every outline with corners that round: a rectangle, a container, a `flow-subprocess`, and a document's three round corners, whose fold stays as it is. Every other shape is drawn with its points sharp, so `corners:` written on one is refused; from a style or a default it lands only on the nodes it can. A picture and bare text have no outline, so they refuse it too. Like a color, it never moves anything.
 
 ```
 style plain  corners: sharp
@@ -510,7 +544,7 @@ left-center   center          right-center
 bottom-left   bottom-center   bottom-right
 ```
 
-**A side is a segment and a point is a point.** Bare `top` is the whole side; `top-center` is the one point halfway along it, which is why every midpoint carries `-center`. Naming a side leaves the other axis free. On a circle, a corner is the point on the circle halfway between its two sides.
+**A side is a segment and a point is a point.** Bare `top` is the whole side; `top-center` is the one point halfway along it, which is why every midpoint carries `-center`. Naming a side leaves the other axis free. On any shape but a box, a point is where the line from the shape's middle toward that point of its box meets the outline ([Sides](#the-body)): on a circle a corner is halfway between its two sides.
 
 A part is written as the name, then the part: `b top`, `e bottom-left`, `hub text`.
 
@@ -774,6 +808,7 @@ node aside "Written nightly." (size: small, wrap: 30)  shape: none
 | `size` | `small`, `normal` or `large`; a multiple of normal (`1.2`); or pixels (`16px`) |
 | `wrap` | a count of characters to fold at, on top of ` / ` |
 | `align` | how the text's own lines range: `left`, `center`, `right`, or where along a side for a title (below) |
+| `fill` | on a `flow-collate` only, the patch behind its text: a color, or `none` |
 
 `small` is 21/25 of normal and `large` the same step the other way. The names are preferred: bundled into a style, a size says *why* one text is smaller. `wrap:` is a character count, not a distance: it is how a text is made narrow and tall to sit beside something.
 
@@ -1325,7 +1360,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `badge` | ✓ | | | | a picture joined to the text |
 | `cards` | ✓ | | | | a deck's cards, when they are only texts, front first |
 | `fill`, `border` | ✓ | | | | colors |
-| `corners` | ✓ | | | | `sharp` or `rounded`; not on a circle. A line's go in `line: (…)` |
+| `corners` | ✓ | | | | `sharp` or `rounded`; only on a box's outline. A line's go in `line: (…)` |
 | `text` | ✓ | ✓ | ✓ | ✓ | in a style only; on a statement, the bracket after the text |
 | `layout` | ✓ | | ✓ | | how the children are arranged |
 | `gather-children` | ✓ | | ✓ | | where the children sit in spare room |
@@ -1378,6 +1413,12 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- **More shapes, for flowcharts and the rest** (#18): `diamond`, `pill`, `parallelogram`, `hexagon`, `trapezoid`, `triangle` and `cylinder`, named for how they look, and the flowchart standard's shapes that have no geometric name as `flow-` and what they mean, from `flow-subprocess` and `flow-delay` to `flow-collate`. A shape's settings go in a bracket after its name: `shape: parallelogram (slant: 2, lean: left)`, `shape: cylinder (lying)`, `shape: document (fold: 1.5)`.
+- **A shape grows to hold its text at its middle**, and a stated `width:` and `height:` stretch it. Its sides are the stretches of outline round its points, so `from: right` leaves a diamond from its right point.
+- **A circle given a `width:` and a `height:` that differ is an ellipse.** It used to stay round and say nothing about the height.
 
 **0.17.1**
 

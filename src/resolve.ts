@@ -35,6 +35,7 @@ import {
 import { SourceError } from './errors.js';
 import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
+import { isBoxy, middleOf, sizeFor, SUBPROCESS_INSET } from './outline.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
 import { checkOpacity, gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace, type Venn } from './place.js';
@@ -80,6 +81,11 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
     }
     pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line);
   }
+  // A subprocess's bars stand inside its sides, so its text keeps its padding clear of them.
+  if (node.body.kind === 'shape' && node.body.outline === 'flow-subprocess') {
+    pad.left += SUBPROCESS_INSET;
+    pad.right += SUBPROCESS_INSET;
+  }
   node.textSide = 'center';
   const measures = {
     lineHeight,
@@ -112,6 +118,29 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
     return {
       natural: { width: side, height: side },
       textBox: { x: (side - textWidth) / 2, y: (side - textHeight) / 2, width: textWidth, height: textHeight },
+      hasText,
+      padding,
+      pad,
+      ...measures,
+      title,
+      circle,
+    };
+  }
+  if (node.body.kind === 'shape' && !circle && !isBoxy(node.body.outline)) {
+    if (node.children.length > 0) {
+      throw new SourceError(
+        `"${node.name}" is a ${node.body.outline} and has children. Only a rectangle, a document or a circle holds other nodes so far`,
+        node.line,
+      );
+    }
+    // Grown until the padded text fits at the shape's middle: a diamond twice
+    // the block each way, a triangle's text a third of the way from its base.
+    const block = { width: textWidth + pad.left + pad.right, height: textHeight + pad.top + pad.bottom };
+    const natural = sizeFor(node.body.outline, node.body.look, block.width, block.height);
+    const middle = middleOf(node.body.outline, node.body.look, natural.width, natural.height);
+    return {
+      natural,
+      textBox: { x: middle.x - textWidth / 2, y: middle.y - textHeight / 2, width: textWidth, height: textHeight },
       hasText,
       padding,
       pad,
@@ -736,6 +765,8 @@ function collectDefaults(
 function over(base: Attrs, top: Attrs): Attrs {
   if (top['shape'] === undefined && top['icon'] === undefined) return { ...base, ...top };
   const { shape: _shape, icon: _icon, ...rest } = base;
+  // A shape's settings belong to the shape they were written with.
+  for (const key of Object.keys(rest)) if (key.startsWith('shape.')) delete rest[key];
   return { ...rest, ...top };
 }
 
@@ -841,6 +872,15 @@ function buildTree(
           ...(stmt.attrs['heading.align'] !== undefined ? { align: stmt.attrs['heading.align'] } : {}),
         }
       : { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    // The patch behind a text is a line's text's, and flow-collate's, whose
+    // text sits on the point where its two halves meet.
+    if (stmt.textAttrs['fill'] !== undefined && !(body.kind === 'shape' && body.outline === 'flow-collate')) {
+      throw new SourceError(
+        `"${stmt.name}" has fill: in its text's brackets, which is the patch behind a text on a line or on a flow-collate — ` +
+          'a box\'s own color is fill: outside the brackets',
+        stmt.line,
+      );
+    }
     // A card's text sits at its top left, where it shows above the card in
     // front of it, unless it says where.
     const deck = byName.get(stmt.name.slice(0, Math.max(stmt.name.lastIndexOf('.'), 0)));
@@ -1314,10 +1354,13 @@ function cornersOf(node: LayoutNode, value: string | undefined, written: boolean
       node.line,
     );
   }
-  if (written && node.body.outline === 'circle') {
+  if (!isBoxy(node.body.outline)) {
+    // A circle has no corners, and a diamond's or a hexagon's are drawn as
+    // points; only a box's are rounded. From a style it lands where it can.
+    if (!written) return NODE_CORNERS[0];
     throw new SourceError(
-      `"${node.name}" is a circle and has corners: ${value}. A circle has no corners to make ${value} — ` +
-        '`corners:` takes a `rectangle` or a `document`',
+      `"${node.name}" is a ${node.body.outline} and has corners: ${value}. Only a box's corners are rounded or sharp — ` +
+        '`corners:` takes a `rectangle`, a `document` or a `flow-subprocess`',
       node.line,
     );
   }

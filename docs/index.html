@@ -1749,6 +1749,572 @@ function textStyleFor(attrs, line, fallbackAlign = 'start', fallbackAt = 'top-le
     };
 }
 
+// ---- outline.js ----
+/**
+ * The geometry of every outline `shape:` names: where its edge runs, where its
+ * middle is, and how big it grows to hold its text.
+ *
+ * One place knows each shape, and the resolver, the line planner, the checks
+ * and the renderer all ask it, so they cannot disagree about where a diamond's
+ * edge is.
+ *
+ * A shape stretches to fill its box. What the box doesn't decide is at most one
+ * amount and one direction (a parallelogram's slant and which way it leans),
+ * and those are the settings in the shape's bracket. Amounts are fixed
+ * distances, not fractions of the box, as the document's fold always was.
+ *
+ * The rectangle-like outlines (`rectangle`, `document`, `flow-subprocess`) and
+ * a round `circle` keep the exact geometry they always had; every other
+ * outline is worked with as a polygon, its curves sampled finely enough that a
+ * line meeting one lands on the drawn curve to within a fraction of a pixel.
+ */
+
+
+/**
+ * The settings each shape takes in its bracket, by name. A shape not listed
+ * takes none. The first word of a direction is the default.
+ */
+const SHAPE_SETTINGS = {
+    document: { fold: 'distance' },
+    parallelogram: { slant: 'distance', lean: ['right', 'left'] },
+    hexagon: { point: 'distance' },
+    trapezoid: { taper: 'distance', narrow: ['bottom', 'top'] },
+    triangle: { aim: ['down', 'up', 'left', 'right'] },
+    cylinder: { cap: 'distance', lying: 'flag' },
+};
+/** Each amount's default in pixels, the settings' and those the flow- shapes fix. A document's fold is the renderer's `FOLD`. */
+const SHAPE_DEFAULTS = {
+    slant: 18,
+    point: 18,
+    taper: 18,
+    cap: 9,
+    inset: 10,
+    wave: 7,
+    cut: 14,
+    slope: 16,
+    curve: 12,
+    offPage: 18,
+    tail: 16,
+};
+/**
+ * Read a shape's bracket, refusing a setting the shape doesn't take and a
+ * value that isn't one. `written` holds the dotted keys as stored, `shape.slant`.
+ */
+function readShapeLook(outline, written, subject, line) {
+    const takes = SHAPE_SETTINGS[outline] ?? {};
+    const look = {};
+    for (const [key, value] of Object.entries(written)) {
+        const kind = takes[key];
+        if (kind === undefined) {
+            const names = Object.keys(takes);
+            throw new SourceError(`${subject}: a ${outline} has no "${key}" setting — ` +
+                (names.length === 0 ? `\`shape: ${outline}\` takes no settings` : `it takes ${names.join(', ')}`), line);
+        }
+        if (kind === 'flag') {
+            if (value !== 'true')
+                throw new SourceError(`${subject}: "${key}" is a word on its own, written without a value: \`shape: ${outline} (${key})\``, line);
+            look[key] = true;
+            continue;
+        }
+        if (kind === 'distance') {
+            look[key] = readDistance(value, `${subject} ${key}:`, line);
+            continue;
+        }
+        if (!kind.includes(value)) {
+            throw new SourceError(`${subject}: "${key}: ${value}" is not a way a ${outline} can go — use ${kind.join(', ')}`, line);
+        }
+        look[key] = value;
+    }
+    return look;
+}
+function readDistance(written, subject, line) {
+    if (/^\d*\.?\d+$/.test(written))
+        return Number(written) * UNIT;
+    const pixels = /^(\d*\.?\d+)px$/.exec(written);
+    if (pixels)
+        return Number(pixels[1]);
+    throw new SourceError(`${subject} "${written}" is not a distance — write a number in the file's unit, or pixels such as 12px`, line);
+}
+/** How far inside each side a subprocess's bars stand. */
+const SUBPROCESS_INSET = SHAPE_DEFAULTS.inset;
+/** The outlines handled as a plain rectangle by everything but the renderer. */
+const BOXY = new Set(['rectangle', 'document', 'flow-subprocess']);
+/** Whether an outline is a rectangle as far as placement and lines go. */
+function isBoxy(outline) {
+    return BOXY.has(outline);
+}
+/** Whether an outline is drawn round in a square box, so the exact circle code applies. */
+function isRound(outline, width, height) {
+    return outline === 'circle' && Math.abs(width - height) < 0.5;
+}
+// --- curves, sampled ------------------------------------------------------------
+const CURVE_STEPS = 24;
+/** Points along an elliptical arc about (cx, cy), from angle a0 to a1, both ends included. */
+function arcPoints(cx, cy, rx, ry, a0, a1) {
+    const out = [];
+    for (let i = 0; i <= CURVE_STEPS; i++) {
+        const a = a0 + ((a1 - a0) * i) / CURVE_STEPS;
+        out.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
+    }
+    return out;
+}
+/** Points along a quadratic curve, the start left out. */
+function quadPoints(p0, c, p1) {
+    const out = [];
+    for (let i = 1; i <= CURVE_STEPS; i++) {
+        const t = i / CURVE_STEPS;
+        const u = 1 - t;
+        out.push({ x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x, y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y });
+    }
+    return out;
+}
+/** A wave across a box from (x0, y) to (x1, y), up then down, as the standard's document draws its bottom. */
+function wavePoints(x0, x1, y, depth) {
+    const mid = (x0 + x1) / 2;
+    const q = (x1 - x0) / 4;
+    return [...quadPoints({ x: x0, y }, { x: x0 + q, y: y - 2 * depth }, { x: mid, y }), ...quadPoints({ x: mid, y }, { x: mid + q, y: y + 2 * depth }, { x: x1, y })];
+}
+function polyShape(points) {
+    return { polygon: points, path: polygonPath(points), detail: [] };
+}
+function polygonPath(points) {
+    return points.map((p, i) => `${i === 0 ? 'M' : 'L'}${r2(p.x)} ${r2(p.y)}`).join(' ') + ' Z';
+}
+function r2(value) {
+    return Math.round(value * 100) / 100;
+}
+/**
+ * An outline at a size. Rectangle-like outlines and the round circle are
+ * included so a caller can always ask, but the renderer draws those itself.
+ */
+function shapeOf(outline, look, w, h) {
+    switch (outline) {
+        case 'circle': {
+            const points = arcPoints(w / 2, h / 2, w / 2, h / 2, Math.PI, 3 * Math.PI).slice(0, -1);
+            return { polygon: points, path: `M0 ${r2(h / 2)} A${r2(w / 2)} ${r2(h / 2)} 0 1 0 ${r2(w)} ${r2(h / 2)} A${r2(w / 2)} ${r2(h / 2)} 0 1 0 0 ${r2(h / 2)} Z`, detail: [] };
+        }
+        case 'diamond':
+            return polyShape([{ x: w / 2, y: 0 }, { x: w, y: h / 2 }, { x: w / 2, y: h }, { x: 0, y: h / 2 }]);
+        case 'pill': {
+            const rad = Math.min(w, h) / 2;
+            if (w >= h) {
+                const points = [...arcPoints(w - rad, rad, rad, rad, -Math.PI / 2, Math.PI / 2), ...arcPoints(rad, rad, rad, rad, Math.PI / 2, (3 * Math.PI) / 2)];
+                return { polygon: points, path: `M${r2(rad)} 0 H${r2(w - rad)} A${r2(rad)} ${r2(rad)} 0 0 1 ${r2(w - rad)} ${r2(h)} H${r2(rad)} A${r2(rad)} ${r2(rad)} 0 0 1 ${r2(rad)} 0 Z`, detail: [] };
+            }
+            const points = [...arcPoints(rad, h - rad, rad, rad, 0, Math.PI), ...arcPoints(rad, rad, rad, rad, Math.PI, 2 * Math.PI)];
+            return { polygon: points, path: `M0 ${r2(rad)} A${r2(rad)} ${r2(rad)} 0 0 1 ${r2(w)} ${r2(rad)} V${r2(h - rad)} A${r2(rad)} ${r2(rad)} 0 0 1 0 ${r2(h - rad)} Z`, detail: [] };
+        }
+        case 'parallelogram': {
+            const s = Math.min(look.slant ?? SHAPE_DEFAULTS.slant, w / 2);
+            return look.lean === 'left'
+                ? polyShape([{ x: 0, y: 0 }, { x: w - s, y: 0 }, { x: w, y: h }, { x: s, y: h }])
+                : polyShape([{ x: s, y: 0 }, { x: w, y: 0 }, { x: w - s, y: h }, { x: 0, y: h }]);
+        }
+        case 'hexagon': {
+            const p = Math.min(look.point ?? SHAPE_DEFAULTS.point, w / 2);
+            return polyShape([{ x: p, y: 0 }, { x: w - p, y: 0 }, { x: w, y: h / 2 }, { x: w - p, y: h }, { x: p, y: h }, { x: 0, y: h / 2 }]);
+        }
+        case 'trapezoid': {
+            const t = Math.min(look.taper ?? SHAPE_DEFAULTS.taper, w / 2);
+            return look.narrow === 'top'
+                ? polyShape([{ x: t, y: 0 }, { x: w - t, y: 0 }, { x: w, y: h }, { x: 0, y: h }])
+                : polyShape([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w - t, y: h }, { x: t, y: h }]);
+        }
+        case 'triangle':
+            switch (look.aim ?? 'down') {
+                case 'up':
+                    return polyShape([{ x: w / 2, y: 0 }, { x: w, y: h }, { x: 0, y: h }]);
+                case 'left':
+                    return polyShape([{ x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h / 2 }]);
+                case 'right':
+                    return polyShape([{ x: 0, y: 0 }, { x: w, y: h / 2 }, { x: 0, y: h }]);
+                default:
+                    return polyShape([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w / 2, y: h }]);
+            }
+        case 'cylinder': {
+            if (look.lying) {
+                const c = Math.min(look.cap ?? SHAPE_DEFAULTS.cap, w / 4);
+                const points = [...arcPoints(w - c, h / 2, c, h / 2, -Math.PI / 2, Math.PI / 2), ...arcPoints(c, h / 2, c, h / 2, Math.PI / 2, (3 * Math.PI) / 2)];
+                return {
+                    polygon: points,
+                    path: `M${r2(c)} 0 H${r2(w - c)} A${r2(c)} ${r2(h / 2)} 0 0 1 ${r2(w - c)} ${r2(h)} H${r2(c)} A${r2(c)} ${r2(h / 2)} 0 0 1 ${r2(c)} 0 Z`,
+                    detail: [`M${r2(w - c)} 0 A${r2(c)} ${r2(h / 2)} 0 0 0 ${r2(w - c)} ${r2(h)}`],
+                };
+            }
+            const c = Math.min(look.cap ?? SHAPE_DEFAULTS.cap, h / 4);
+            const points = [...arcPoints(w / 2, c, w / 2, c, Math.PI, 2 * Math.PI), ...arcPoints(w / 2, h - c, w / 2, c, 0, Math.PI)];
+            return {
+                polygon: points,
+                path: `M0 ${r2(c)} A${r2(w / 2)} ${r2(c)} 0 0 1 ${r2(w)} ${r2(c)} V${r2(h - c)} A${r2(w / 2)} ${r2(c)} 0 0 1 0 ${r2(h - c)} Z`,
+                detail: [`M0 ${r2(c)} A${r2(w / 2)} ${r2(c)} 0 0 0 ${r2(w)} ${r2(c)}`],
+            };
+        }
+        case 'flow-document': {
+            const a = SHAPE_DEFAULTS.wave;
+            const points = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h - a }, ...wavePoints(w, 0, h - a, -a)];
+            return polyShape(points);
+        }
+        case 'flow-off-page': {
+            const p = Math.min(SHAPE_DEFAULTS.offPage, h / 2);
+            return polyShape([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h - p }, { x: w / 2, y: h }, { x: 0, y: h - p }]);
+        }
+        case 'flow-delay': {
+            const rad = Math.min(h / 2, w);
+            const points = [{ x: 0, y: 0 }, ...arcPoints(w - rad, h / 2, rad, h / 2, -Math.PI / 2, Math.PI / 2), { x: 0, y: h }];
+            return { polygon: points, path: `M0 0 H${r2(w - rad)} A${r2(rad)} ${r2(h / 2)} 0 0 1 ${r2(w - rad)} ${r2(h)} H0 Z`, detail: [] };
+        }
+        case 'flow-manual-input': {
+            const s = Math.min(SHAPE_DEFAULTS.slope, h / 2);
+            return polyShape([{ x: 0, y: s }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }]);
+        }
+        case 'flow-stored-data': {
+            const k = Math.min(SHAPE_DEFAULTS.curve, w / 4);
+            const points = [{ x: k, y: 0 }, { x: w, y: 0 }, ...quadPoints({ x: w, y: 0 }, { x: w - 2 * k, y: h / 2 }, { x: w, y: h }), { x: k, y: h }, ...quadPoints({ x: k, y: h }, { x: -k, y: h / 2 }, { x: k, y: 0 })];
+            return {
+                polygon: points.slice(0, -1),
+                path: `M${r2(k)} 0 H${r2(w)} Q${r2(w - 2 * k)} ${r2(h / 2)} ${r2(w)} ${r2(h)} H${r2(k)} Q${r2(-k)} ${r2(h / 2)} ${r2(k)} 0 Z`,
+                detail: [],
+            };
+        }
+        case 'flow-loop-start': {
+            const c = Math.min(SHAPE_DEFAULTS.cut, w / 3, h / 2);
+            return polyShape([{ x: c, y: 0 }, { x: w - c, y: 0 }, { x: w, y: c }, { x: w, y: h }, { x: 0, y: h }, { x: 0, y: c }]);
+        }
+        case 'flow-loop-end': {
+            const c = Math.min(SHAPE_DEFAULTS.cut, w / 3, h / 2);
+            return polyShape([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h - c }, { x: w - c, y: h }, { x: c, y: h }, { x: 0, y: h - c }]);
+        }
+        case 'flow-card': {
+            const c = Math.min(SHAPE_DEFAULTS.cut, w / 3, h / 2);
+            return polyShape([{ x: c, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }, { x: 0, y: c }]);
+        }
+        case 'flow-display': {
+            const p = Math.min(h * 0.35, w / 4);
+            const k = Math.min(h * 0.45, w / 4);
+            const points = [{ x: p, y: 0 }, { x: w - k, y: 0 }, ...quadPoints({ x: w - k, y: 0 }, { x: w, y: 0 }, { x: w, y: h / 2 }), ...quadPoints({ x: w, y: h / 2 }, { x: w, y: h }, { x: w - k, y: h }), { x: p, y: h }, { x: 0, y: h / 2 }];
+            return {
+                polygon: points,
+                path: `M${r2(p)} 0 H${r2(w - k)} Q${r2(w)} 0 ${r2(w)} ${r2(h / 2)} Q${r2(w)} ${r2(h)} ${r2(w - k)} ${r2(h)} H${r2(p)} L0 ${r2(h / 2)} Z`,
+                detail: [],
+            };
+        }
+        case 'flow-tape': {
+            const d = Math.min(h, w - SHAPE_DEFAULTS.tail);
+            const rad = d / 2;
+            const points = arcPoints(rad, h / 2, rad, rad, Math.PI, 3 * Math.PI).slice(0, -1);
+            return {
+                polygon: points,
+                path: `M0 ${r2(h / 2)} A${r2(rad)} ${r2(rad)} 0 1 0 ${r2(d)} ${r2(h / 2)} A${r2(rad)} ${r2(rad)} 0 1 0 0 ${r2(h / 2)} Z`,
+                detail: [`M${r2(rad)} ${r2(h / 2 + rad)} H${r2(w)}`],
+            };
+        }
+        case 'flow-punched-tape': {
+            const a = SHAPE_DEFAULTS.wave;
+            const points = [...[{ x: 0, y: a }, ...wavePoints(0, w, a, a)], ...[{ x: w, y: h - a }, ...wavePoints(w, 0, h - a, -a)]];
+            return polyShape(points);
+        }
+        case 'flow-collate': {
+            // Two triangles meeting at a point. Worked with as the bowtie's outline,
+            // which passes through its own middle.
+            return {
+                polygon: [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w / 2, y: h / 2 }, { x: w, y: h }, { x: 0, y: h }, { x: w / 2, y: h / 2 }],
+                path: `M0 0 H${r2(w)} L0 ${r2(h)} H${r2(w)} Z`,
+                detail: [],
+            };
+        }
+        default:
+            return polyShape([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }]);
+    }
+}
+/**
+ * A path written relative to a box's top-left, moved to (x, y). Only the
+ * absolute commands `shapeOf` writes are handled: M, L, H, V, Q, T, A and Z.
+ */
+function placePath(d, x, y) {
+    return d.replace(/([MLHVQTAZ])([^MLHVQTAZ]*)/g, (_all, command, rest) => {
+        const n = rest.trim().length === 0 ? [] : rest.trim().split(/[\s,]+/).map(Number);
+        const moved = n.map((value, i) => {
+            switch (command) {
+                case 'H':
+                    return value + x;
+                case 'V':
+                    return value + y;
+                case 'A':
+                    // rx ry rotation large-arc sweep x y: only the end point moves.
+                    return i % 7 === 5 ? value + x : i % 7 === 6 ? value + y : value;
+                default:
+                    return i % 2 === 0 ? value + x : value + y;
+            }
+        });
+        return `${command}${moved.map(r2).join(' ')}${command === 'Z' ? '' : ' '}`;
+    }).trim();
+}
+// --- the middle, and size for text ------------------------------------------------
+/**
+ * The shape's own middle, where its text sits and its lines aim: the center of
+ * its area. On a symmetric shape that is the middle of its box; a triangle's is
+ * a third of the way from its base.
+ */
+function middleOf(outline, look, w, h) {
+    if (isBoxy(outline) || outline === 'circle' || outline === 'flow-collate')
+        return { x: w / 2, y: h / 2 };
+    if (outline === 'flow-tape')
+        return { x: Math.min(h, w - SHAPE_DEFAULTS.tail) / 2, y: h / 2 };
+    return areaCentroid(shapeOf(outline, look, w, h).polygon);
+}
+function areaCentroid(points) {
+    let area = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        const cross = a.x * b.y - b.x * a.y;
+        area += cross;
+        cx += (a.x + b.x) * cross;
+        cy += (a.y + b.y) * cross;
+    }
+    if (Math.abs(area) < 1e-9)
+        return points[0] ?? { x: 0, y: 0 };
+    return { x: cx / (3 * area), y: cy / (3 * area) };
+}
+/** Whether a point is inside a polygon, by crossings. */
+function insideOutline(points, p) {
+    let within = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+        const a = points[i];
+        const b = points[j];
+        if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x)
+            within = !within;
+    }
+    return within;
+}
+/** Whether a point is more than `distance` from every edge of a polygon. */
+function clearOf(points, p, distance) {
+    for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        const ex = b.x - a.x;
+        const ey = b.y - a.y;
+        const length = ex * ex + ey * ey;
+        const t = length === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * ex + (p.y - a.y) * ey) / length));
+        if (Math.hypot(p.x - (a.x + ex * t), p.y - (a.y + ey * t)) <= distance)
+            return false;
+    }
+    return true;
+}
+/** Whether a rectangle centered on the shape's middle fits inside its outline, checked round its edge. */
+function holdsBlock(outline, look, w, h, tw, th) {
+    const polygon = shapeOf(outline, look, w, h).polygon;
+    const m = middleOf(outline, look, w, h);
+    const x0 = m.x - tw / 2;
+    const y0 = m.y - th / 2;
+    const n = 8;
+    for (let i = 0; i <= n; i++) {
+        const f = i / n;
+        for (const p of [{ x: x0 + tw * f, y: y0 }, { x: x0 + tw * f, y: y0 + th }, { x: x0, y: y0 + th * f }, { x: x0 + tw, y: y0 + th * f }]) {
+            // A hair in, so a corner the outline passes exactly through counts as inside.
+            const toward = { x: p.x + (m.x - p.x) * 1e-6, y: p.y + (m.y - p.y) * 1e-6 };
+            if (!insideOutline(polygon, toward))
+                return false;
+        }
+    }
+    return true;
+}
+/**
+ * The size an outline takes to hold a block `tw` by `th` (the text with its
+ * padding) at its middle: a first guess that is exact for most shapes, then
+ * grown a step at a time until the block fits. A rectangle-like outline and
+ * the round circle are sized by the resolver, as they always were.
+ */
+function sizeFor(outline, look, tw, th) {
+    const guess = guessSize(outline, look, tw, th);
+    if (outline === 'flow-collate')
+        return guess;
+    let { width, height } = guess;
+    for (let step = 0; step < 200 && !holdsBlock(outline, look, width, height, tw, th); step++) {
+        width *= 1.02;
+        height *= 1.02;
+    }
+    return { width, height };
+}
+function guessSize(outline, look, tw, th) {
+    switch (outline) {
+        case 'circle':
+            // A circle given two sizes is an ellipse; one sized for its text is round.
+            return { width: Math.hypot(tw, th), height: Math.hypot(tw, th) };
+        case 'diamond':
+            return { width: tw * 2, height: th * 2 };
+        case 'pill':
+            return { width: tw + th, height: th };
+        case 'parallelogram':
+            return { width: tw + (look.slant ?? SHAPE_DEFAULTS.slant), height: th };
+        case 'hexagon':
+            return { width: tw + 2 * (look.point ?? SHAPE_DEFAULTS.point), height: th };
+        case 'trapezoid':
+            return { width: tw + 2 * (look.taper ?? SHAPE_DEFAULTS.taper), height: th };
+        case 'triangle':
+            return look.aim === 'left' || look.aim === 'right' ? { width: tw * 2, height: th * 2.4 } : { width: tw * 2.4, height: th * 2 };
+        case 'cylinder': {
+            const c = look.cap ?? SHAPE_DEFAULTS.cap;
+            return look.lying ? { width: tw + 4 * c, height: th } : { width: tw, height: th + 4 * c };
+        }
+        case 'flow-document':
+            return { width: tw, height: th + 3 * SHAPE_DEFAULTS.wave };
+        case 'flow-off-page':
+            return { width: tw, height: th + SHAPE_DEFAULTS.offPage };
+        case 'flow-delay':
+            return { width: tw + th / 2, height: th };
+        case 'flow-manual-input':
+            return { width: tw, height: th + SHAPE_DEFAULTS.slope };
+        case 'flow-stored-data':
+            return { width: tw + 2 * SHAPE_DEFAULTS.curve, height: th };
+        case 'flow-loop-start':
+        case 'flow-loop-end':
+            return { width: tw + SHAPE_DEFAULTS.cut, height: th + SHAPE_DEFAULTS.cut / 2 };
+        case 'flow-card':
+            return { width: tw + SHAPE_DEFAULTS.cut / 2, height: th + SHAPE_DEFAULTS.cut / 2 };
+        case 'flow-display':
+            return { width: tw + th * 0.8, height: th };
+        case 'flow-tape': {
+            const d = Math.hypot(tw, th);
+            return { width: d + SHAPE_DEFAULTS.tail, height: d };
+        }
+        case 'flow-punched-tape':
+            return { width: tw, height: th + 4 * SHAPE_DEFAULTS.wave };
+        case 'flow-collate':
+            return { width: tw, height: Math.max(th * 1.6, th + 20) };
+        default:
+            return { width: tw, height: th };
+    }
+}
+// --- sides and corners ---------------------------------------------------------------
+/**
+ * Where the ray from `from` heading `way` first leaves a polygon, measured as
+ * the distance along the ray, or undefined if it never crosses it.
+ */
+function rayExit(points, from, way) {
+    let best;
+    for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        const t = rayHitsSegment(from, way, a, b);
+        if (t !== undefined && t > 1e-9 && (best === undefined || t > best))
+            best = t;
+    }
+    return best;
+}
+/** Every distance along the line through `from` heading `way`, either direction, at which it crosses a polygon. */
+function lineCrossings(points, from, way) {
+    const out = [];
+    for (let i = 0; i < points.length; i++) {
+        const t = rayHitsSegment(from, way, points[i], points[(i + 1) % points.length], true);
+        if (t !== undefined)
+            out.push(t);
+    }
+    return out;
+}
+function rayHitsSegment(from, way, a, b, both = false) {
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const denom = way.x * ey - way.y * ex;
+    if (Math.abs(denom) < 1e-12)
+        return undefined;
+    const t = ((a.x - from.x) * ey - (a.y - from.y) * ex) / denom;
+    const s = ((a.x - from.x) * way.y - (a.y - from.y) * way.x) / denom;
+    if (s < -1e-9 || s > 1 + 1e-9)
+        return undefined;
+    if (!both && t < 0)
+        return undefined;
+    return t;
+}
+/** Where the line from a polygon's middle toward `target` crosses its outline: the farthest crossing, so a concave outline is met at its rim. */
+function towardOutline(points, middle, target) {
+    const dx = target.x - middle.x;
+    const dy = target.y - middle.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-9)
+        return middle;
+    const way = { x: dx / length, y: dy / length };
+    const t = rayExit(points, middle, way) ?? 0;
+    return { x: middle.x + way.x * t, y: middle.y + way.y * t };
+}
+/**
+ * The stretch of the outline that is one side: from where the line from the
+ * middle to one corner of the box meets it, round to where the line to the
+ * next corner does. Returned in reading order, left to right along a top or
+ * bottom side and top to bottom along a left or right one.
+ */
+function sideStretch(points, middle, box, side) {
+    const tl = { x: box.x, y: box.y };
+    const tr = { x: box.x + box.width, y: box.y };
+    const bl = { x: box.x, y: box.y + box.height };
+    const br = { x: box.x + box.width, y: box.y + box.height };
+    const [c0, c1] = { top: [tl, tr], right: [tr, br], bottom: [bl, br], left: [tl, bl] }[side];
+    const a0 = Math.atan2(c0.y - middle.y, c0.x - middle.x);
+    const a1 = Math.atan2(c1.y - middle.y, c1.x - middle.x);
+    // The angular wedge between the two corner rays that holds the side.
+    const span = (to) => {
+        let d = to - a0;
+        while (d < 0)
+            d += 2 * Math.PI;
+        while (d >= 2 * Math.PI)
+            d -= 2 * Math.PI;
+        return d;
+    };
+    let width = span(a1);
+    let clockwise = true;
+    const facing = { top: -Math.PI / 2, right: 0, bottom: Math.PI / 2, left: Math.PI }[side];
+    if (span(facing) > width) {
+        clockwise = false;
+        width = 2 * Math.PI - width;
+    }
+    const out = [];
+    const steps = 96;
+    for (let i = 0; i <= steps; i++) {
+        const angle = a0 + (clockwise ? 1 : -1) * (width * i) / steps;
+        const p = towardOutline(points, middle, { x: middle.x + Math.cos(angle), y: middle.y + Math.sin(angle) });
+        const last = out[out.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-6)
+            out.push(p);
+    }
+    return out;
+}
+/** The point a fraction of the way along a polyline, by length. */
+function alongPolyline(points, fraction) {
+    let total = 0;
+    for (let i = 1; i < points.length; i++)
+        total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    let left = Math.max(0, Math.min(1, fraction)) * total;
+    for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1];
+        const b = points[i];
+        const length = Math.hypot(b.x - a.x, b.y - a.y);
+        if (left <= length || i === points.length - 1) {
+            const f = length < 1e-9 ? 0 : Math.min(1, left / length);
+            return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+        }
+        left -= length;
+    }
+    return points[0] ?? { x: 0, y: 0 };
+}
+/** Which side of the box a point on the outline is on, by the corner rays from the middle. */
+function sideOfPoint(middle, box, at) {
+    const angle = Math.atan2(at.y - middle.y, at.x - middle.x);
+    const corner = (x, y) => Math.atan2(y - middle.y, x - middle.x);
+    const tr = corner(box.x + box.width, box.y);
+    const br = corner(box.x + box.width, box.y + box.height);
+    const bl = corner(box.x, box.y + box.height);
+    const tl = corner(box.x, box.y);
+    if (angle >= tr && angle <= br)
+        return 'right';
+    if (angle >= br && angle <= bl)
+        return 'bottom';
+    if (angle <= tr && angle >= tl)
+        return 'top';
+    return 'left';
+}
+
 // ---- lexer.js ----
 /**
  * A key written against its value. The key part is spelled as the highlighter's
@@ -2665,7 +3231,29 @@ class Placer {
             }
             return this.textOf(node, axis, 0);
         }
-        return narrow(whole, placement.own, axis, this.facts.get(node).circle, this.size(node, 'x'));
+        return narrow(whole, placement.own, axis, this.outlineOf(node));
+    }
+    /**
+     * For a node that is not a rectangle, where the line from its middle toward
+     * a point of its box meets its outline, from the box's top-left.
+     */
+    outlineOf(node) {
+        const body = node.body;
+        if (body.kind !== 'shape' || isBoxy(body.outline))
+            return undefined;
+        return (across, down) => {
+            const width = this.size(node, 'x');
+            const height = this.size(node, 'y');
+            if (body.outline === 'circle') {
+                // An ellipse, round when the two are equal; exact rather than sampled.
+                const dx = (across - 0.5) * width;
+                const dy = (down - 0.5) * height;
+                const scale = dx === 0 && dy === 0 ? 0 : 1 / Math.hypot((dx * 2) / width, (dy * 2) / height);
+                return { x: width / 2 + dx * scale, y: height / 2 + dy * scale };
+            }
+            const middle = middleOf(body.outline, body.look, width, height);
+            return towardOutline(shapeOf(body.outline, body.look, width, height).polygon, middle, { x: across * width, y: down * height });
+        };
     }
     overStated(node, axis, statements) {
         const said = [...new Set(statements.map((statement) => statement.placement))]
@@ -2849,7 +3437,7 @@ class Placer {
             if (target.part === 'text') {
                 throw new SourceError(`"${node.name}" is placed against "${nameTarget(target)}", and a ${defined.kind} has no text`, placement.line);
             }
-            return this.alongFraction(whole, target, axis, () => narrow(whole, target.part, axis, false, 0));
+            return this.alongFraction(whole, target, axis, () => narrow(whole, target.part, axis));
         }
         if (target.fraction) {
             const whole = this.extentOf(node, { name: target.name }, axis, placement);
@@ -3123,7 +3711,7 @@ class Placer {
             }
             return text;
         }
-        return narrow(whole, target.part, axis, this.facts.get(named).circle, this.size(named, 'x'));
+        return narrow(whole, target.part, axis, this.outlineOf(named));
     }
     /** A node's text on one axis, given where the node starts. */
     textOf(node, axis, start) {
@@ -3665,7 +4253,7 @@ class Placer {
                 const whole = { start: this.start(child, axis), size: this.size(child, axis) };
                 const at = target.part === 'text'
                     ? this.textOf(child, axis, whole.start)
-                    : narrow(whole, target.part, axis, this.facts.get(child).circle, this.size(child, 'x'));
+                    : narrow(whole, target.part, axis, this.outlineOf(child));
                 start = Math.min(start, at.start);
                 end = Math.max(end, at.start + at.size);
             }
@@ -4208,6 +4796,11 @@ class Placer {
             width: box.width,
             height: box.height,
         };
+        if (node.body.kind === 'shape' && !isBoxy(node.body.outline) && node.body.outline !== 'circle' && (node.textAttrs['place'] === undefined || title.how === 'center')) {
+            // At the shape's own middle, which moves with its size: a triangle's stays a third of the way up.
+            const middle = middleOf(node.body.outline, node.body.look, width, height);
+            return { x: middle.x - box.width / 2, y: middle.y - box.height / 2, width: box.width, height: box.height };
+        }
         if (node.textAttrs['place'] === undefined || title.how === 'center' || facts.circle || node.body.kind === 'icon') {
             return centered;
         }
@@ -4323,9 +4916,11 @@ function commonFrame(a, b) {
 /**
  * Narrow an extent to the part a placement named. A side leaves the axis it
  * doesn't name alone (`right` is the whole right edge); a point is a point on
- * both. On a circle a corner is the point on it halfway between its sides.
+ * both. On a shape other than a rectangle, a point is where the line from the
+ * shape's middle toward that point of its box meets the outline: on a circle
+ * a corner is halfway between its sides, on a diamond the middle of an edge.
  */
-function narrow(whole, part, axis, circle, diameter) {
+function narrow(whole, part, axis, onOutline) {
     if (part === undefined || part === 'text')
         return whole;
     const words = part.split('-');
@@ -4334,14 +4929,14 @@ function narrow(whole, part, axis, circle, diameter) {
     const named = words.includes(near) ? 0 : words.includes(far) ? whole.size : undefined;
     if (named === undefined && isSide)
         return whole;
-    let at = whole.start + (named ?? whole.size / 2);
-    const across = words.includes('left') || words.includes('right');
-    const down = words.includes('top') || words.includes('bottom');
-    if (circle && across && down) {
-        const pull = (diameter / 2) * (1 - Math.SQRT1_2);
-        at += named === 0 ? pull : -pull;
+    if (onOutline) {
+        // Where on the box the point is, as fractions across and down.
+        const across = words.includes('left') ? 0 : words.includes('right') ? 1 : 0.5;
+        const down = words.includes('top') ? 0 : words.includes('bottom') ? 1 : 0.5;
+        const point = onOutline(across, down);
+        return { start: whole.start + (axis === 'x' ? point.x : point.y), size: 0 };
     }
-    return { start: at, size: 0 };
+    return { start: whole.start + (named ?? whole.size / 2), size: 0 };
 }
 
 // ---- lines.js ----
@@ -4359,6 +4954,7 @@ function narrow(whole, part, axis, circle, diameter) {
  * The renderer draws what this returns and the findings measure it, so the two
  * can't disagree about where a line is.
  */
+
 
 
 
@@ -4811,6 +5407,9 @@ function meetOutline(face, at, way) {
         if (disc >= 0)
             hits.push(-b - Math.sqrt(disc), -b + Math.sqrt(disc));
     }
+    else if (face.outline) {
+        hits.push(...lineCrossings(face.outline, at, way));
+    }
     else {
         const within = (value, low, size) => value >= low - 0.5 && value <= low + size + 0.5;
         for (const x of [face.x, face.x + face.width]) {
@@ -4842,6 +5441,10 @@ function leaving(face, from, way) {
         const fy = from.y - c.y;
         const b = fx * way.x + fy * way.y;
         const t = -b + Math.sqrt(Math.max(0, b * b - (fx * fx + fy * fy - r * r)));
+        return { x: from.x + way.x * t, y: from.y + way.y * t };
+    }
+    if (face.outline) {
+        const t = rayExit(face.outline, from, way) ?? 0;
         return { x: from.x + way.x * t, y: from.y + way.y * t };
     }
     const tx = way.x > 1e-9 ? (face.x + face.width - from.x) / way.x : way.x < -1e-9 ? (face.x - from.x) / way.x : Infinity;
@@ -4923,13 +5526,20 @@ const WAY_VECTOR = {
 const MET_SIDE = { down: 'top', up: 'bottom', left: 'right', right: 'left' };
 /** The drawn rectangle of a node. */
 function faceOfNode(node) {
-    return {
+    const face = {
         x: node.x,
         y: node.y,
         width: node.width,
         height: node.height,
-        round: node.body.kind === 'shape' && node.body.outline === 'circle',
+        round: node.body.kind === 'shape' && isRound(node.body.outline, node.width, node.height),
     };
+    if (node.body.kind === 'shape' && !isBoxy(node.body.outline) && !face.round) {
+        const { outline, look } = node.body;
+        face.outline = shapeOf(outline, look, node.width, node.height).polygon.map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
+        const middle = middleOf(outline, look, node.width, node.height);
+        face.middle = { x: node.x + middle.x, y: node.y + middle.y };
+    }
+    return face;
 }
 function endOf(edge, which) {
     const node = which === 'from' ? edge.from : edge.to;
@@ -5374,8 +5984,9 @@ function distance(a, b) {
     return Math.hypot(b.x - a.x, b.y - a.y);
 }
 // --- points on a box ------------------------------------------------------------
+/** A face's middle: its box's, or a shape's own, which is a triangle's a third of the way from its base. */
 function centerOf(face) {
-    return { x: face.x + face.width / 2, y: face.y + face.height / 2 };
+    return face.middle ?? { x: face.x + face.width / 2, y: face.y + face.height / 2 };
 }
 /** The sides a position sits on: `bottom-right` is on the bottom and the right, `top-center` on the top only. */
 function cornerSides(position) {
@@ -5393,8 +6004,11 @@ function positionPoint(face, position) {
         x: horizontal === 'left' ? face.x : horizontal === 'right' ? face.x + face.width : face.x + face.width / 2,
         y: vertical === 'top' ? face.y : vertical === 'bottom' ? face.y + face.height : face.y + face.height / 2,
     };
-    // A circle has no corners; its corner is where the diagonal meets it.
+    // A circle has no corners; its corner is where the diagonal meets it. On
+    // another shape every point is where the line from its middle meets it.
     if (face.round && vertical && horizontal)
+        return outlineToward(face, point);
+    if (face.outline)
         return outlineToward(face, point);
     return point;
 }
@@ -5412,6 +6026,29 @@ function onSide(face, side, along) {
         const turn = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, across / radius));
         const angle = { right: turn, bottom: Math.PI / 2 - turn, left: Math.PI - turn, top: -Math.PI / 2 + turn }[side];
         return { x: center.x + radius * Math.cos(angle), y: center.y + radius * Math.sin(angle) };
+    }
+    if (face.outline) {
+        // The side is the stretch of outline between the lines from the middle to
+        // its two corners. `along` lands where the stretch passes it, so a line
+        // down from the middle of one box's bottom meets the next square on; one
+        // past the stretch's ends is placed on it in proportion instead.
+        const stretch = sideStretch(face.outline, centerOf(face), face, side);
+        const key = side === 'top' || side === 'bottom' ? 'x' : 'y';
+        const low = key === 'x' ? face.x : face.y;
+        const size = key === 'x' ? face.width : face.height;
+        const values = stretch.map((p) => p[key]);
+        const lo = Math.min(...values);
+        const hi = Math.max(...values);
+        const target = along >= lo && along <= hi ? along : lo + ((along - low) / size) * (hi - lo);
+        for (let i = 1; i < stretch.length; i++) {
+            const a = stretch[i - 1];
+            const b = stretch[i];
+            if ((a[key] - target) * (b[key] - target) <= 0 && a[key] !== b[key]) {
+                const f = (target - a[key]) / (b[key] - a[key]);
+                return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+            }
+        }
+        return Math.abs(stretch[0][key] - target) < Math.abs(stretch[stretch.length - 1][key] - target) ? stretch[0] : stretch[stretch.length - 1];
     }
     switch (side) {
         case 'top':
@@ -5436,6 +6073,8 @@ function outlineToward(face, target) {
         const length = Math.hypot(dx, dy);
         return { x: center.x + (dx / length) * radius, y: center.y + (dy / length) * radius };
     }
+    if (face.outline)
+        return towardOutline(face.outline, center, target);
     const scale = Math.min(dx === 0 ? Infinity : face.width / 2 / Math.abs(dx), dy === 0 ? Infinity : face.height / 2 / Math.abs(dy));
     return { x: center.x + dx * scale, y: center.y + dy * scale };
 }
@@ -5453,6 +6092,8 @@ function headingAt(face, at) {
         const dy = at.y - center.y;
         return Math.abs(dx) >= Math.abs(dy) ? SIDE_NORMAL[dx >= 0 ? 'right' : 'left'] : SIDE_NORMAL[dy >= 0 ? 'bottom' : 'top'];
     }
+    if (face.outline)
+        return SIDE_NORMAL[sideOfPoint(centerOf(face), face, at)];
     distances.sort((a, b) => a[0] - b[0]);
     return SIDE_NORMAL[distances[0][1]];
 }
@@ -6738,6 +7379,7 @@ function besideLine(line, s, center, size, side, gap) {
 
 
 
+
 /**
  * The kinds of finding, each with whether it is on when nothing says. Named in
  * the language's own nouns, since the name is what a writer types to turn one
@@ -6862,8 +7504,8 @@ function edgeNodeOverlaps(layout, routes) {
             if (holdsEnd(node, edge))
                 continue;
             const inner = { x: node.x + 1, y: node.y + 1, width: node.width - 2, height: node.height - 2 };
-            const round = node.body.kind === 'shape' && node.body.outline === 'circle';
-            const through = round ? crossingCircle(trace, node) : crossing(trace, inner);
+            const face = faceOfNode(node);
+            const through = face.round || face.outline ? crossingCircle(trace, node, face) : crossing(trace, inner);
             if (through === undefined)
                 continue;
             const own = node === edge.from || node === edge.to;
@@ -6976,14 +7618,18 @@ function crossing(trace, box) {
     return { enters, leaves };
 }
 /**
- * The same for a circle, which is drawn in its node's square: walked a couple
- * of pixels at a time, a point counting as inside only past a pixel within the
- * outline, so a line ending on the circle doesn't cross it.
+ * The same for a circle, or any outline but a rectangle's, which is drawn in
+ * its node's box: walked a couple of pixels at a time, a point counting as
+ * inside only past a pixel within the outline, so a line ending on it doesn't
+ * cross it.
  */
-function crossingCircle(trace, node) {
+function crossingCircle(trace, node, face) {
     const radius = node.width / 2 - 1;
-    const center = { x: node.x + node.width / 2, y: node.y + node.height / 2 };
-    const inside = (p) => Math.hypot(p.x - center.x, p.y - center.y) < radius;
+    const center = centerOf(face);
+    const polygon = face.outline;
+    const inside = polygon
+        ? (p) => insidePolygon(polygon, p) && clearOf(polygon, p, 1)
+        : (p) => Math.hypot(p.x - center.x, p.y - center.y) < radius;
     const sideAt = (p) => {
         const dx = p.x - center.x;
         const dy = p.y - center.y;
@@ -7290,6 +7936,22 @@ function textOverflows(layout) {
             continue;
         const place = node.textAttrs['place'];
         if (place !== undefined && place !== 'center' && !place.startsWith('inside'))
+            continue;
+        const face = faceOfNode(node);
+        if (face.outline && node.body.outline !== 'flow-collate') {
+            // Any other outline than a box's: the text spills where it passes the outline.
+            const { outline, look } = node.body;
+            const corners = [0, 0.5, 1].flatMap((fx) => [0, 0.5, 1].map((fy) => ({ x: node.x + text.x + text.width * fx, y: node.y + text.y + text.height * fy })));
+            if (corners.every((p) => insidePolygon(face.outline, p)))
+                continue;
+            const needs = sizeFor(outline, look, text.width, text.height);
+            const wider = Math.max(0, needs.width - node.width);
+            const taller = Math.max(0, needs.height - node.height);
+            const more = [wider > EPSILON ? `${units(wider)} more width` : '', taller > EPSILON ? `${units(taller)} more height` : ''].filter((part) => part.length > 0);
+            found.push(new Finding('text-overflow', `the text of node ${node.name} runs past the outline of its ${outline}` + (more.length > 0 ? `; it needs ${more.join(' and ')}` : ''), node.line));
+            continue;
+        }
+        if (node.body.outline === 'flow-collate')
             continue;
         const spill = {
             left: Math.max(0, -text.x),
@@ -8285,6 +8947,10 @@ const DEFAULT_THEME = 'dark';
 const THEME_NAMES = Object.keys(THEMES);
 
 // ---- parser.js ----
+/** The settings a shape's bracket takes as a word on its own: `cylinder (lying)`. */
+const SHAPE_FLAGS = [...new Set(Object.values(SHAPE_SETTINGS).flatMap((one) => Object.entries(one).filter(([, kind]) => kind === 'flag').map(([name]) => name)))];
+
+
 /**
  * Parse a whole source file. A statement starts on an unindented line and runs
  * on through any line that starts with whitespace; a blank line or the next
@@ -8880,6 +9546,53 @@ function readAttr(tokens, at, attrs, line, subject) {
         }
         return next;
     }
+    if (key === 'shape' && follows(tokens, at + 2, '(')) {
+        // `shape: cylinder (cap: 1.5, lying)` — a value, then its settings. Which
+        // settings the shape takes is checked once its shape is known, since a
+        // style may carry the shape and a node the bracket's other half.
+        const value = tokens[at + 1];
+        if (value.quoted || isAttrKey(value)) {
+            throw new SourceError(`${subject}: shape: names an outline, such as diamond, before its settings`, line);
+        }
+        setOnce(attrs, 'shape', value.text, subject, line);
+        // A flag stands alone, `lying`; read it as `lying: true`.
+        const inner = [];
+        let depth = 0;
+        let end = at + 2;
+        for (; end < tokens.length; end++) {
+            const token = tokens[end];
+            if (!token.quoted && token.text === '(')
+                depth += 1;
+            if (!token.quoted && token.text === ')')
+                depth -= 1;
+            const bare = token.text.replace(/,$/, '');
+            if (depth === 1 && !token.quoted && SHAPE_FLAGS.includes(bare) && !isAttrKey(tokens[end - 1])) {
+                inner.push({ ...token, text: `${bare}:` }, { ...token, text: token.text.endsWith(',') ? 'true,' : 'true' });
+            }
+            else {
+                inner.push(token);
+            }
+            if (depth === 0)
+                break;
+        }
+        const takes = Object.keys(SHAPE_SETTINGS[value.text] ?? {});
+        if (takes.length === 0) {
+            throw new SourceError(`${subject}: \`shape: ${value.text}\` takes no settings, so it has no bracket`, line);
+        }
+        const read = readBracket(inner, 0, takes, {
+            subject,
+            what: `\`shape: ${value.text}\``,
+            kind: `a ${value.text}`,
+            example: `${takes[0]}: …`,
+            line,
+        });
+        if (Object.keys(read.values).length === 0) {
+            throw new SourceError(`${subject}: \`shape: ${value.text}\` opens empty brackets`, line);
+        }
+        for (const [inside, set] of Object.entries(read.values))
+            setOnce(attrs, `shape.${inside}`, set, subject, line);
+        return end + 1;
+    }
     const bracketKeys = BRACKET_KEYS[key];
     if (bracketKeys !== undefined && follows(tokens, at + 1, '(')) {
         // `text: (color: theme-muted)` — the whole bracket belongs to one part, and it is
@@ -9456,7 +10169,7 @@ function parseNode(head, line) {
  * A node's text takes the look keys and `reads:` (design.org 7.2). `at` is
  * read only to be refused with the side form, so it isn't listed as one it takes.
  */
-const NODE_TEXT_KEYS = [...TEXT_KEYS, 'reads'];
+const NODE_TEXT_KEYS = [...TEXT_KEYS, 'reads', 'fill'];
 const NODE_TEXT_LISTED = NODE_TEXT_KEYS.filter((key) => key !== 'at');
 /** A node's text turns a quarter turn; `along` follows a line, and a box has none. */
 function refuseNodeReads(reads, subject, line, whose = "a node's text") {
@@ -11188,6 +11901,7 @@ function opensPartPlacement(tokens, at) {
  * when a diagram asks for a distinction it cannot otherwise make.
  */
 
+
 const GRID = 24;
 /** Line width on the 24-unit grid, scaled with everything else. */
 const ICON_STROKE = 1.1;
@@ -11288,23 +12002,45 @@ const ICON_NAMES = Object.keys(ICONS);
  * The outlines a node's body can take. `rectangle` is the plain one and needs no
  * word, since it is what a node is when it says nothing.
  *
- * Named for what a node *is*, never for the geometry, which is the same rule the
- * icon names follow: `document` and not `folded-corner`. A shape carrying a
- * conventional meaning is a second channel alongside color, and a stronger one
- * — a fill is whatever the author assigned and has to be learnt from the
- * diagram, while a folded corner has meant "an artifact, not a process" in
- * flowcharts for decades and reads with no legend at all.
+ * A shape geometry has a word for is named by that word, how it looks:
+ * `diamond`, never `decision`, since someone may just want a diamond, and
+ * reading `decision` as a diamond is a translation every reader has to make.
+ * Those take settings in a bracket for what the box doesn't decide. A
+ * flowchart shape geometry has no word for is named `flow-` and what it means,
+ * drawn the way the standard draws it, with no settings. No picture has two
+ * names. `document`, the folded corner, is older than the rule and keeps its
+ * name; the standard's wavy one is `flow-document`.
  *
- * `circle` is the one geometric name, because a circle carries no single
- * meaning to name it after — it is a state, a step, a person, whatever the
- * diagram's own convention makes it. `diamond` joins these when a diagram
- * asks. The set being short is a fact about what has been drawn, not about the
- * key.
+ * The geometry of each is in `outline.ts`.
  */
-const OUTLINES = ['rectangle', 'document', 'circle'];
+const OUTLINES = [
+    'rectangle',
+    'document',
+    'circle',
+    'diamond',
+    'pill',
+    'parallelogram',
+    'hexagon',
+    'trapezoid',
+    'triangle',
+    'cylinder',
+    'flow-subprocess',
+    'flow-document',
+    'flow-off-page',
+    'flow-delay',
+    'flow-manual-input',
+    'flow-stored-data',
+    'flow-loop-start',
+    'flow-loop-end',
+    'flow-card',
+    'flow-display',
+    'flow-tape',
+    'flow-punched-tape',
+    'flow-collate',
+];
 /** Every value `shape:` accepts, `none` included. */
 const SHAPE_WORDS = [...OUTLINES, 'none'];
-const PLAIN = { kind: 'shape', outline: 'rectangle' };
+const PLAIN = { kind: 'shape', outline: 'rectangle', look: {} };
 /**
  * Which body a node has, from what it wrote and what its style carried.
  *
@@ -11327,14 +12063,37 @@ function bodyFor(attrs, appearance, line, declared = new Map()) {
         throw new SourceError(`shape: ${shape} and icon: ${icon} both say what this node is drawn as, and it has one ` +
             'body — `shape:` is the outline it is drawn with, `icon:` is the picture it is drawn as', line);
     }
+    // The settings come from wherever the shape did: a node's own `shape:` takes
+    // its own bracket, never a style's.
+    const from = wroteShape ? attrs : appearance;
+    const settings = {};
+    for (const [key, value] of Object.entries(from))
+        if (key.startsWith('shape.'))
+            settings[key.slice('shape.'.length)] = value;
     if (icon !== undefined)
         return { kind: 'icon', icon: iconNamed(icon, line, declared) };
     if (shape === undefined)
         return PLAIN;
-    if (shape === 'none')
+    if (shape === 'none') {
+        if (Object.keys(settings).length > 0)
+            refuse(`\`shape: none\` draws no outline, so it takes no settings`, line);
         return { kind: 'none' };
+    }
     if (OUTLINES.includes(shape)) {
-        return { kind: 'shape', outline: shape };
+        return { kind: 'shape', outline: shape, look: readShapeLook(shape, settings, `shape: ${shape}`, line) };
+    }
+    if (shape === 'hourglass') {
+        return refuse('`shape: hourglass` is the flowchart\'s collate symbol, and it is `flow-collate`', line);
+    }
+    if (shape === 'pentagon' || shape === 'pointed' || shape === 'home-plate') {
+        return refuse(`there is no shape "${shape}" — the flowchart's off-page connector, a box with one end pointed, is \`flow-off-page\``, line);
+    }
+    if (shape === 'ellipse' || shape === 'oval') {
+        return refuse(`there is no shape "${shape}" — an ellipse is a circle given a width and a height: \`shape: circle  width: 20  height: 8\``, line);
+    }
+    if (shape === 'decision' || shape === 'terminal' || shape === 'process') {
+        const look = { decision: 'diamond', terminal: 'pill', process: 'rectangle' }[shape];
+        return refuse(`a shape is named for how it looks, so a ${shape} is \`shape: ${look}\``, line);
     }
     // Until 0.3.0 `shape:` also took an icon name and drew the node as that
     // picture. The two jobs are two parts and now have two keys, so an older file
@@ -11770,6 +12529,8 @@ function patchSvg(patch, beneath, theme) {
         return `  <rect ${rect} fill="${themeColor(patch.fill, theme)}"/>`;
     const { x, y } = patch.center;
     const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
+        if (fill.polygon)
+            return insidePolygon(fill.polygon, { x, y });
         if (!fill.round)
             return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
         const r = Math.min(fill.width, fill.height) / 2;
@@ -11886,7 +12647,7 @@ function borderSvg(node, theme) {
         return '';
     const face = faceOf(node);
     const border = borderOf(node.appearance, theme, theme.containerStroke);
-    return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners)}" fill="none" stroke="${border}"/>`;
+    return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners, node.body.look)}" fill="none" stroke="${border}"/>`;
 }
 /** What a node draws of its own, without its children, which are drawn as items of their own. */
 function nodeSvg(node, theme, measurer, fontSize, markup) {
@@ -11933,6 +12694,7 @@ function nodeSvg(node, theme, measurer, fontSize, markup) {
         return drawn;
     }
     const outline = node.body.outline;
+    const look = node.body.look;
     const parts = [];
     const face = faceOf(node);
     // A node with children is colored as a backdrop however they are placed,
@@ -11956,12 +12718,12 @@ function nodeSvg(node, theme, measurer, fontSize, markup) {
         const room = PAD / 2;
         const hole = node.textBox;
         const grown = { x: face.x - PAD, y: face.y - PAD, w: face.width + PAD * 2, h: face.height + PAD * 2 };
-        parts.push(`  <mask id="${id}" maskUnits="userSpaceOnUse" x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}">`, `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`, `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`, '  </mask>', `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="${fill}" stroke="none"/>`, `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="none" stroke="${border}" mask="url(#${id})"/>`);
+        parts.push(`  <mask id="${id}" maskUnits="userSpaceOnUse" x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}">`, `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`, `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`, '  </mask>', `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="none"/>`, `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="none" stroke="${border}" mask="url(#${id})"/>`);
     }
     else {
-        parts.push(`  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="${fill}" stroke="${border}"/>`);
+        parts.push(`  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="${border}"/>`);
     }
-    for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height)) {
+    for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height, look)) {
         parts.push(`  <path d="${extra}" fill="none" stroke="${border}"/>`);
     }
     // A leaf's text defaults to the middle of its box, a container's to the top
@@ -11971,6 +12733,15 @@ function nodeSvg(node, theme, measurer, fontSize, markup) {
     // colors: a badged leaf is a backdrop but its text still centers. A box
     // whose only children are joined to its text is a leaf, and its lines center
     // against each other as a leaf's do.
+    // Collate's text sits on the point where its two triangles meet, so the
+    // lines break behind it on a patch of its own fill, as a line's text does.
+    const patch = node.textAttrs['fill'];
+    if (outline === 'flow-collate' && patch !== 'none' && node.lines.length > 0) {
+        const box = node.textBox;
+        const reach = 4;
+        const color = patch !== undefined ? themeColor(patch, theme) : fill === 'none' ? theme.background : fill;
+        parts.push(`  <rect x="${round(node.x + box.x - reach)}" y="${round(node.y + box.y)}" width="${round(box.width + reach * 2)}" height="${round(box.height)}" fill="${color}"/>`);
+    }
     const titled = node.banded && container;
     const textStyle = textStyleFor(node.textAttrs, node.line, titled ? 'start' : 'middle', titled ? 'top-left' : 'center');
     parts.push(sized(textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
@@ -12154,12 +12925,15 @@ const FOLD = CORNER * 2;
  * corners and a document's three round ones; the fold and the circle are as
  * they are either way.
  */
-function outlinePath(shape, x, y, w, h, corners) {
+function outlinePath(shape, x, y, w, h, corners, look = {}) {
     const r = CORNER;
+    const fold = shape === 'document' ? (look.fold ?? FOLD) : FOLD;
+    if (!isBoxy(shape) && !isRound(shape, w, h))
+        return placePath(shapeOf(shape, look, w, h).path, x, y);
     if (corners === 'sharp' && shape !== 'circle') {
         return [
             `M${round(x)} ${round(y)}`,
-            ...(shape === 'document' ? [`H${round(x + w - FOLD)}`, `L${round(x + w)} ${round(y + FOLD)}`] : [`H${round(x + w)}`]),
+            ...(shape === 'document' ? [`H${round(x + w - fold)}`, `L${round(x + w)} ${round(y + fold)}`] : [`H${round(x + w)}`]),
             `V${round(y + h)}`,
             `H${round(x)}`,
             'Z',
@@ -12179,8 +12953,8 @@ function outlinePath(shape, x, y, w, h, corners) {
         // Every corner rounded but the top-right one, which is cut away and folded.
         return [
             `M${round(x + r)} ${round(y)}`,
-            `H${round(x + w - FOLD)}`,
-            `L${round(x + w)} ${round(y + FOLD)}`,
+            `H${round(x + w - fold)}`,
+            `L${round(x + w)} ${round(y + fold)}`,
             `V${round(y + h - r)}`,
             `a${r} ${r} 0 0 1 ${-r} ${r}`,
             `H${round(x + r)}`,
@@ -12203,14 +12977,19 @@ function outlinePath(shape, x, y, w, h, corners) {
         'Z',
     ].join(' ');
 }
-/** Lines drawn inside the outline: the flap of a fold, and nothing else so far. */
-function outlineDetail(shape, x, y, w, h) {
-    void h;
-    if (shape !== 'document')
+/** Lines drawn inside the outline: the flap of a fold, a subprocess's bars, a cylinder's near rim. */
+function outlineDetail(shape, x, y, w, h, look = {}) {
+    if (shape === 'document') {
+        const fold = look.fold ?? FOLD;
+        return [`M${round(x + w - fold)} ${round(y)} V${round(y + fold)} H${round(x + w)}`];
+    }
+    if (shape === 'flow-subprocess') {
+        const inset = SUBPROCESS_INSET;
+        return [`M${round(x + inset)} ${round(y)} V${round(y + h)} M${round(x + w - inset)} ${round(y)} V${round(y + h)}`];
+    }
+    if (isBoxy(shape) || isRound(shape, w, h))
         return [];
-    return [
-        `M${round(x + w - FOLD)} ${round(y)} V${round(y + FOLD)} H${round(x + w)}`,
-    ];
+    return shapeOf(shape, look, w, h).detail.map((d) => placePath(d, x, y));
 }
 /** One icon, scaled from its own grid onto a square of `side` at `x, y`. */
 function drawIcon(icon, x, y, side, theme) {
@@ -12617,15 +13396,19 @@ function markMarker(mark, color, background, free) {
 function markerId(mark, color, free) {
     return `${mark}-${color.replace(/[^a-zA-Z0-9]/g, '')}${free && (mark === 'dot' || mark === 'odot') ? '-free' : ''}`;
 }
-/** The rectangle drawn, and whether it is round. */
+/** The rectangle drawn, and whether it is round or another shape. */
 function faceOf(node) {
-    return {
+    const box = {
         x: node.x,
         y: node.y,
         width: node.width,
         height: node.height,
-        round: node.body.kind === 'shape' && node.body.outline === 'circle',
+        round: node.body.kind === 'shape' && isRound(node.body.outline, node.width, node.height),
     };
+    if (node.body.kind === 'shape' && !isBoxy(node.body.outline) && !box.round) {
+        box.polygon = shapeOf(node.body.outline, node.body.look, node.width, node.height).polygon.map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
+    }
+    return box;
 }
 /**
  * Wrap a block of text in its own size, but only when that differs from the
@@ -12816,6 +13599,11 @@ function factsFor(node, measurer, fontSize) {
         }
         pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line);
     }
+    // A subprocess's bars stand inside its sides, so its text keeps its padding clear of them.
+    if (node.body.kind === 'shape' && node.body.outline === 'flow-subprocess') {
+        pad.left += SUBPROCESS_INSET;
+        pad.right += SUBPROCESS_INSET;
+    }
     node.textSide = 'center';
     const measures = {
         lineHeight,
@@ -12844,6 +13632,26 @@ function factsFor(node, measurer, fontSize) {
         return {
             natural: { width: side, height: side },
             textBox: { x: (side - textWidth) / 2, y: (side - textHeight) / 2, width: textWidth, height: textHeight },
+            hasText,
+            padding,
+            pad,
+            ...measures,
+            title,
+            circle,
+        };
+    }
+    if (node.body.kind === 'shape' && !circle && !isBoxy(node.body.outline)) {
+        if (node.children.length > 0) {
+            throw new SourceError(`"${node.name}" is a ${node.body.outline} and has children. Only a rectangle, a document or a circle holds other nodes so far`, node.line);
+        }
+        // Grown until the padded text fits at the shape's middle: a diamond twice
+        // the block each way, a triangle's text a third of the way from its base.
+        const block = { width: textWidth + pad.left + pad.right, height: textHeight + pad.top + pad.bottom };
+        const natural = sizeFor(node.body.outline, node.body.look, block.width, block.height);
+        const middle = middleOf(node.body.outline, node.body.look, natural.width, natural.height);
+        return {
+            natural,
+            textBox: { x: middle.x - textWidth / 2, y: middle.y - textHeight / 2, width: textWidth, height: textHeight },
             hasText,
             padding,
             pad,
@@ -13380,6 +14188,10 @@ function over(base, top) {
     if (top['shape'] === undefined && top['icon'] === undefined)
         return { ...base, ...top };
     const { shape: _shape, icon: _icon, ...rest } = base;
+    // A shape's settings belong to the shape they were written with.
+    for (const key of Object.keys(rest))
+        if (key.startsWith('shape.'))
+            delete rest[key];
     return { ...rest, ...top };
 }
 /** A file holds one diagram, so a second `diagram` statement is a mistake. */
@@ -13471,6 +14283,12 @@ function buildTree(statements, styles, defaults, icons) {
                 ...(stmt.attrs['heading.align'] !== undefined ? { align: stmt.attrs['heading.align'] } : {}),
             }
             : { ...bracketOf('text', appearance), ...stmt.textAttrs };
+        // The patch behind a text is a line's text's, and flow-collate's, whose
+        // text sits on the point where its two halves meet.
+        if (stmt.textAttrs['fill'] !== undefined && !(body.kind === 'shape' && body.outline === 'flow-collate')) {
+            throw new SourceError(`"${stmt.name}" has fill: in its text's brackets, which is the patch behind a text on a line or on a flow-collate — ` +
+                'a box\'s own color is fill: outside the brackets', stmt.line);
+        }
         // A card's text sits at its top left, where it shows above the card in
         // front of it, unless it says where.
         const deck = byName.get(stmt.name.slice(0, Math.max(stmt.name.lastIndexOf('.'), 0)));
@@ -13882,9 +14700,13 @@ function cornersOf(node, value, written) {
     if (!NODE_CORNERS.includes(value)) {
         throw new SourceError(`"${node.name}" has corners: ${value}, which is not a way to draw corners — use ${NODE_CORNERS.join(' or ')}`, node.line);
     }
-    if (written && node.body.outline === 'circle') {
-        throw new SourceError(`"${node.name}" is a circle and has corners: ${value}. A circle has no corners to make ${value} — ` +
-            '`corners:` takes a `rectangle` or a `document`', node.line);
+    if (!isBoxy(node.body.outline)) {
+        // A circle has no corners, and a diamond's or a hexagon's are drawn as
+        // points; only a box's are rounded. From a style it lands where it can.
+        if (!written)
+            return NODE_CORNERS[0];
+        throw new SourceError(`"${node.name}" is a ${node.body.outline} and has corners: ${value}. Only a box's corners are rounded or sharp — ` +
+            '`corners:` takes a `rectangle`, a `document` or a `flow-subprocess`', node.line);
     }
     return value;
 }

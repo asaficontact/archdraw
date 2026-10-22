@@ -23,6 +23,7 @@ import { describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES,
 import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
 import { isWithin, joinedToText, type LayoutNode } from './model.js';
+import { isBoxy, middleOf, shapeOf, towardOutline } from './outline.js';
 import { type Dimension, SIZE_KEYS, type SizeExpr, type SpanSide, storedSize } from './size.js';
 
 /** A stretch of one axis. */
@@ -670,7 +671,29 @@ export class Placer {
       }
       return this.textOf(node, axis, 0);
     }
-    return narrow(whole, placement.own, axis, this.facts.get(node)!.circle, this.size(node, 'x'));
+    return narrow(whole, placement.own, axis, this.outlineOf(node));
+  }
+
+  /**
+   * For a node that is not a rectangle, where the line from its middle toward
+   * a point of its box meets its outline, from the box's top-left.
+   */
+  private outlineOf(node: LayoutNode): ((across: number, down: number) => { x: number; y: number }) | undefined {
+    const body = node.body;
+    if (body.kind !== 'shape' || isBoxy(body.outline)) return undefined;
+    return (across, down) => {
+      const width = this.size(node, 'x');
+      const height = this.size(node, 'y');
+      if (body.outline === 'circle') {
+        // An ellipse, round when the two are equal; exact rather than sampled.
+        const dx = (across - 0.5) * width;
+        const dy = (down - 0.5) * height;
+        const scale = dx === 0 && dy === 0 ? 0 : 1 / Math.hypot((dx * 2) / width, (dy * 2) / height);
+        return { x: width / 2 + dx * scale, y: height / 2 + dy * scale };
+      }
+      const middle = middleOf(body.outline, body.look, width, height);
+      return towardOutline(shapeOf(body.outline, body.look, width, height).polygon, middle, { x: across * width, y: down * height });
+    };
   }
 
   private overStated(node: LayoutNode, axis: Axis, statements: Statement[]): SourceError {
@@ -861,7 +884,7 @@ export class Placer {
       if (target.part === 'text') {
         throw new SourceError(`"${node.name}" is placed against "${nameTarget(target)}", and a ${defined.kind} has no text`, placement.line);
       }
-      return this.alongFraction(whole, target, axis, () => narrow(whole, target.part, axis, false, 0));
+      return this.alongFraction(whole, target, axis, () => narrow(whole, target.part, axis));
     }
     if (target.fraction) {
       const whole = this.extentOf(node, { name: target.name }, axis, placement);
@@ -1148,7 +1171,7 @@ export class Placer {
       }
       return text;
     }
-    return narrow(whole, target.part, axis, this.facts.get(named)!.circle, this.size(named, 'x'));
+    return narrow(whole, target.part, axis, this.outlineOf(named));
   }
 
   /** A node's text on one axis, given where the node starts. */
@@ -1730,7 +1753,7 @@ export class Placer {
         const at =
           target.part === 'text'
             ? this.textOf(child, axis, whole.start)
-            : narrow(whole, target.part, axis, this.facts.get(child)!.circle, this.size(child, 'x'));
+            : narrow(whole, target.part, axis, this.outlineOf(child));
         start = Math.min(start, at.start);
         end = Math.max(end, at.start + at.size);
       }
@@ -2306,6 +2329,11 @@ export class Placer {
       width: box.width,
       height: box.height,
     };
+    if (node.body.kind === 'shape' && !isBoxy(node.body.outline) && node.body.outline !== 'circle' && (node.textAttrs['place'] === undefined || title.how === 'center')) {
+      // At the shape's own middle, which moves with its size: a triangle's stays a third of the way up.
+      const middle = middleOf(node.body.outline, node.body.look, width, height);
+      return { x: middle.x - box.width / 2, y: middle.y - box.height / 2, width: box.width, height: box.height };
+    }
     if (node.textAttrs['place'] === undefined || title.how === 'center' || facts.circle || node.body.kind === 'icon') {
       return centered;
     }
@@ -2433,21 +2461,23 @@ function commonFrame(a: LayoutNode, b: LayoutNode): LayoutNode | undefined {
 /**
  * Narrow an extent to the part a placement named. A side leaves the axis it
  * doesn't name alone (`right` is the whole right edge); a point is a point on
- * both. On a circle a corner is the point on it halfway between its sides.
+ * both. On a shape other than a rectangle, a point is where the line from the
+ * shape's middle toward that point of its box meets the outline: on a circle
+ * a corner is halfway between its sides, on a diamond the middle of an edge.
  */
-function narrow(whole: Extent, part: Part | undefined, axis: Axis, circle: boolean, diameter: number): Extent {
+function narrow(whole: Extent, part: Part | undefined, axis: Axis, onOutline?: (across: number, down: number) => { x: number; y: number }): Extent {
   if (part === undefined || part === 'text') return whole;
   const words = part.split('-');
   const isSide = (PART_SIDES as readonly string[]).includes(part);
   const [near, far] = axis === 'x' ? ['left', 'right'] : ['top', 'bottom'];
   const named = words.includes(near!) ? 0 : words.includes(far!) ? whole.size : undefined;
   if (named === undefined && isSide) return whole;
-  let at = whole.start + (named ?? whole.size / 2);
-  const across = words.includes('left') || words.includes('right');
-  const down = words.includes('top') || words.includes('bottom');
-  if (circle && across && down) {
-    const pull = (diameter / 2) * (1 - Math.SQRT1_2);
-    at += named === 0 ? pull : -pull;
+  if (onOutline) {
+    // Where on the box the point is, as fractions across and down.
+    const across = words.includes('left') ? 0 : words.includes('right') ? 1 : 0.5;
+    const down = words.includes('top') ? 0 : words.includes('bottom') ? 1 : 0.5;
+    const point = onOutline(across, down);
+    return { start: whole.start + (axis === 'x' ? point.x : point.y), size: 0 };
   }
-  return { start: at, size: 0 };
+  return { start: whole.start + (named ?? whole.size / 2), size: 0 };
 }

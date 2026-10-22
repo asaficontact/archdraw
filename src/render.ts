@@ -13,6 +13,7 @@ import {
 import type { Attrs, Mark, NodeCorners } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
+import { insideOutline as insidePolygon, isBoxy, isRound, placePath, shapeOf, SUBPROCESS_INSET, type ShapeLook } from './outline.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, overlapFill, regionTint, textOnFill, themeColor, type Theme } from './themes.js';
@@ -307,6 +308,7 @@ function patchSvg(patch: Patch, beneath: Drawn[], theme: Theme): string {
   if (patch.fill !== undefined) return `  <rect ${rect} fill="${themeColor(patch.fill, theme)}"/>`;
   const { x, y } = patch.center;
   const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
+    if (fill.polygon) return insidePolygon(fill.polygon, { x, y });
     if (!fill.round) return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
     const r = Math.min(fill.width, fill.height) / 2;
     return Math.hypot(x - (fill.x + fill.width / 2), y - (fill.y + fill.height / 2)) <= r;
@@ -454,7 +456,7 @@ function borderSvg(node: LayoutNode, theme: Theme): string {
   if (node.body.kind !== 'shape') return '';
   const face = faceOf(node);
   const border = borderOf(node.appearance, theme, theme.containerStroke);
-  return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners)}" fill="none" stroke="${border}"/>`;
+  return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners, node.body.look)}" fill="none" stroke="${border}"/>`;
 }
 
 /** What a node draws of its own, without its children, which are drawn as items of their own. */
@@ -521,6 +523,7 @@ function nodeSvg(
   }
 
   const outline = node.body.outline;
+  const look = node.body.look;
   const parts: string[] = [];
   const face = faceOf(node);
   // A node with children is colored as a backdrop however they are placed,
@@ -550,15 +553,15 @@ function nodeSvg(
       `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`,
       `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`,
       '  </mask>',
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="${fill}" stroke="none"/>`,
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="none" stroke="${border}" mask="url(#${id})"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="none"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="none" stroke="${border}" mask="url(#${id})"/>`,
     );
   } else {
     parts.push(
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners)}" fill="${fill}" stroke="${border}"/>`,
+      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="${border}"/>`,
     );
   }
-  for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height)) {
+  for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height, look)) {
     parts.push(`  <path d="${extra}" fill="none" stroke="${border}"/>`);
   }
 
@@ -569,6 +572,18 @@ function nodeSvg(
   // colors: a badged leaf is a backdrop but its text still centers. A box
   // whose only children are joined to its text is a leaf, and its lines center
   // against each other as a leaf's do.
+  // Collate's text sits on the point where its two triangles meet, so the
+  // lines break behind it on a patch of its own fill, as a line's text does.
+  const patch = node.textAttrs['fill'];
+  if (outline === 'flow-collate' && patch !== 'none' && node.lines.length > 0) {
+    const box = node.textBox;
+    const reach = 4;
+    const color = patch !== undefined ? themeColor(patch, theme) : fill === 'none' ? theme.background : fill;
+    parts.push(
+      `  <rect x="${round(node.x + box.x - reach)}" y="${round(node.y + box.y)}" width="${round(box.width + reach * 2)}" height="${round(box.height)}" fill="${color}"/>`,
+    );
+  }
+
   const titled = node.banded && container;
   const textStyle = textStyleFor(
     node.textAttrs,
@@ -772,12 +787,14 @@ const FOLD = CORNER * 2;
  * corners and a document's three round ones; the fold and the circle are as
  * they are either way.
  */
-function outlinePath(shape: Outline, x: number, y: number, w: number, h: number, corners: NodeCorners): string {
+function outlinePath(shape: Outline, x: number, y: number, w: number, h: number, corners: NodeCorners, look: ShapeLook = {}): string {
   const r = CORNER;
+  const fold = shape === 'document' ? (look.fold ?? FOLD) : FOLD;
+  if (!isBoxy(shape) && !isRound(shape, w, h)) return placePath(shapeOf(shape, look, w, h).path, x, y);
   if (corners === 'sharp' && shape !== 'circle') {
     return [
       `M${round(x)} ${round(y)}`,
-      ...(shape === 'document' ? [`H${round(x + w - FOLD)}`, `L${round(x + w)} ${round(y + FOLD)}`] : [`H${round(x + w)}`]),
+      ...(shape === 'document' ? [`H${round(x + w - fold)}`, `L${round(x + w)} ${round(y + fold)}`] : [`H${round(x + w)}`]),
       `V${round(y + h)}`,
       `H${round(x)}`,
       'Z',
@@ -797,8 +814,8 @@ function outlinePath(shape: Outline, x: number, y: number, w: number, h: number,
     // Every corner rounded but the top-right one, which is cut away and folded.
     return [
       `M${round(x + r)} ${round(y)}`,
-      `H${round(x + w - FOLD)}`,
-      `L${round(x + w)} ${round(y + FOLD)}`,
+      `H${round(x + w - fold)}`,
+      `L${round(x + w)} ${round(y + fold)}`,
       `V${round(y + h - r)}`,
       `a${r} ${r} 0 0 1 ${-r} ${r}`,
       `H${round(x + r)}`,
@@ -822,13 +839,18 @@ function outlinePath(shape: Outline, x: number, y: number, w: number, h: number,
   ].join(' ');
 }
 
-/** Lines drawn inside the outline: the flap of a fold, and nothing else so far. */
-function outlineDetail(shape: Outline, x: number, y: number, w: number, h: number): string[] {
-  void h;
-  if (shape !== 'document') return [];
-  return [
-    `M${round(x + w - FOLD)} ${round(y)} V${round(y + FOLD)} H${round(x + w)}`,
-  ];
+/** Lines drawn inside the outline: the flap of a fold, a subprocess's bars, a cylinder's near rim. */
+function outlineDetail(shape: Outline, x: number, y: number, w: number, h: number, look: ShapeLook = {}): string[] {
+  if (shape === 'document') {
+    const fold = look.fold ?? FOLD;
+    return [`M${round(x + w - fold)} ${round(y)} V${round(y + fold)} H${round(x + w)}`];
+  }
+  if (shape === 'flow-subprocess') {
+    const inset = SUBPROCESS_INSET;
+    return [`M${round(x + inset)} ${round(y)} V${round(y + h)} M${round(x + w - inset)} ${round(y)} V${round(y + h)}`];
+  }
+  if (isBoxy(shape) || isRound(shape, w, h)) return [];
+  return shapeOf(shape, look, w, h).detail.map((d) => placePath(d, x, y));
 }
 
 /** One icon, scaled from its own grid onto a square of `side` at `x, y`. */
@@ -1343,17 +1365,23 @@ interface Box {
   height: number;
   /** The circle in this square is what is drawn, so a line meets that instead. */
   round?: boolean;
+  /** Any other outline but a rectangle's, on the page. */
+  polygon?: Point[];
 }
 
-/** The rectangle drawn, and whether it is round. */
+/** The rectangle drawn, and whether it is round or another shape. */
 function faceOf(node: LayoutNode): Box {
-  return {
+  const box: Box = {
     x: node.x,
     y: node.y,
     width: node.width,
     height: node.height,
-    round: node.body.kind === 'shape' && node.body.outline === 'circle',
+    round: node.body.kind === 'shape' && isRound(node.body.outline, node.width, node.height),
   };
+  if (node.body.kind === 'shape' && !isBoxy(node.body.outline) && !box.round) {
+    box.polygon = shapeOf(node.body.outline, node.body.look, node.width, node.height).polygon.map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
+  }
+  return box;
 }
 
 /**

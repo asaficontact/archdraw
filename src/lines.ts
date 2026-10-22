@@ -18,6 +18,7 @@ import { SourceError } from './errors.js';
 import type { Attrs } from './ast.js';
 import type { Layout, LayoutEdge, LayoutNode, Rect } from './model.js';
 import { gapPixels } from './place.js';
+import { isBoxy, isRound, lineCrossings, middleOf, rayExit, shapeOf, sideOfPoint, sideStretch, towardOutline } from './outline.js';
 
 export interface Point {
   x: number;
@@ -32,6 +33,13 @@ export interface Face {
   height: number;
   /** A circle is drawn in this square, so a line meets the circle. */
   round: boolean;
+  /**
+   * Any other outline but a rectangle's, as a polygon on the page, with the
+   * shape's middle: a line meets the polygon, and the lines from the middle
+   * to the box's corners cut it into its four sides.
+   */
+  outline?: Point[];
+  middle?: Point;
 }
 
 export type Side = 'top' | 'bottom' | 'left' | 'right';
@@ -599,6 +607,8 @@ function meetOutline(face: Face, at: Point, way: Point): Point {
     const b = fx * way.x + fy * way.y;
     const disc = b * b - (fx * fx + fy * fy - r * r);
     if (disc >= 0) hits.push(-b - Math.sqrt(disc), -b + Math.sqrt(disc));
+  } else if (face.outline) {
+    hits.push(...lineCrossings(face.outline, at, way));
   } else {
     const within = (value: number, low: number, size: number): boolean => value >= low - 0.5 && value <= low + size + 0.5;
     for (const x of [face.x, face.x + face.width]) {
@@ -626,6 +636,10 @@ function leaving(face: Face, from: Point, way: Point): Point {
     const fy = from.y - c.y;
     const b = fx * way.x + fy * way.y;
     const t = -b + Math.sqrt(Math.max(0, b * b - (fx * fx + fy * fy - r * r)));
+    return { x: from.x + way.x * t, y: from.y + way.y * t };
+  }
+  if (face.outline) {
+    const t = rayExit(face.outline, from, way) ?? 0;
     return { x: from.x + way.x * t, y: from.y + way.y * t };
   }
   const tx = way.x > 1e-9 ? (face.x + face.width - from.x) / way.x : way.x < -1e-9 ? (face.x - from.x) / way.x : Infinity;
@@ -710,13 +724,20 @@ const MET_SIDE: Record<WayWord, Side> = { down: 'top', up: 'bottom', left: 'righ
 
 /** The drawn rectangle of a node. */
 export function faceOfNode(node: LayoutNode): Face {
-  return {
+  const face: Face = {
     x: node.x,
     y: node.y,
     width: node.width,
     height: node.height,
-    round: node.body.kind === 'shape' && node.body.outline === 'circle',
+    round: node.body.kind === 'shape' && isRound(node.body.outline, node.width, node.height),
   };
+  if (node.body.kind === 'shape' && !isBoxy(node.body.outline) && !face.round) {
+    const { outline, look } = node.body;
+    face.outline = shapeOf(outline, look, node.width, node.height).polygon.map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
+    const middle = middleOf(outline, look, node.width, node.height);
+    face.middle = { x: node.x + middle.x, y: node.y + middle.y };
+  }
+  return face;
 }
 
 function endOf(edge: LayoutEdge, which: 'from' | 'to'): End {
@@ -1192,8 +1213,9 @@ function distance(a: Point, b: Point): number {
 
 // --- points on a box ------------------------------------------------------------
 
+/** A face's middle: its box's, or a shape's own, which is a triangle's a third of the way from its base. */
 export function centerOf(face: Face): Point {
-  return { x: face.x + face.width / 2, y: face.y + face.height / 2 };
+  return face.middle ?? { x: face.x + face.width / 2, y: face.y + face.height / 2 };
 }
 
 /** The sides a position sits on: `bottom-right` is on the bottom and the right, `top-center` on the top only. */
@@ -1213,8 +1235,10 @@ function positionPoint(face: Face, position: Position): Point {
     x: horizontal === 'left' ? face.x : horizontal === 'right' ? face.x + face.width : face.x + face.width / 2,
     y: vertical === 'top' ? face.y : vertical === 'bottom' ? face.y + face.height : face.y + face.height / 2,
   };
-  // A circle has no corners; its corner is where the diagonal meets it.
+  // A circle has no corners; its corner is where the diagonal meets it. On
+  // another shape every point is where the line from its middle meets it.
   if (face.round && vertical && horizontal) return outlineToward(face, point);
+  if (face.outline) return outlineToward(face, point);
   return point;
 }
 
@@ -1233,6 +1257,29 @@ function onSide(face: Face, side: Side, along: number): Point {
     const turn = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, across / radius));
     const angle = { right: turn, bottom: Math.PI / 2 - turn, left: Math.PI - turn, top: -Math.PI / 2 + turn }[side];
     return { x: center.x + radius * Math.cos(angle), y: center.y + radius * Math.sin(angle) };
+  }
+  if (face.outline) {
+    // The side is the stretch of outline between the lines from the middle to
+    // its two corners. `along` lands where the stretch passes it, so a line
+    // down from the middle of one box's bottom meets the next square on; one
+    // past the stretch's ends is placed on it in proportion instead.
+    const stretch = sideStretch(face.outline, centerOf(face), face, side);
+    const key = side === 'top' || side === 'bottom' ? 'x' : 'y';
+    const low = key === 'x' ? face.x : face.y;
+    const size = key === 'x' ? face.width : face.height;
+    const values = stretch.map((p) => p[key]);
+    const lo = Math.min(...values);
+    const hi = Math.max(...values);
+    const target = along >= lo && along <= hi ? along : lo + ((along - low) / size) * (hi - lo);
+    for (let i = 1; i < stretch.length; i++) {
+      const a = stretch[i - 1]!;
+      const b = stretch[i]!;
+      if ((a[key] - target) * (b[key] - target) <= 0 && a[key] !== b[key]) {
+        const f = (target - a[key]) / (b[key] - a[key]);
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+      }
+    }
+    return Math.abs(stretch[0]![key] - target) < Math.abs(stretch[stretch.length - 1]![key] - target) ? stretch[0]! : stretch[stretch.length - 1]!;
   }
   switch (side) {
     case 'top':
@@ -1257,6 +1304,7 @@ function outlineToward(face: Face, target: Point): Point {
     const length = Math.hypot(dx, dy);
     return { x: center.x + (dx / length) * radius, y: center.y + (dy / length) * radius };
   }
+  if (face.outline) return towardOutline(face.outline, center, target);
   const scale = Math.min(
     dx === 0 ? Infinity : face.width / 2 / Math.abs(dx),
     dy === 0 ? Infinity : face.height / 2 / Math.abs(dy),
@@ -1278,6 +1326,7 @@ function headingAt(face: Face, at: Point): Point {
     const dy = at.y - center.y;
     return Math.abs(dx) >= Math.abs(dy) ? SIDE_NORMAL[dx >= 0 ? 'right' : 'left'] : SIDE_NORMAL[dy >= 0 ? 'bottom' : 'top'];
   }
+  if (face.outline) return SIDE_NORMAL[sideOfPoint(centerOf(face), face, at)];
   distances.sort((a, b) => a[0] - b[0]);
   return SIDE_NORMAL[distances[0]![1]];
 }

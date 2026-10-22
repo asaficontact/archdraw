@@ -55,7 +55,7 @@ node <name> ["<text>" [(<text settings>)]] [<placement> | <attribute>] ...
 
 Leave the text out and the node shows its name (`node parser` reads "parser"). Write `""` for a deliberately blank node. Inside a text, ` / ` (a slash with a space on each side) is a line break; `TCP/IP` and URLs survive.
 
-The body is `shape: rectangle | document | circle | none` (`none` is bare text, for notes and captions) or `icon: disk | desktop | laptop | package | cubes | cube | database`, a picture with no box. `badge: <icon>` puts a picture beside the text as part of the label. A picture outside the set is declared with `icon <name>` and SVG between `"""` marks; prefer the built-ins.
+The body is `shape: rectangle | document | circle | diamond | pill | parallelogram | hexagon | trapezoid | triangle | cylinder | none` (`none` is bare text, for notes and captions; a flowchart shape with no geometric name is `flow-` and its meaning, such as `flow-subprocess` or `flow-delay`; settings follow in a bracket, `shape: triangle (aim: up)`) or `icon: disk | desktop | laptop | package | cubes | cube | database`, a picture with no box. `badge: <icon>` puts a picture beside the text as part of the label. A picture outside the set is declared with `icon <name>` and SVG between `"""` marks; prefer the built-ins.
 
 ```
 node dump  "nightly dump"  shape: document

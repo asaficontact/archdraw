@@ -9,7 +9,8 @@
  */
 import { isWithin, joinedToText, type Layout, type LayoutEdge, type LayoutNode } from './model.js';
 import { ARROW_MARKER_WIDTH, LINE_WIDTH, UNIT, arrowLength } from './constants.js';
-import { crossingPoints, describeEdge, planSides, traceRoute, traceVisible, type Point, type Route, type SideEnds } from './lines.js';
+import { centerOf, crossingPoints, describeEdge, faceOfNode, planSides, traceRoute, traceVisible, type Face, type Point, type Route, type SideEnds } from './lines.js';
+import { clearOf, insideOutline as insidePolygon, sizeFor } from './outline.js';
 import { placeLineTexts, type PlacedText } from './linetexts.js';
 
 /**
@@ -138,8 +139,8 @@ function edgeNodeOverlaps(layout: Layout, routes: Map<LayoutEdge, Route>): Findi
     for (const node of grid.near(trace)) {
       if (holdsEnd(node, edge)) continue;
       const inner = { x: node.x + 1, y: node.y + 1, width: node.width - 2, height: node.height - 2 };
-      const round = node.body.kind === 'shape' && node.body.outline === 'circle';
-      const through = round ? crossingCircle(trace, node) : crossing(trace, inner);
+      const face = faceOfNode(node);
+      const through = face.round || face.outline ? crossingCircle(trace, node, face) : crossing(trace, inner);
       if (through === undefined) continue;
       const own = node === edge.from || node === edge.to;
       const words = `line ${describeEdge(edge)} ${own ? 'runs through its own box' : 'crosses node'} ${node.name}, ` +
@@ -247,14 +248,18 @@ function crossing(trace: { x: number; y: number }[], box: { x: number; y: number
 }
 
 /**
- * The same for a circle, which is drawn in its node's square: walked a couple
- * of pixels at a time, a point counting as inside only past a pixel within the
- * outline, so a line ending on the circle doesn't cross it.
+ * The same for a circle, or any outline but a rectangle's, which is drawn in
+ * its node's box: walked a couple of pixels at a time, a point counting as
+ * inside only past a pixel within the outline, so a line ending on it doesn't
+ * cross it.
  */
-function crossingCircle(trace: { x: number; y: number }[], node: LayoutNode): { enters: string; leaves: string } | undefined {
+function crossingCircle(trace: { x: number; y: number }[], node: LayoutNode, face: Face): { enters: string; leaves: string } | undefined {
   const radius = node.width / 2 - 1;
-  const center = { x: node.x + node.width / 2, y: node.y + node.height / 2 };
-  const inside = (p: { x: number; y: number }): boolean => Math.hypot(p.x - center.x, p.y - center.y) < radius;
+  const center = centerOf(face);
+  const polygon = face.outline;
+  const inside = polygon
+    ? (p: { x: number; y: number }): boolean => insidePolygon(polygon, p) && clearOf(polygon, p, 1)
+    : (p: { x: number; y: number }): boolean => Math.hypot(p.x - center.x, p.y - center.y) < radius;
   const sideAt = (p: { x: number; y: number }): string => {
     const dx = p.x - center.x;
     const dy = p.y - center.y;
@@ -567,6 +572,26 @@ function textOverflows(layout: Layout): Finding[] {
     if (text.width <= 0 || text.height <= 0) continue;
     const place = node.textAttrs['place'];
     if (place !== undefined && place !== 'center' && !place.startsWith('inside')) continue;
+    const face = faceOfNode(node);
+    if (face.outline && node.body.outline !== 'flow-collate') {
+      // Any other outline than a box's: the text spills where it passes the outline.
+      const { outline, look } = node.body;
+      const corners = [0, 0.5, 1].flatMap((fx) => [0, 0.5, 1].map((fy) => ({ x: node.x + text.x + text.width * fx, y: node.y + text.y + text.height * fy })));
+      if (corners.every((p) => insidePolygon(face.outline!, p))) continue;
+      const needs = sizeFor(outline, look, text.width, text.height);
+      const wider = Math.max(0, needs.width - node.width);
+      const taller = Math.max(0, needs.height - node.height);
+      const more = [wider > EPSILON ? `${units(wider)} more width` : '', taller > EPSILON ? `${units(taller)} more height` : ''].filter((part) => part.length > 0);
+      found.push(
+        new Finding(
+          'text-overflow',
+          `the text of node ${node.name} runs past the outline of its ${outline}` + (more.length > 0 ? `; it needs ${more.join(' and ')}` : ''),
+          node.line,
+        ),
+      );
+      continue;
+    }
+    if (node.body.outline === 'flow-collate') continue;
     const spill = {
       left: Math.max(0, -text.x),
       right: Math.max(0, text.x + text.width - node.width),

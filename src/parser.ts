@@ -70,7 +70,11 @@ import { CHECK_DEFAULTS, CHECK_KINDS, setCheck } from './checks.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
 import { isAttrKey, nameMark, OpenString, tokenizeLine, type Token } from './lexer.js';
+import { SHAPE_SETTINGS } from './outline.js';
 import { checkOpacity } from './place.js';
+
+/** The settings a shape's bracket takes as a word on its own: `cylinder (lying)`. */
+const SHAPE_FLAGS = [...new Set(Object.values(SHAPE_SETTINGS).flatMap((one) => Object.entries(one).filter(([, kind]) => kind === 'flag').map(([name]) => name)))];
 import { readSize, SIZE_KEYS, writeSize } from './size.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
@@ -714,6 +718,48 @@ function readAttr(
     }
     return next;
   }
+  if (key === 'shape' && follows(tokens, at + 2, '(')) {
+    // `shape: cylinder (cap: 1.5, lying)` — a value, then its settings. Which
+    // settings the shape takes is checked once its shape is known, since a
+    // style may carry the shape and a node the bracket's other half.
+    const value = tokens[at + 1]!;
+    if (value.quoted || isAttrKey(value)) {
+      throw new SourceError(`${subject}: shape: names an outline, such as diamond, before its settings`, line);
+    }
+    setOnce(attrs, 'shape', value.text, subject, line);
+    // A flag stands alone, `lying`; read it as `lying: true`.
+    const inner: Token[] = [];
+    let depth = 0;
+    let end = at + 2;
+    for (; end < tokens.length; end++) {
+      const token = tokens[end]!;
+      if (!token.quoted && token.text === '(') depth += 1;
+      if (!token.quoted && token.text === ')') depth -= 1;
+      const bare = token.text.replace(/,$/, '');
+      if (depth === 1 && !token.quoted && SHAPE_FLAGS.includes(bare) && !isAttrKey(tokens[end - 1]!)) {
+        inner.push({ ...token, text: `${bare}:` }, { ...token, text: token.text.endsWith(',') ? 'true,' : 'true' });
+      } else {
+        inner.push(token);
+      }
+      if (depth === 0) break;
+    }
+    const takes = Object.keys(SHAPE_SETTINGS[value.text] ?? {});
+    if (takes.length === 0) {
+      throw new SourceError(`${subject}: \`shape: ${value.text}\` takes no settings, so it has no bracket`, line);
+    }
+    const read = readBracket(inner, 0, takes, {
+      subject,
+      what: `\`shape: ${value.text}\``,
+      kind: `a ${value.text}`,
+      example: `${takes[0]}: …`,
+      line,
+    });
+    if (Object.keys(read.values).length === 0) {
+      throw new SourceError(`${subject}: \`shape: ${value.text}\` opens empty brackets`, line);
+    }
+    for (const [inside, set] of Object.entries(read.values)) setOnce(attrs, `shape.${inside}`, set, subject, line);
+    return end + 1;
+  }
   const bracketKeys = BRACKET_KEYS[key];
   if (bracketKeys !== undefined && follows(tokens, at + 1, '(')) {
     // `text: (color: theme-muted)` — the whole bracket belongs to one part, and it is
@@ -1349,7 +1395,7 @@ function parseNode(head: Token[], line: number): NodeStmt {
  * A node's text takes the look keys and `reads:` (design.org 7.2). `at` is
  * read only to be refused with the side form, so it isn't listed as one it takes.
  */
-const NODE_TEXT_KEYS = [...TEXT_KEYS, 'reads'] as const;
+const NODE_TEXT_KEYS = [...TEXT_KEYS, 'reads', 'fill'] as const;
 const NODE_TEXT_LISTED = NODE_TEXT_KEYS.filter((key) => key !== 'at');
 
 /** A node's text turns a quarter turn; `along` follows a line, and a box has none. */
