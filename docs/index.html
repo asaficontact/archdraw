@@ -14856,13 +14856,38 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
           // they are dimmed, not cleared, and undoing back to it lights them up
           // again.
           findings.classList.toggle('stale', checked !== null && source.value !== checked);
+          if (waiting) clearTimeout(waiting);
+          waiting = null;
+          render();
+        }
+
+        // A diagram that takes long to draw is drawn once typing pauses, so
+        // the keystrokes aren't held up behind it (issue #6). A quick one is
+        // drawn on every keystroke, as before.
+        var waiting = null;
+        var cost = 0;
+        function drawSoon() {
+          if (cost < 50) return draw();
+          paint();
+          findings.classList.toggle('stale', checked !== null && source.value !== checked);
+          if (waiting) clearTimeout(waiting);
+          waiting = setTimeout(function () {
+            waiting = null;
+            render();
+          }, 150);
+        }
+
+        function render() {
           var svg;
+          var started = performance.now();
           try {
             svg = reladraw.compile(source.value, viewing());
           } catch (e) {
+            cost = performance.now() - started;
             show(e.message, e instanceof reladraw.SourceError ? e.line : undefined);
             return;
           }
+          cost = performance.now() - started;
           drawn = svg;
           diagram.innerHTML = svg;
           diagram.style.background = pageColor(svg);
@@ -15189,7 +15214,7 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
 
         var pending = null;
         source.addEventListener('input', function () {
-          draw();
+          drawSoon();
           current = named(source.value);
           // The stored copy trails the typing rather than following every
           // keystroke: it isn't looked at until the page is left.

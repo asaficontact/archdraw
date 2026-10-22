@@ -1309,6 +1309,7 @@ reladraw check diagram.reladraw
 | `--guides` | draw the guides |
 | `--checks "<kind>: on, …"` | turn kinds of finding on or off, over the file |
 | `--no-checks` | print no findings; errors still print |
+| `-v`, `--version` | print the version |
 
 The output is a standalone SVG: every picture is drawn into it as path data, never from a font or a linked file. A web page can draw a diagram in place with `<reladraw-diagram>`; see "In a web page" in the README.
 
@@ -1377,6 +1378,11 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- **`reladraw --version`**, or `-v`, prints the version.
+- **The playground waits for a pause in typing** before it redraws a diagram that is slow to draw, so the keystrokes aren't held up behind it. A quick one still redraws on every keystroke. Suggested in #6.
 
 **0.17.0**
 

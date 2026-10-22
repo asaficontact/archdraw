@@ -26,6 +26,8 @@ const USAGE = `reladraw — draw a diagram from stated placement
   --checks    turn kinds of finding on or off, over what the file says:
               --checks "edge-crossings: on, node-overlap: off"
   --no-checks print no findings. Errors still print.
+  -v, --version
+              print the version.
   -h, --help  print this.
 `;
 
@@ -36,6 +38,12 @@ async function main(argv: string[]): Promise<number> {
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
     process.stdout.write(USAGE);
     return argv.length === 0 ? 1 : 0;
+  }
+  if (argv.includes('-v') || argv.includes('--version')) {
+    // package.json ships beside dist/, so the number is the installed one.
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    process.stdout.write(`${pkg.version}\n`);
+    return 0;
   }
 
   const verb = argv[0]!;
