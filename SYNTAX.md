@@ -1,4 +1,4 @@
-# Syntax reference — 0.17.0
+# Syntax reference — 0.17.1
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1193,7 +1193,7 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.17.1**
 
 - **`reladraw --version`**, or `-v`, prints the version.
 - **The playground waits for a pause in typing** before it redraws a diagram that is slow to draw, so the keystrokes aren't held up behind it. A quick one still redraws on every keystroke. Suggested in #6.
