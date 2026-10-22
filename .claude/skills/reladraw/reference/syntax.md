@@ -1,6 +1,6 @@
-# Syntax reference — 0.16.0
+# Syntax reference — 0.17.0
 
-What the language accepts. The changelog at the end lists what changed since each published version; this branch's changes, which are large, are under **Unreleased**, with a table of every old spelling and what to write instead.
+What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
 One idea runs through all of it: **the file says where things go, and the tool draws what it says.** It never chooses an arrangement, never moves a box to make room for something, and never finds its own way round anything. Where the result may not read as meant (two boxes on one spot, a line through a box, a text on a text), it draws it as written and prints a *finding* saying where and by how much. The fix is always something you write.
 
@@ -1192,7 +1192,7 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.17.0**
 
 The redesign. The tool no longer decides anything the file doesn't say: a gap is exact, nothing moves a box to make room, lines are straight unless told and go only where they are told, and anything that may not read as meant is drawn as written and reported as a finding. Almost every diagram written for 0.16.0 needs changes; the table below gives each old spelling and what to write instead.
 
