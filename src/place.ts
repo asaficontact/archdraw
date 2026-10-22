@@ -1128,6 +1128,11 @@ export class Placer {
       // `vennShift` asks, to find where this part goes.
       whole = { start: this.start(named, axis) + this.vennShift(named.parent!, axis), size: this.size(named, axis) };
       if (target.part === 'text') text = this.textOf(named, axis, whole.start);
+    } else if (this.nestedInFrame(named, parent, axis)) {
+      // Inside a sibling: measured in this frame, so a container placed on
+      // the page needn't be placed before its own children are.
+      whole = { start: this.within(named, parent, axis), size: this.size(named, axis) };
+      if (target.part === 'text') text = this.textOf(named, axis, whole.start);
     } else {
       // Outside its container, or inside another (design.org 5.2): found on
       // the page and measured from this frame's origin.
@@ -1418,6 +1423,19 @@ export class Placer {
       );
     }
     return length;
+  }
+
+  /**
+   * Whether `named` sits inside a sibling within `frame`'s frame, with every
+   * container between them placed in that frame rather than by what it holds.
+   */
+  private nestedInFrame(named: LayoutNode, frame: LayoutNode, axis: Axis): boolean {
+    let container = named.parent;
+    if (!container || container === frame) return false;
+    for (; container && container !== frame; container = container.parent) {
+      if (this.frameAnchor(container, axis) || this.vennPart(container) !== undefined || this.facts.get(container)!.venn) return false;
+    }
+    return container === frame;
   }
 
   /** Where a node starts in the frame of `frame`, one of its containers, or on the page when that is undefined. */
