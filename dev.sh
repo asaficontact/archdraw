@@ -69,8 +69,8 @@ Commands:
                                  stranger's-first-command check, run before
                                  every release.
   check-version <version>       Refuse unless README.md, SYNTAX.md's title and
-                                 changelog, and the skill's copy of SYNTAX.md
-                                 all say <version>. Run by `npm version` as the
+                                 changelog, the skill's SKILL.md and its copy
+                                 of SYNTAX.md all say <version>. Run by `npm version` as the
                                  preversion script, so a release whose docs
                                  name the old number stops before anything is
                                  bumped, committed or tagged.
@@ -591,6 +591,10 @@ case "$cmd" in
       || { echo "SYNTAX.md: the changelog still has an **Unreleased** entry" >&2; bad=1; }
     cmp -s SYNTAX.md .claude/skills/reladraw/reference/syntax.md \
       || { echo "the skill's copy of SYNTAX.md is stale: run ./dev.sh skill" >&2; bad=1; }
+    # The skill compares this number with `reladraw --version` to tell the
+    # user which of the two is out of date.
+    grep -q "^This skill teaches reladraw $v\. " .claude/skills/reladraw/SKILL.md \
+      || { echo "the skill's SKILL.md does not say \"This skill teaches reladraw $v.\"" >&2; bad=1; }
     llms="$(tmp_path llms txt)"
     llms_full "$llms"
     cmp -s "$llms" docs/llms-full.txt \
@@ -660,10 +664,11 @@ case "$cmd" in
     v="$(node -p 'require("./package.json").version')"
     readme_v="$(grep -oE '^Version [0-9.]+' README.md | cut -d' ' -f2 | sed 's/\.$//')"
     syntax_v="$(head -1 SYNTAX.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')"
-    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ]; then
-      fresh "version $v in package.json, README.md and SYNTAX.md"
+    skill_v="$(grep -oE '^This skill teaches reladraw [0-9]+\.[0-9]+\.[0-9]+' .claude/skills/reladraw/SKILL.md | grep -oE '[0-9.]+$')"
+    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ] && [ "$skill_v" = "$v" ]; then
+      fresh "version $v in package.json, README.md, SYNTAX.md and the skill"
     else
-      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none} — expected only mid-release"
+      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none}, skill ${skill_v:-none} — expected only mid-release"
       found=1
     fi
 

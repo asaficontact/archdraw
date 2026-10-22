@@ -18,13 +18,19 @@ Every other diagram language hands the arrangement to a layout engine, so where 
 
 That matters here specifically. You can't see the SVG you produced. With auto-layout that leaves you guessing; with reladraw the arrangement is in the sentences you just wrote, and where the picture may not read as meant, the tool tells you in words.
 
-## Check it is installed
+## Check it is installed, and the same version as this skill
+
+This skill teaches reladraw 0.18.0. Once per session, before the first render, run:
 
 ```
-reladraw --help
+reladraw --version
 ```
 
-If that fails, `npx reladraw` works without installing, and `npm install -g reladraw` installs the command. If `--help` shows no `render` command, the installed version is older than this skill; tell the user, since this page describes the newer language.
+- **The same:** say nothing.
+- **Older, or `--version` isn't recognized** (it arrived in 0.17.1): the tool is older than this page and will refuse some of what it teaches. Tell the user, and give them `npm install -g reladraw@latest`.
+- **Newer:** this skill is out of date. Tell the user, and give them `npx skills add reladraw/reladraw -g` to refresh it. Carry on meanwhile; where an error names a replacement spelling, trust the error over this page.
+
+If `reladraw` isn't installed, `npx reladraw` works without installing, and `npm install -g reladraw` installs it.
 
 ## The loop
 
