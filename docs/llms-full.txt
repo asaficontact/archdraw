@@ -1423,6 +1423,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 **Unreleased**
 
 - **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
+- **The playground's error message can be copied**, with a Copy button beside it or by selecting it. Only the underlined line number jumps to the line now; a click anywhere on the message used to, which took a selection away.
 
 **0.18.0**
 

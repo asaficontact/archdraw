@@ -421,14 +421,16 @@
         display: none;
       }
 
-      #error.locatable {
-        cursor: pointer;
-      }
-
       #error b {
         font-weight: 600;
         color: var(--warn);
         border-bottom: 1px solid currentColor;
+        cursor: pointer;
+      }
+
+      #error button {
+        float: right;
+        margin: -3px 0 0 12px;
       }
 
       .toggle {
@@ -15651,21 +15653,38 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
 
         function show(message, line) {
           error.textContent = '';
-          error.classList.remove('locatable');
           errorLine = null;
           if (message === null) {
             diagram.classList.remove('stale');
             return;
           }
+          // For pasting into an issue or a chat with an agent.
+          var copyError = document.createElement('button');
+          copyError.type = 'button';
+          copyError.textContent = 'Copy';
+          copyError.title = 'Copy the error';
+          error.appendChild(copyError);
+          var said = message;
           if (line !== undefined && line !== null) {
             errorLine = line;
-            error.classList.add('locatable');
+            said = 'line ' + line + ': ' + message;
             var where = document.createElement('b');
             where.textContent = 'line ' + line;
+            where.title = 'Select the line in the source';
             error.appendChild(where);
             error.appendChild(document.createTextNode(': '));
           }
           error.appendChild(document.createTextNode(message));
+          copyError.addEventListener('click', function () {
+            toClipboard(said).then(
+              function () {
+                flash(copyError, 'Copied');
+              },
+              function () {
+                flash(copyError, 'Blocked');
+              },
+            );
+          });
           // The last good diagram stays up, dimmed. Every half-typed line is a
           // parse error, so blanking the pane would make it flicker on every
           // keystroke and hide the thing being edited against.
@@ -16120,10 +16139,13 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
           zoom.textContent = actual ? 'Fit' : 'Actual size';
         });
 
-        /* ---- the error names a line, so clicking it goes there ---- */
+        /* ---- the error names a line, so clicking that goes there ---- */
 
-        error.addEventListener('click', function () {
-          if (errorLine !== null) selectLine(errorLine);
+        // Only the line's name, so the rest of the message can be selected:
+        // a drag across it used to end in a click that took the selection
+        // away to the source.
+        error.addEventListener('click', function (event) {
+          if (errorLine !== null && event.target.tagName === 'B') selectLine(errorLine);
         });
 
         function selectLine(number) {
