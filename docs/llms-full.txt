@@ -1362,7 +1362,7 @@ reladraw format --check diagram.reladraw
 reladraw format --init
 ```
 
-`format` lays each file out again in place. By default every statement is on one line, and neighboring statements with the same keyword line their clauses up in columns, each as wide as its longest clause plus two spaces; a blank line, a comment or a new keyword starts a new set of columns. A comment at the end of a line lines up with the others in its set. A statement written over several lines with a comment among them keeps its lines, with the indent tidied. Blank lines stay as written.
+`format` lays each file out again in place. By default every statement is on one line, and neighboring statements with the same keyword line their clauses up in columns, each as wide as its longest clause plus two spaces; a blank line or a new keyword starts a new set of columns, and a comment line between them doesn't. A comment at the end of a line lines up with the others in its set. A statement written over several lines with a comment among them keeps its lines, with the indent tidied. Blank lines stay as written.
 
 Inside a clause, spacing comes out as these pages write it, whatever was typed: one space after a key's colon and between words, none just inside a bracket, and a comma against the word before it, so `line:( corners:rounded , path:square )` becomes `line: (corners: rounded, path: square)`.
 

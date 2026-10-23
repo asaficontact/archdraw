@@ -15523,8 +15523,8 @@ const SETTINGS = [
         ['aligned', 'each column as wide as its longest clause'],
         ['off', 'each clause straight after the one before, a clause gap apart'],
     ]),
-    wordSetting('columns-shared-by', 'Which statements line their clauses up in shared columns.', [
-        ['same-keyword-neighbors', 'adjacent, with the same keyword\n(a blank line, comment or new keyword ends the set)'],
+    wordSetting('columns-shared-by', 'Which statements line their clauses up in shared columns. A comment line\nbetween them never ends a set.', [
+        ['same-keyword-neighbors', 'adjacent, with the same keyword\n(a blank line or new keyword ends the set)'],
         ['neighbors', 'adjacent, whatever their keyword'],
         ['same-keyword', 'the same keyword, across blank lines'],
         ['file', 'the whole file'],
@@ -15864,12 +15864,16 @@ function textWidth(text) {
 function layOutItems(items, settings) {
     const gap = settings['clause-gap'] === 'tab' ? '\t' : ' '.repeat(settings['clause-gap']);
     const gapWidth = settings['clause-gap'] === 'tab' ? 1 : settings['clause-gap'];
-    // Which one-line statements share columns: each is given a group number.
+    // Which one-line statements share columns: each is given a group number. A
+    // comment line is passed over, as if it weren't there: it labels what
+    // follows rather than separating it.
     const group = new Map();
     let current = -1;
     let previous;
     let lastStatement;
     items.forEach((item, index) => {
+        if (item.kind === 'comment')
+            return;
         if (item.kind !== 'statement') {
             if (item.kind !== 'blank' || settings['columns-shared-by'] !== 'same-keyword') {
                 if (settings['columns-shared-by'] !== 'file')

@@ -128,8 +128,8 @@ export const SETTINGS: Setting[] = [
     ['aligned', 'each column as wide as its longest clause'],
     ['off', 'each clause straight after the one before, a clause gap apart'],
   ]),
-  wordSetting('columns-shared-by', 'Which statements line their clauses up in shared columns.', [
-    ['same-keyword-neighbors', 'adjacent, with the same keyword\n(a blank line, comment or new keyword ends the set)'],
+  wordSetting('columns-shared-by', 'Which statements line their clauses up in shared columns. A comment line\nbetween them never ends a set.', [
+    ['same-keyword-neighbors', 'adjacent, with the same keyword\n(a blank line or new keyword ends the set)'],
     ['neighbors', 'adjacent, whatever their keyword'],
     ['same-keyword', 'the same keyword, across blank lines'],
     ['file', 'the whole file'],

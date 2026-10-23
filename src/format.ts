@@ -259,12 +259,15 @@ function layOutItems(items: Item[], settings: FormatSettings): string[] {
   const gap = settings['clause-gap'] === 'tab' ? '\t' : ' '.repeat(settings['clause-gap']);
   const gapWidth = settings['clause-gap'] === 'tab' ? 1 : settings['clause-gap'];
 
-  // Which one-line statements share columns: each is given a group number.
+  // Which one-line statements share columns: each is given a group number. A
+  // comment line is passed over, as if it weren't there: it labels what
+  // follows rather than separating it.
   const group = new Map<number, number>();
   let current = -1;
   let previous: Item | undefined;
   let lastStatement: Extract<Item, { kind: 'statement' }> | undefined;
   items.forEach((item, index) => {
+    if (item.kind === 'comment') return;
     if (item.kind !== 'statement') {
       if (item.kind !== 'blank' || settings['columns-shared-by'] !== 'same-keyword') {
         if (settings['columns-shared-by'] !== 'file') lastStatement = undefined;
