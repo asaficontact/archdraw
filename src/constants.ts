@@ -7,29 +7,32 @@ import { plain, type Line } from './text.js';
 
 /** Inside a box, between its border and its contents. */
 export const PAD = 14;
-/** Between stacked children of one container. */
-export const CHILD_GAP = 10;
+/**
+ * The file's unit, in pixels: about a quarter of an ordinary one-line box, so
+ * the gap words land near whole numbers. Findings measure in it. Provisional
+ * until the gap words are measured against it.
+ */
+export const UNIT = 12;
 /** Between a container's own text and its first child. */
 export const HEADER_GAP = 10;
 /**
- * How far each deck copy is offset behind the front face. It has to clear a
- * whole line of text plus the padding above it, or a copy's text is drawn and
- * then immediately covered by the copy in front of it.
+ * How far each card of a deck sits up and to the left of the one in front. It
+ * has to clear a whole line of text plus the padding above it, or a card's
+ * text is drawn and then immediately covered by the card in front of it.
  */
 export const DECK_STEP = 34;
 /**
- * The named gaps a placement may ask for, each a *minimum* distance rather than a
- * fixed one. Anything the author puts between two things widens the space
- * between them on its own, so no gap here ever has to be chosen large enough
- * to leave room for something else.
+ * The named gaps a placement may ask for, each an exact distance in whole
+ * units. Chosen 2026-10-14 against today's spacing: 2, 4 and 8 units keep the
+ * old look, where 1, 2 and 3 left a line barely longer than its arrowhead.
  */
 export const GAPS: Record<string, number> = {
   // A zero gap turns an offset into edge-to-edge contact, so "my top edge
   // against Docker's bottom edge" needs no vocabulary of its own.
   none: 0,
-  tight: 24,
-  normal: 56,
-  wide: 110,
+  tight: 2 * UNIT,
+  normal: 4 * UNIT,
+  wide: 8 * UNIT,
 };
 
 /**
@@ -82,60 +85,6 @@ export function arrowLength(thickness: number): number {
 }
 
 /**
- * Line left showing behind the head of an edge with no text, so a gap an arrow
- * crosses is at least this plus its heads. Stacked children sit `CHILD_GAP`
- * apart, which is less than one head, and an arrow between them drew as a head
- * with no line. This is what the tightest named gap already leaves behind a
- * normal head, so any gap an author could have asked for holds it unchanged.
- */
-export const BARE_EDGE_RUN = GAPS['tight']! - ARROW_LENGTH;
-
-/**
- * Line left showing between an edge's text and the box at that end of the
- * corridor it crosses.
- *
- * Unlike `SEPARATION_GAP` and `ATTACH_MARGIN` this is not "small on purpose".
- * Those two keep two things from touching, and the least distance that reads as
- * "not touching" is the right one. This one has something to show: a text sits
- * in a knockout that erases the line behind it, so whatever is left either side
- * is the entire evidence that the text belongs to an edge at all. At ten pixels
- * it did not read as a line — the seed diagram in the playground drew as a word
- * with a dash beside it — so it is the length of a run of line, not a margin.
- *
- * Say `gap:` if you want the corridor wider than its contents.
- */
-export const TEXT_CLEARANCE = 20;
-
-/**
- * How much room an edge's text takes along one axis.
- *
- * The knockout rectangle drawn behind a text is the text plus five either side,
- * so that rectangle, not the glyphs, is what must not overlap anything.
- *
- * Shared by the resolver, which widens a corridor to hold a text, and the
- * renderer, which spaces the lanes of a channel by it, so the two cannot
- * disagree about how much room a text needs. The two ask different questions of
- * it and both are right: the resolver measures *along* the run, so an edge
- * traveling horizontally needs the text's width; the renderer measures *across*
- * the channel, so an edge traveling horizontally down one needs its height.
- */
-export function textExtent(
-  lines: Line[],
-  textAttrs: Attrs,
-  axis: 'x' | 'y',
-  measurer: Measurer,
-  fontSize: number,
-  line: number,
-): number {
-  const size = fontSizeFor('edge', textAttrs, fontSize, line);
-  const width = lines.reduce(
-    (widest, drawn) => Math.max(widest, measurer.measure(plain(drawn), size).width),
-    0,
-  );
-  return axis === 'x' ? width + 10 : lines.length * measurer.lineHeight(size);
-}
-
-/**
  * The widest of these lines, which is how wide the block of them is. Shared by
  * the resolver, which sizes a node to hold its text, and the renderer, which
  * places that block in the room the node gave it.
@@ -163,9 +112,9 @@ export const DEFAULT_FONT_SIZE = 14;
 
 /**
  * The named text sizes, each a multiple of the document's own size. A plain
- * number of pixels is accepted too, as it is for a gap: nothing else in the
- * diagram moving can make it wrong. The names stay the default because they
- * follow the document's size when that is retuned, and a number does not.
+ * number is a multiple too, and `16px` a size in pixels: nothing else in the
+ * diagram moving can make either wrong. The names stay preferred because they
+ * say why one text is bigger than another.
  *
  * `small` is sampled rather than chosen. In
  * `examples/reference/arch.png` the box and container texts run 25
@@ -203,15 +152,14 @@ export function fontSizeFor(
   const named = textAttrs['size'] ?? DEFAULT_TEXT_SIZE[kind] ?? 'normal';
   const scale = TEXT_SIZES[named];
   if (scale !== undefined) return Math.round(fontSize * scale);
-  if (/^\d+(\.\d+)?$/.test(named) && Number(named) > 0) return Number(named);
-  const unit = named.match(/^(\d+(?:\.\d+)?)px$/);
-  const hint = unit
-    ? `; write "size: ${unit[1]}", a size's number is already in pixels`
-    : named.startsWith('-') || /^0+(\.0+)?$/.test(named)
-      ? '; a text size has to be more than zero'
-      : '';
+  // A bare number is a multiple of normal; `px` fixes it in pixels (design.org 3.8).
+  const number = /^(\d*\.?\d+)(px)?$/.exec(named);
+  if (number && Number(number[1]) > 0) {
+    return number[2] ? Number(number[1]) : Math.round(fontSize * Number(number[1]));
+  }
+  const hint = named.startsWith('-') || /^0*\.?0+(px)?$/.test(named) ? '; a text size has to be more than zero' : '';
   throw new SourceError(
-    `size takes ${Object.keys(TEXT_SIZES).join(', ')} or a number of pixels, not "${named}"${hint}`,
+    `size takes ${Object.keys(TEXT_SIZES).join(', ')}, a multiple of normal such as 1.2, or pixels such as 16px, not "${named}"${hint}`,
     line,
   );
 }
@@ -284,7 +232,11 @@ export function textStyleFor(
     );
   }
   const at = (written as Position | undefined) ?? fallbackAt;
-  const align = attrs['align'];
+  // On a left or right side, align: says where along it (top, center or
+  // bottom), which the resolver has checked; the lines keep their default.
+  const onLeftOrRight = attrs['place']?.endsWith(' left') === true || attrs['place']?.endsWith(' right') === true;
+  const along = onLeftOrRight && (attrs['align'] === 'top' || attrs['align'] === 'bottom');
+  const align = along ? undefined : attrs['align'];
   if (align !== undefined && TEXT_ALIGNMENTS[align] === undefined) {
     throw new SourceError(`a text's align takes left, center or right, not "${align}"`, line);
   }
@@ -295,20 +247,4 @@ export function textStyleFor(
     side: parts.includes('left') ? 'left' : parts.includes('right') ? 'right' : 'center',
     align: align === undefined ? fallbackAlign : TEXT_ALIGNMENTS[align]!,
   };
-}
-
-/**
- * Where a leaf's text or badge starts vertically, given which end it sits at.
- * Shared, because the resolver works out the text's box and the renderer draws
- * it, and the two must not be able to disagree.
- */
-export function leafTop(
-  end: 'top' | 'center' | 'bottom',
-  y: number,
-  height: number,
-  own: number,
-): number {
-  if (end === 'top') return y + PAD;
-  if (end === 'bottom') return y + height - PAD - own;
-  return y + (height - own) / 2;
 }

@@ -1,59 +1,368 @@
-import type {
-  Part,
-  PartSide,
-  Attrs,
-  Axis,
-  Side,
-  Kind,
-  OffsetPlacement,
-  OnPlacement,
-  Placement,
-  DefaultTarget,
-  Document,
-  EdgeStmt,
-  Mark,
-  Stmt,
-} from './ast.js';
+import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, NodeStmt, PlacementTarget, POINT_TEXT_SIDES, PointStmt, RegionStmt, Stmt } from './ast.js';
+import { TEXT_GAP } from './linetexts.js';
 import {
+  POINT_KEYS,
+  REGION_KEYS,
   ALL_ATTR_KEYS,
   ATTR_KEYS,
   MARKS,
-  PART_SIDES,
   COLOR_KEYS,
   COLOR_PARTS,
-  CONTENT_ALIGNMENTS,
+  CHILD_ALIGNMENTS,
+  GATHER_PLACES,
   CONTENT_WIDTHS,
+  SIZE_KEY_NAMES,
   LINE_VALUES,
+  NODE_CORNERS,
+  PADDING_SIDES,
+  type NodeCorners,
   describePlacement,
   nameTarget,
+  partWordHint,
 } from './ast.js';
 import {
-  BARE_EDGE_RUN,
-  CHILD_GAP,
-  DECK_STEP,
   DEFAULT_FONT_SIZE,
   DEFAULT_MARGIN,
   GAPS,
-  HEADER_GAP,
   ICON_GAP,
   ICON_LINES,
-  TEXT_CLEARANCE,
+  LINE_WIDTH,
   PAD,
-  SEPARATION_GAP,
   THICKNESS,
-  arrowLength,
   fontSizeFor,
-  leafTop,
-  textExtent,
-  textStyleFor,
   widestLine,
 } from './constants.js';
-import { fix, reachability, tightest, type Constraint, type Contradiction } from './constrain.js';
 import { SourceError } from './errors.js';
 import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
+import { isBoxy, middleOf, sizeFor, SUBPROCESS_INSET } from './outline.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import type { Layout, LayoutEdge, LayoutNode, LayoutPass, LayoutPassage, LineLook, Reach } from './model.js';
+import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
+import { checkOpacity, gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace, type Venn } from './place.js';
+
+/**
+ * What a node's own contents make of it, before anything is placed: a leaf's
+ * size from its text, a picture's size, and for a container its title, its
+ * padding and its layout. A container's size comes from its children, in the
+ * placing pass.
+ */
+function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeFacts {
+  const textSize = fontSizeFor(node.kind, node.textAttrs, fontSize, node.line);
+  const lineHeight = measurer.lineHeight(textSize);
+  const hasText = node.lines.some((line) => plain(line).length > 0);
+  const across = hasText ? widestLine(node.lines, measurer, textSize) : 0;
+  const tall = hasText ? node.lines.length * lineHeight : 0;
+  // A turned text (design.org 7.2) takes the room of its turned ink: as wide
+  // as its lines are tall, as tall as its widest line.
+  const turned = node.textAttrs['reads'] !== undefined;
+  const textWidth = turned ? tall : across;
+  const textHeight = turned ? across : tall;
+  const glyphSide = ICON_LINES * lineHeight;
+  const title = titlePlaceOf(node);
+  const layout = layoutOf(node);
+  const venn = vennOf(node);
+  const circle = isCircle(node);
+  // A deck that draws no outline of its own is its cards, with nothing round them.
+  const undrawnDeck =
+    node.appearance['layout'] === 'deck' && node.appearance['fill'] === undefined && node.appearance['border'] === undefined;
+  const padding =
+    node.body.kind === 'none' || (undrawnDeck && node.appearance['padding'] === undefined)
+      ? 0
+      : node.appearance['padding'] !== undefined
+        ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
+        : PAD;
+  // `padding-right: 4`: one side's padding, over `padding:` there.
+  const pad = { top: padding, right: padding, bottom: padding, left: padding };
+  for (const side of PADDING_SIDES) {
+    const written = node.appearance[`padding-${side}`];
+    if (written === undefined) continue;
+    if (circle) {
+      throw new SourceError(`"${node.name}" padding-${side}: a circle has no sides to pad one of — use padding:`, node.line);
+    }
+    pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line);
+  }
+  // A subprocess's bars stand inside its sides, so its text keeps its padding clear of them.
+  if (node.body.kind === 'shape' && node.body.outline === 'flow-subprocess') {
+    pad.left += SUBPROCESS_INSET;
+    pad.right += SUBPROCESS_INSET;
+  }
+  node.textSide = 'center';
+  const measures = {
+    lineHeight,
+    charWidth: measurer.measure('0'.repeat(10), textSize).width / 10,
+    gather: gatherOf(node),
+  };
+
+  if (node.body.kind === 'icon') {
+    if (node.children.length > 0) {
+      throw new SourceError(
+        `"${node.name}" is drawn as a picture and has children. A picture is not a box, so nothing can go inside it`,
+        node.line,
+      );
+    }
+    const width = Math.max(glyphSide, textWidth);
+    return {
+      natural: { width, height: glyphSide + (hasText ? ICON_GAP + textHeight : 0) },
+      textBox: { x: (width - textWidth) / 2, y: glyphSide + ICON_GAP, width: textWidth, height: textHeight },
+      hasText,
+      padding,
+      pad,
+      ...measures,
+      title,
+      ...(layout ? { layout } : {}),
+      circle,
+    };
+  }
+  if (node.children.length === 0 && circle) {
+    const side = Math.hypot(textWidth, textHeight) + padding * 2;
+    return {
+      natural: { width: side, height: side },
+      textBox: { x: (side - textWidth) / 2, y: (side - textHeight) / 2, width: textWidth, height: textHeight },
+      hasText,
+      padding,
+      pad,
+      ...measures,
+      title,
+      circle,
+    };
+  }
+  if (node.body.kind === 'shape' && !circle && !isBoxy(node.body.outline)) {
+    if (node.children.length > 0) {
+      throw new SourceError(
+        `"${node.name}" is a ${node.body.outline} and has children. Only a rectangle, a document or a circle holds other nodes so far`,
+        node.line,
+      );
+    }
+    // Grown until the padded text fits at the shape's middle: a diamond twice
+    // the block each way, a triangle's text a third of the way from its base.
+    const block = { width: textWidth + pad.left + pad.right, height: textHeight + pad.top + pad.bottom };
+    const natural = sizeFor(node.body.outline, node.body.look, block.width, block.height);
+    const middle = middleOf(node.body.outline, node.body.look, natural.width, natural.height);
+    return {
+      natural,
+      textBox: { x: middle.x - textWidth / 2, y: middle.y - textHeight / 2, width: textWidth, height: textHeight },
+      hasText,
+      padding,
+      pad,
+      ...measures,
+      title,
+      circle,
+    };
+  }
+  if (layout && node.children.length === 0) {
+    throw new SourceError(`"${node.name}" has layout: but no children — a node with no children is not a container`, node.line);
+  }
+  return {
+    natural: { width: textWidth + pad.left + pad.right, height: textHeight + pad.top + pad.bottom },
+    textBox: { x: pad.left, y: pad.top, width: textWidth, height: textHeight },
+    hasText,
+    padding,
+    pad,
+    ...measures,
+    title,
+    ...(layout ? { layout } : {}),
+    ...(venn ? { venn } : {}),
+    circle,
+  };
+}
+
+/**
+ * Where a container's title sits: `(inside top)` by default, `(on top)`,
+ * `(outside top)`, or `(center)`, with `align:` saying where along the side.
+ * `at:` is gone from a node's text, refused with the side form.
+ */
+function titlePlaceOf(node: LayoutNode): TitlePlace {
+  const at = node.textAttrs['at'];
+  if (at !== undefined) {
+    throw new SourceError(
+      at === 'center'
+        ? `"${node.name}": at: is gone from a node's text — a leaf's text is centered with nothing written, ` +
+            "and a container's title goes in the middle with (center)"
+        : `"${node.name}": at: is gone from a node's text — a title says which side it sits against, ` +
+            'such as (inside top, align: left), (on top) or (outside bottom)',
+      node.line,
+    );
+  }
+  const written = node.textAttrs['place'] ?? 'inside top';
+  if (written === 'center') return { how: 'center', side: 'center', along: 'center' };
+  const [how, side] = written.split(' ') as [TitlePlace['how'], TitlePlace['side']];
+  const across = side === 'top' || side === 'bottom';
+  const words = across ? ['left', 'center', 'right'] : ['top', 'center', 'bottom'];
+  const align = node.textAttrs['align'] ?? 'center';
+  // A leaf's align: with no side lines its text up (left, center, right), so
+  // top and bottom are a side's words written without the side.
+  if (node.children.length === 0 && node.textAttrs['place'] === undefined && (align === 'top' || align === 'bottom')) {
+    throw new SourceError(
+      `"${node.name}": align: ${align} says where along a left or right side — name the side, such as (inside left, align: ${align}), ` +
+        `or write (inside ${align}) to put the text against the ${align}`,
+      node.line,
+    );
+  }
+  if ((node.children.length > 0 || node.textAttrs['place'] !== undefined) && !words.includes(align)) {
+    throw new SourceError(
+      `"${node.name}": a title on the ${side} side takes align: ${words.join(', ')} — not ${align}`,
+      node.line,
+    );
+  }
+  const along = align === words[0] ? 'start' : align === words[2] ? 'end' : 'center';
+  return { how, side, along };
+}
+
+/**
+ * Where `gather-children:` puts the children in the box's spare room, on each
+ * axis: against the start, the middle, or the end. The middle unless it says.
+ */
+function gatherOf(node: LayoutNode): NodeFacts['gather'] {
+  const written = node.appearance['gather-children'];
+  if (written === undefined) return { x: 'center', y: 'center' };
+  if (!(GATHER_PLACES as readonly string[]).includes(written)) {
+    throw new SourceError(
+      `"${node.name}" has gather-children: ${written}, which is not one of ${GATHER_PLACES.join(', ')}`,
+      node.line,
+    );
+  }
+  if (node.children.length === 0) {
+    throw new SourceError(`"${node.name}" has gather-children: but no children to gather`, node.line);
+  }
+  const parts = written.split('-');
+  return {
+    x: parts.includes('left') ? 'start' : parts.includes('right') ? 'end' : 'center',
+    y: parts.includes('top') ? 'start' : parts.includes('bottom') ? 'end' : 'center',
+  };
+}
+
+/** `layout: column (gap: 0, widths: match, align-children: left)`, read and checked. */
+function layoutOf(node: LayoutNode): ChildLayout | undefined {
+  const kind = node.appearance['layout'];
+  if (node.attrs['cards'] !== undefined && kind !== 'deck') {
+    throw new SourceError(`"${node.name}" has cards:, which are a deck's — add layout: deck`, node.line);
+  }
+  if (kind === undefined || kind === 'venn') return undefined;
+  if (kind !== 'column' && kind !== 'row' && kind !== 'deck') {
+    throw new SourceError(`"${node.name}" has layout: ${kind}, which is not one of column, row, venn, deck`, node.line);
+  }
+  const bracket = bracketOf('layout', node.appearance);
+  if (kind === 'deck') {
+    const [key] = Object.keys(bracket);
+    if (key !== undefined) {
+      throw new SourceError(`"${node.name}" has layout: deck (${key}: ${bracket[key]}), and a deck takes nothing in its bracket`, node.line);
+    }
+    return { kind, widths: 'natural', align: 'center' };
+  }
+  if (bracket['heights'] !== undefined) {
+    throw new SourceError(
+      `"${node.name}" has layout: ${kind} (heights: ${bracket['heights']}), and heights: belongs to layout: venn — ` +
+        'a column or row sizes its children with widths:',
+      node.line,
+    );
+  }
+  const widths = bracket['widths'] ?? 'natural';
+  if (!(CONTENT_WIDTHS as readonly string[]).includes(widths)) {
+    throw new SourceError(`"${node.name}" has layout: (widths: ${widths}), which is not one of ${CONTENT_WIDTHS.join(', ')}`, node.line);
+  }
+  if (widths === 'fill' && kind === 'row') {
+    throw new SourceError(
+      `"${node.name}" has layout: row (widths: fill), and children side by side can't all be the full width — use widths: match`,
+      node.line,
+    );
+  }
+  // Two asks, two words: lining the children up with each other, here, and
+  // where the group sits in the box's spare room, gather-children: on the box.
+  if (bracket['align'] !== undefined) {
+    throw new SourceError(
+      `"${node.name}" has layout: (align: ${bracket['align']}), and align: in a layout is gone — ` +
+        `write align-children: ${bracket['align']} to line the children up with each other, ` +
+        `or gather-children: ${bracket['align']} on "${node.name}" to put them against that side of its room`,
+      node.line,
+    );
+  }
+  const words: readonly string[] = CHILD_ALIGNMENTS[kind];
+  const alignWord = bracket['align-children'] ?? 'center';
+  if (!words.includes(alignWord)) {
+    throw new SourceError(
+      `"${node.name}" has layout: ${kind} (align-children: ${alignWord}), and a ${kind} lines its children up by ${words.join(', ')}`,
+      node.line,
+    );
+  }
+  const align = alignWord === words[0] ? 'start' : alignWord === words[2] ? 'end' : 'center';
+  const centers = bracket['centers'];
+  if (centers !== undefined && bracket['gap'] !== undefined) {
+    throw new SourceError(`"${node.name}": layout: says gap: and centers:, which is the spacing said twice — keep one`, node.line);
+  }
+  if (centers !== undefined) {
+    return { kind, centers: gapPixels(centers, `"${node.name}" layout: (centers: …)`, node.line), widths, align } as ChildLayout;
+  }
+  const gap = bracket['gap'] === undefined ? PAD : gapPixels(bracket['gap'], `"${node.name}" layout: (gap: …)`, node.line);
+  return { kind, gap, widths, align } as ChildLayout;
+}
+
+/**
+ * `layout: venn (heights: equal)`, read and checked: two sets and the overlap
+ * between them, as three children in written order (design.org 5.x).
+ */
+function vennOf(node: LayoutNode): Venn | undefined {
+  if (node.appearance['layout'] !== 'venn') return undefined;
+  const bracket = bracketOf('layout', node.appearance);
+  for (const key of Object.keys(bracket)) {
+    if (key === 'heights' || key === 'gap' || key === 'align-children') continue;
+    throw new SourceError(
+      `"${node.name}" has layout: venn (${key}: ${bracket[key]}), and a venn takes only heights:, gap: and align-children: in its bracket`,
+      node.line,
+    );
+  }
+  const heights = bracket['heights'] ?? 'natural';
+  if (heights !== 'natural' && heights !== 'equal') {
+    throw new SourceError(
+      `"${node.name}" has layout: venn (heights: ${heights}) — write heights: equal to give both sets the taller one's height, or leave it out`,
+      node.line,
+    );
+  }
+  const parts = node.children.filter((child) => child !== node.heading && !joinedToText(child));
+  if (parts.length !== 3) {
+    throw new SourceError(
+      `"${node.name}" has layout: venn and ${parts.length} ${parts.length === 1 ? 'child' : 'children'} — a venn has exactly three, ` +
+        'in order: the left set, the overlap, and the right set',
+      node.line,
+    );
+  }
+  for (const [index, part] of parts.entries()) {
+    const role = ['the left set', 'the overlap', 'the right set'][index]!;
+    if (part.children.length === 0) {
+      throw new SourceError(
+        `"${part.name}" is ${role} of venn "${node.name}" and holds nothing — put what belongs there inside it, such as node ${part.name}.a "A"`,
+        part.line,
+      );
+    }
+    const sizes = SIZE_KEY_NAMES.filter((key) => part.appearance[key] !== undefined);
+    if (sizes.length > 0) {
+      throw new SourceError(
+        `"${part.name}" states ${sizes.map((key) => `${key}:`).join(' ')}, but it is ${role} of venn "${node.name}", which wraps each part round what it holds — drop it` +
+          (sizes.includes('height') ? ', or give the venn (heights: equal)' : ''),
+        part.line,
+      );
+    }
+  }
+  const gap = bracket['gap'] === undefined ? GAPS['normal']! : gapPixels(bracket['gap'], `"${node.name}" layout: venn (gap: …)`, node.line);
+  // `align-children: top` lines the two sets' tops up, as a row lines up its children.
+  const alignWord = bracket['align-children'] ?? 'center';
+  const align = ({ top: 'start', center: 'center', bottom: 'end' } as const)[alignWord as 'top' | 'center' | 'bottom'];
+  if (align === undefined) {
+    throw new SourceError(
+      `"${node.name}" has layout: venn (align-children: ${alignWord}) — a venn lines its two sets up by top, center or bottom`,
+      node.line,
+    );
+  }
+  if (align !== 'center') {
+    const stated = [parts[0]!, parts[2]!].find((part) => part.placements.length > 0);
+    if (stated !== undefined) {
+      throw new SourceError(
+        `"${stated.name}" is lined up by "${describePlacement(stated.placements[0]!)}", and venn "${node.name}" already says align-children: ${alignWord} — say it once`,
+        stated.line,
+      );
+    }
+  }
+  return { heights, gap, align, parts: parts as [LayoutNode, LayoutNode, LayoutNode] };
+}
 
 export interface ResolveOptions {
   measurer?: Measurer;
@@ -89,31 +398,291 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   checkStyleKeys(doc.statements);
   const defaults = collectDefaults(doc.statements, styles);
   const icons = collectIcons(doc.statements, options.readIconFile);
-  const { nodes, byName, roots } = buildTree(doc.statements, styles, defaults, icons);
+  const { nodes, byName, roots } = buildTree(writeOutCards(doc.statements), styles, defaults, icons);
+  // From here on, `edge each child of a -> b` and `edge a -> b, c` are the lines they stand for.
+  const statements = expandEach(doc.statements, byName);
 
   // Edges are resolved to nodes before anything is sized, because a labeled
   // edge claims room in the gap it crosses and so has to be in hand while the
   // gaps are being worked out. Nothing here reads geometry.
-  const edges = buildEdges(doc.statements, byName, styles, defaults);
+  const named = collectNamed(doc.statements, byName);
+  const edges = buildEdges(statements, byName, named, styles, defaults, measurer, fontSize);
 
-  const local = new Map<LayoutNode, { x: number; y: number }>();
-  for (const root of roots) sizeNode(root, edges, measurer, fontSize, local);
+  const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
+  const markTexts = measureMarkTexts(named, measurer, fontSize);
+  const regionTexts = new Map([...markTexts].flatMap(([name, text]) => (text.region ? [[name, text.region] as const] : [])));
+  const placer = new Placer(roots, byName, facts, named, regionTexts);
+  placer.run();
+  const marks = buildMarks(named, placer.placeNamed(), styles, markTexts);
+  locateStops(edges, placer, byName, named);
+  locateEvenWith(edges, placer, byName, named);
+  locateTextTargets(edges, placer);
+  normalize(nodes, marks, margin, [
+    ...edges.flatMap((edge) => (edge.viaAt ?? []).filter((at) => at !== undefined)),
+    ...edges.flatMap((edge) => [edge.evenAt?.from, edge.evenAt?.to].filter((at) => at !== undefined)),
+    ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.target ? [text.target] : []))),
+    ...edges.flatMap((edge) => edge.texts.flatMap((text) => (text.evenAt ?? []).map((even) => even.rect))),
+  ]);
+  standInForMarks(edges, marks);
 
-  placeRoots(roots, byName, edges, measurer, fontSize, local);
-  normalize(nodes, margin);
-
-  const extent = bounds(nodes);
+  const extent = bounds(nodes, marks);
+  const look = (kind: 'node' | 'edge' | 'point' | 'region') => defaults.get(`guide ${kind}`) ?? {};
 
   return {
     nodes,
     roots,
     edges,
-    markup: markupColors(nodes, edges, styles),
+    markup: markupColors(nodes, edges, styles, marks),
     diagram: collectDiagram(doc.statements),
     width: Math.ceil(extent.maxX + margin),
     height: Math.ceil(extent.maxY + margin),
     margin,
+    marks,
+    depths: collectDepths(statements, byName, named),
+    guideLooks: { node: look('node'), edge: look('edge'), point: look('point'), region: look('region') },
   };
+}
+
+/**
+ * `edge each child of a -> b` as one line from each direct child of `a`, in the
+ * order they were written, so it stays true as children are added (design.org
+ * 6.6). A guide child is reference, not part of the picture, and a heading is
+ * the box's label, so neither gets a line.
+ */
+function expandEach(statements: Stmt[], byName: Map<string, LayoutNode>): Stmt[] {
+  return statements.flatMap((stmt) => {
+    if (stmt.kind === 'edge' && stmt.several !== undefined) {
+      // `edge a -> b, c, d`: one line to each, in the order written. A text is
+      // drawn once, on the first, so a text by the shared end labels the group.
+      const { several, ...one } = stmt;
+      return several.names.map((name, index) => ({ ...one, texts: index === 0 ? one.texts : [], [several.side]: name }) as EdgeStmt);
+    }
+    if (stmt.kind !== 'edge' || stmt.each === undefined) return [stmt];
+    const name = stmt[stmt.each];
+    const said = `edge ${stmt.each === 'from' ? 'each child of ' : ''}${stmt.from} ${stmt.arrow} ${stmt.each === 'to' ? 'each child of ' : ''}${stmt.to}`;
+    const container = byName.get(name);
+    if (container === undefined) {
+      throw new SourceError(`${said}: there is no node named ${name}`, stmt.line);
+    }
+    const children = container.children.filter((child) => !child.guide && child !== container.heading);
+    if (children.length === 0) {
+      throw new SourceError(`${said}: ${name} has no children, so this draws no lines — name ${name} itself, or give it children`, stmt.line);
+    }
+    const { each: _, ...one } = stmt;
+    return children.map((child) => ({ ...one, [stmt.each!]: child.name }) as EdgeStmt);
+  });
+}
+
+// --- named points and regions ------------------------------------------------
+
+/** Every `point` and `region`, by name. A name is one thing's: a node's, a point's or a region's. */
+function collectNamed(statements: Stmt[], byName: Map<string, LayoutNode>): Map<string, PointStmt | RegionStmt> {
+  const named = new Map<string, PointStmt | RegionStmt>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'point' && stmt.kind !== 'region') continue;
+    const node = byName.get(stmt.name);
+    if (node) throw new SourceError(`${stmt.kind} "${stmt.name}" has the name of a node, declared on line ${node.line} — give it another`, stmt.line);
+    const earlier = named.get(stmt.name);
+    if (earlier) throw new SourceError(`"${stmt.name}" is declared twice, here and as a ${earlier.kind} on line ${earlier.line}`, stmt.line);
+    named.set(stmt.name, stmt);
+  }
+  return named;
+}
+
+/** The names a point or region is worked out from, following named points and regions through. */
+function namesIn(target: PlacementTarget, named: Map<string, PointStmt | RegionStmt>, seen = new Set<string>()): string[] {
+  const point = target.point;
+  const direct = !point
+    ? [target.name]
+    : point.kind === 'between'
+      ? [point.a.name, point.b.name]
+      : point.kind === 'from'
+        ? point.lines.map((line) => line.target.name)
+        : namesIn(point.from, named, seen);
+  const found: string[] = [];
+  for (const name of direct) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    found.push(name);
+    const stmt = named.get(name);
+    if (!stmt) continue;
+    const parts = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
+    for (const part of parts) found.push(...namesIn(part, named, seen));
+  }
+  return found;
+}
+
+/** A point's or a region's text, measured; for a region, what the placer needs to make room for it. */
+interface MeasuredMarkText {
+  lines: Line[];
+  textAttrs: Attrs;
+  size: number;
+  lineHeight: number;
+  width: number;
+  height: number;
+  gap: number;
+  /** A point's direction from its dot. */
+  side?: (typeof POINT_TEXT_SIDES)[number];
+  region?: RegionTextFacts;
+}
+
+/**
+ * Every point's and region's text, measured before anything is placed, since
+ * an inside text grows its region (design.org 7.4). Set small, as an aside is:
+ * it labels a spot or an area rather than being a thing in the diagram.
+ */
+function measureMarkTexts(named: Map<string, PointStmt | RegionStmt>, measurer: Measurer, fontSize: number): Map<string, MeasuredMarkText> {
+  const measured = new Map<string, MeasuredMarkText>();
+  for (const [name, stmt] of named) {
+    if (!stmt.text) continue;
+    const { text, textAttrs } = stmt.text;
+    const subject = `${stmt.kind} "${name}"`;
+    const lines = linesFor(text, textAttrs, subject, stmt.line);
+    const size = fontSizeFor('none', textAttrs, fontSize, stmt.line);
+    const lineHeight = measurer.lineHeight(size);
+    const across = widestLine(lines, measurer, size);
+    const tall = lines.length * lineHeight;
+    const turned = textAttrs['reads'] !== undefined;
+    const width = turned ? tall : across;
+    const height = turned ? across : tall;
+    const gap = textAttrs['gap'] === undefined ? TEXT_GAP : gapPixels(textAttrs['gap'], `${subject}: gap:`, stmt.line);
+    const place = textAttrs['place'];
+    const base = { lines, textAttrs, size, lineHeight, width, height, gap };
+    if (stmt.kind === 'point') {
+      measured.set(name, { ...base, side: (place ?? 'above') as MeasuredMarkText['side'] });
+      continue;
+    }
+    const [how, side] = (place ?? 'outside top').split(' ') as [RegionTextFacts['how'], RegionTextFacts['side']];
+    const align = textAttrs['align'];
+    const along = align === 'left' || align === 'top' ? 'start' : align === 'right' || align === 'bottom' ? 'end' : 'center';
+    measured.set(name, { ...base, region: { width, height, gap, how, side, along } });
+  }
+  return measured;
+}
+
+/** The dot's radius, which a point's text keeps its gap from. */
+const DOT_RADIUS = 3;
+
+/**
+ * Where a point's text sits: a gap off the dot's edge the stated way, centered
+ * across on a side; at a corner, its nearest corner off the dot diagonally.
+ */
+function pointTextBox(x: number, y: number, text: MeasuredMarkText): Rect {
+  const side = text.side ?? 'above';
+  const straight = DOT_RADIUS + text.gap;
+  const diagonal = DOT_RADIUS * Math.SQRT1_2 + text.gap;
+  const off = side.includes('-') ? diagonal : straight;
+  const left = side.endsWith('left') ? x - off - text.width : side.endsWith('right') ? x + off : x - text.width / 2;
+  const top = side.startsWith('above') ? y - off - text.height : side.startsWith('below') ? y + off : y - text.height / 2;
+  return { x: left, y: top, width: text.width, height: text.height };
+}
+
+function buildMarks(
+  named: Map<string, PointStmt | RegionStmt>,
+  placed: Map<string, { x: number; y: number; width: number; height: number }>,
+  styles: Map<string, Attrs>,
+  texts: Map<string, MeasuredMarkText> = new Map(),
+): LayoutMark[] {
+  const marks: LayoutMark[] = [];
+  for (const [name, stmt] of named) {
+    const at = placed.get(name)!;
+    const appearance = appearanceOf(stmt.attrs, styles, stmt.line);
+    const allowed: readonly string[] = stmt.kind === 'point' ? POINT_KEYS : REGION_KEYS;
+    for (const key of Object.keys(appearance)) {
+      if (!allowed.includes(topKey(key))) {
+        throw new SourceError(
+          `${stmt.kind} "${name}" wears a style with ${topKey(key)}:, which a ${stmt.kind} doesn't have — it takes ${allowed.map((k) => `${k}:`).join(', ')}`,
+          stmt.line,
+        );
+      }
+    }
+    // A style may carry it, so it is checked as worn.
+    if (appearance['opacity'] !== undefined) checkOpacity(appearance['opacity'], `region "${name}"`, stmt.line);
+    const targets = stmt.kind === 'point' ? [stmt.point] : stmt.corners;
+    const names = [...new Set(targets.flatMap((target) => namesIn(target, named)))];
+    const text = texts.get(name);
+    let box: Rect | undefined;
+    if (text?.region) {
+      const x = regionTextAt({ start: at.x, size: at.width }, text.region, 'x');
+      const y = regionTextAt({ start: at.y, size: at.height }, text.region, 'y');
+      box = { x: x.start, y: y.start, width: x.size, height: y.size };
+    } else if (text) {
+      box = pointTextBox(at.x, at.y, text);
+    }
+    marks.push({
+      kind: stmt.kind,
+      name,
+      ...at,
+      names,
+      appearance,
+      guide: stmt.guide === true,
+      ...(text && box ? { text: { lines: text.lines, textAttrs: text.textAttrs, size: text.size, lineHeight: text.lineHeight, box } } : {}),
+      line: stmt.line,
+    });
+  }
+  return marks;
+}
+
+/** Every `depth:`, read into its clauses, each name checked to be something drawn. */
+function collectDepths(
+  statements: Stmt[],
+  byName: Map<string, LayoutNode>,
+  named: Map<string, PointStmt | RegionStmt>,
+): DepthStatement[] {
+  const depths: DepthStatement[] = [];
+  // A line is `edge <n>` in the drawing order, by its place among the edges;
+  // a leg is named with the line it belongs to.
+  const lines = new Map<string, string>();
+  const legs = new Map<string, string>();
+  let count = 0;
+  // A bundle is a line too, in its place among them.
+  for (const stmt of statements) {
+    if (stmt.kind !== 'edge' && stmt.kind !== 'bundle') continue;
+    if (stmt.name !== undefined) lines.set(stmt.name, `edge ${count}`);
+    for (const entry of stmt.via ?? []) if (entry.leg) legs.set(entry.leg.name, `edge ${count}`);
+    count += 1;
+  }
+  let edge = 0;
+  for (const stmt of statements) {
+    if (stmt.kind === 'edge' || stmt.kind === 'bundle') edge += 1;
+    if (stmt.kind !== 'node' && stmt.kind !== 'edge' && stmt.kind !== 'point' && stmt.kind !== 'region') continue;
+    const written = stmt.attrs['depth'];
+    if (written === undefined) continue;
+    const subject = stmt.kind === 'edge' ? `edge ${edge - 1}` : stmt.name;
+    const said = stmt.kind === 'edge' ? `edge ${stmt.from} ${stmt.arrow} ${stmt.to}` : `"${stmt.name}"`;
+    const clauses = written.split('; ').map((clause) => {
+      const way = clause.startsWith('behind ') ? 'behind' : 'in front of';
+      const shown = clause.slice(way.length + 1).split(', ');
+      const names: string[] = [];
+      const legsNamed: DepthStatement['clauses'][number]['legs'] = [];
+      for (const name of shown) {
+        if (byName.has(name) || named.has(name)) {
+          names.push(name);
+        } else if (lines.has(name)) {
+          if (lines.get(name) === subject) throw new SourceError(`${said}: depth: ${way} "${name}", which is this line`, stmt.line);
+          names.push(lines.get(name)!);
+        } else if (legs.has(name)) {
+          // A leg limits depth to where two lines cross on it, and only a line crosses one.
+          const line = legs.get(name)!;
+          if (stmt.kind !== 'edge') {
+            const owner = [...lines].find(([, key]) => key === line)?.[0];
+            throw new SourceError(
+              `${said}: depth: ${way} "${name}" — ${name} is a leg, and a leg limits depth: to where two lines cross on it; ` +
+                `${said} is not a line, so name the whole line${owner ? `, depth: ${way} ${owner}` : ''}`,
+              stmt.line,
+            );
+          }
+          if (line === subject) throw new SourceError(`${said}: depth: ${way} "${name}", which is a leg of this line`, stmt.line);
+          legsNamed.push({ leg: name, line });
+        } else {
+          throw new SourceError(`${said}: depth: ${way} "${name}", which does not exist`, stmt.line);
+        }
+      }
+      return { way, names, shown, legs: legsNamed } as DepthStatement['clauses'][number];
+    });
+    depths.push({ subject, written: said, clauses, line: stmt.line });
+  }
+  return depths;
 }
 
 // --- pass one: the containment tree -----------------------------------------
@@ -196,6 +765,8 @@ function collectDefaults(
 function over(base: Attrs, top: Attrs): Attrs {
   if (top['shape'] === undefined && top['icon'] === undefined) return { ...base, ...top };
   const { shape: _shape, icon: _icon, ...rest } = base;
+  // A shape's settings belong to the shape they were written with.
+  for (const key of Object.keys(rest)) if (key.startsWith('shape.')) delete rest[key];
   return { ...rest, ...top };
 }
 
@@ -219,20 +790,29 @@ function buildTree(
   const nodes: LayoutNode[] = [];
   const byName = new Map<string, LayoutNode>();
   const roots: LayoutNode[] = [];
-  /** Each badge child's name, and the node whose `badge:` it was written out from. */
+  /** Each name `badge:` writes out, and the node whose `badge:` it was. */
   const badges = new Map<string, string>();
 
   // Which nodes will hold children has to be known before any node is built,
   // because it decides which default a node wears, and its children are
-  // declared after it. A child is a dotted name, or a badge the node's own
-  // line or styles give it; a default cannot give a leaf a badge, so what
-  // the defaults say cannot change the answer.
+  // declared after it. A child is a dotted name; the heading and what is
+  // joined to the text don't count (design.org 5.6, 9.3), so a badged box with
+  // nothing else in it is a leaf, and neither `badge:` nor anything a default
+  // says can change the answer.
+  const headings = new Map<string, string>();
+  const joins = new Map<string, string>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'node') continue;
+    if (stmt.attrs['heading'] !== undefined) headings.set(stmt.name, stmt.attrs['heading']);
+    if (stmt.attrs['join-with'] !== undefined) joins.set(stmt.name, stmt.attrs['join-with']);
+  }
   const parents = new Set<string>();
   for (const stmt of statements) {
     if (stmt.kind !== 'node') continue;
     const cut = stmt.name.lastIndexOf('.');
-    if (cut !== -1) parents.add(stmt.name.slice(0, cut));
-    if (appearanceOf(stmt.attrs, styles, stmt.line)['badge'] !== undefined) parents.add(stmt.name);
+    if (cut === -1) continue;
+    const parent = stmt.name.slice(0, cut);
+    if (headings.get(parent) !== stmt.name && !joinsTextByName(stmt.name, parent, joins)) parents.add(parent);
   }
 
   for (const stmt of statements) {
@@ -242,8 +822,8 @@ function buildTree(
       const owner = badges.get(stmt.name);
       if (owner !== undefined) {
         throw new SourceError(
-          `"${stmt.name}" is the child that "${owner}"'s badge: is written out as. Drop badge: from ` +
-            `"${owner}" and write the icon here yourself, or give this node another name`,
+          `"${stmt.name}" is the picture that "${owner}"'s badge: writes out. Drop badge: from ` +
+            `"${owner}" and write the child yourself, joined to the text, or give this node another name`,
           stmt.line,
         );
       }
@@ -264,17 +844,59 @@ function buildTree(
     // exception: a picture usually is the statement, and the default would
     // caption a row of cubes a, b, db1, c, db2. `""` then says what writing
     // nothing says, which is only true here — on a box it carries information.
-    const text = body.kind === 'icon' && !stmt.statedText ? '' : stmt.text;
+    // A box with a heading has no text of its own: the heading is its title,
+    // and where it sits is said in `heading:`'s bracket.
+    const headed = stmt.attrs['heading'] !== undefined;
+    if (headed && stmt.statedText) {
+      throw new SourceError(
+        `"${stmt.name}" has a text and heading:, which is two headings — put the text in ` +
+          `"${stmt.attrs['heading']}", or drop heading:`,
+        stmt.line,
+      );
+    }
+    if (headed && Object.keys(stmt.textAttrs).length > 0) {
+      throw new SourceError(
+        `"${stmt.name}" has heading:, so it has no text of its own to bracket — where the heading sits goes ` +
+          `in heading:'s bracket, such as heading: ${stmt.attrs['heading']} (inside top, align: left)`,
+        stmt.line,
+      );
+    }
+    const text = headed || (body.kind === 'icon' && !stmt.statedText) ? '' : stmt.text;
     // A style has no string of its own, so it says what it has to say about a
     // text through `text: (…)`, which arrives here under dotted keys. What the
     // node wrote in its own brackets wins, key by key, exactly as its own
     // attributes win over the style's.
-    const textAttrs = { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    const textAttrs: Attrs = headed
+      ? {
+          ...(stmt.attrs['heading.place'] !== undefined ? { place: stmt.attrs['heading.place'] } : {}),
+          ...(stmt.attrs['heading.align'] !== undefined ? { align: stmt.attrs['heading.align'] } : {}),
+        }
+      : { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    // The patch behind a text is a line's text's, and flow-collate's, whose
+    // text sits on the point where its two halves meet.
+    if (stmt.textAttrs['fill'] !== undefined && !(body.kind === 'shape' && body.outline === 'flow-collate')) {
+      throw new SourceError(
+        `"${stmt.name}" has fill: in its text's brackets, which is the patch behind a text on a line or on a flow-collate — ` +
+          'a box\'s own color is fill: outside the brackets',
+        stmt.line,
+      );
+    }
+    // A card's text sits at its top left, where it shows above the card in
+    // front of it, unless it says where.
+    const deck = byName.get(stmt.name.slice(0, Math.max(stmt.name.lastIndexOf('.'), 0)));
+    if (deck?.appearance['layout'] === 'deck' && textAttrs['place'] === undefined && textAttrs['align'] === undefined) {
+      textAttrs['place'] = 'inside top';
+      textAttrs['align'] = 'left';
+    }
+    // A deck draws no outline of its own for a title to sit inside, so its
+    // title goes above, centered on the stack, unless it says where.
+    if (appearance['layout'] === 'deck' && textAttrs['place'] === undefined) textAttrs['place'] = 'outside top';
 
     const node: LayoutNode = {
       name: stmt.name,
       kind,
       body,
+      corners: 'rounded',
       text,
       lines: linesFor(text, textAttrs, `"${stmt.name}"`, stmt.line),
       children: [],
@@ -282,27 +904,26 @@ function buildTree(
       y: 0,
       width: 0,
       height: 0,
-      inset: 0,
-      deckTexts: [],
       headerHeight: 0,
       reach: { left: 0, top: 0, right: 0, bottom: 0 },
       banded: false,
       textBox: { x: 0, y: 0, width: 0, height: 0 },
       textSide: 'left',
       textAttrs,
+      ...(stmt.titlePlacements ? { titlePlacements: stmt.titlePlacements } : {}),
       attrs: stmt.attrs,
       appearance,
       placements: stmt.placements,
+      ...(stmt.guide ? { guide: true } : {}),
       line: stmt.line,
     };
 
     checkAttrs(kind, node.name, stmt.attrs, stmt.line);
     checkStyleUse(kind, node.name, stmt.attrs, styles, stmt.line);
-
-    // `deck:` holds one text per copy, joined on a line break the source cannot
-    // contain. Like a badge, only a box has an outline to repeat.
-    const deck = appearance['deck'];
-    if (deck !== undefined && body.kind === 'shape') node.deckTexts = deck.split('\n');
+    // A shown guide wears `default guide node` over its styles and defaults, as
+    // the renderer does for its colors; its own words beat both.
+    const guideLook = stmt.guide ? defaults.get('guide node')?.['corners'] : undefined;
+    node.corners = cornersOf(node, stmt.attrs['corners'] ?? guideLook ?? appearance['corners'], stmt.attrs['corners'] !== undefined);
 
     const cut = stmt.name.lastIndexOf('.');
     if (cut === -1) {
@@ -323,61 +944,276 @@ function buildTree(
     nodes.push(node);
     byName.set(stmt.name, node);
 
-    // `badge: X` is a shorthand, and this is its expansion:
-    //   node <self>.badge  icon: X  right of <self> text
-    // set at the parent's text size, so the picture is two of the parent's
-    // lines tall. Read from the merged appearance, so a style carrying a badge
-    // gives one to every box wearing it. Only a box has a text to be beside;
-    // the other kinds refuse the word in `checkAttrs`, and a style's is unused.
+    // `badge: X` is a shorthand for a picture beside the text, joined to it
+    // (design.org 5.9). Read from the merged appearance, so a style
+    // or a default carrying a badge gives one to every box wearing it. Only a
+    // box has a text to be beside; the other kinds refuse the word in
+    // `checkAttrs`, and a style's is unused.
     const named = appearance['badge'];
     if (named !== undefined && body.kind === 'shape') {
-      const badge = badgeChild(node, named, icons);
-      badges.set(badge.name, node.name);
-      node.children.push(badge);
-      nodes.push(badge);
-      byName.set(badge.name, badge);
+      if (headed) {
+        throw new SourceError(
+          `"${stmt.name}" has badge: and heading:, but a box with a heading has no text of its own for the ` +
+            'badge to sit beside — put the picture in the heading, or drop heading:',
+          stmt.line,
+        );
+      }
+      const made = writeOutBadge(node, named, icons);
+      badges.set(made.name, node.name);
+      nodes.push(made);
+      byName.set(made.name, made);
     }
   }
+
+  for (const node of nodes) {
+    const written = node.attrs['join-with'];
+    if (written !== undefined) node.joinWith = joinTarget(node, written, byName);
+  }
+  for (const node of nodes) checkJoinedPlacements(node);
+  // A title is placed against the box's own children, so a box needs some.
+  for (const node of nodes) {
+    const [placement] = node.titlePlacements ?? [];
+    if (placement && node.children.length === 0) {
+      throw new SourceError(
+        `"${node.name}"'s title is placed "${describePlacement(placement)}", but "${node.name}" has no children ` +
+          'for it to be placed against — a title is placed against the box it names, by its sides, or against its children',
+        placement.line,
+      );
+    }
+  }
+
+  // A heading written by hand names one of the node's own children, declared
+  // after it, which places nothing itself: it goes where the title would.
+  for (const [name, child] of headings) {
+    const node = byName.get(name)!;
+    const heading = byName.get(child);
+    if (!heading || heading.parent !== node) {
+      throw new SourceError(
+        heading
+          ? `"${name}" has heading: ${child}, which is not one of its own children — a heading is a child, such as ${name}.head`
+          : `"${name}" has heading: ${child}, which does not exist — declare it as a child, such as node ${child} "" shape: none`,
+        node.line,
+      );
+    }
+    const [placement] = heading.placements;
+    if (placement) {
+      throw new SourceError(
+        `"${child}" is "${name}"'s heading, which goes where the title would, so it places nothing itself — ` +
+          `drop "${describePlacement(placement)}", and say where the heading sits in heading:'s bracket`,
+        placement.line,
+      );
+    }
+    node.heading = heading;
+  }
+  for (const node of nodes) joinBesideTitle(node);
 
   return { nodes, byName, roots };
 }
 
-/** The child `badge:` writes out, as `buildTree` describes. */
-function badgeChild(parent: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode {
-  const icon = { icon: named };
-  const size = parent.textAttrs['size'];
-  return {
-    name: `${parent.name}.badge`,
-    kind: 'icon',
-    body: bodyFor(icon, icon, parent.line, icons),
+/**
+ * What `cards:` writes out: one child per text, front first, numbered from 1,
+ * declared right after the deck as if written by hand:
+ *
+ *     node <self>.1 "Drive 1"
+ *     node <self>.2 "Drive 2"
+ *
+ * Cards that hold anything are written by hand, every one of them, so a deck
+ * with `cards:` may have no other children.
+ */
+function writeOutCards(statements: Stmt[]): Stmt[] {
+  const out: Stmt[] = [];
+  for (const stmt of statements) {
+    out.push(stmt);
+    if (stmt.kind !== 'node' || stmt.attrs['cards'] === undefined) continue;
+    const texts = stmt.attrs['cards'].split('\n');
+    const written = statements.find(
+      (other): other is NodeStmt =>
+        other.kind === 'node' && other.name.startsWith(`${stmt.name}.`) && other.name !== stmt.attrs['heading'],
+    );
+    if (written) {
+      throw new SourceError(
+        `"${stmt.name}" has cards: and a child written out, "${written.name}" — once a card holds something, every card is ` +
+          `written as a child, front first: ${texts.map((text, index) => `node ${stmt.name}.${index + 1} "${text}"`).join(', ')}`,
+        written.line,
+      );
+    }
+    texts.forEach((text, index) => {
+      out.push({
+        kind: 'node',
+        name: `${stmt.name}.${index + 1}`,
+        text,
+        statedText: true,
+        textAttrs: {},
+        placements: [],
+        attrs: {},
+        line: stmt.line,
+      });
+    });
+  }
+  return out;
+}
+
+/**
+ * What `badge:` writes out, which is this:
+ *
+ *     node <self>.badge  icon: X  1 right of <self> text  join-with: <self> text
+ *
+ * The text stays the node's own, and the two are one unit placed by the text's
+ * position words. The picture is set at the text's size, so it is two of its
+ * lines tall. An empty text takes no room, and that includes the unit beside
+ * it, so the picture alone is the unit.
+ */
+function writeOutBadge(node: LayoutNode, named: string, icons: ReadonlyMap<string, Icon>): LayoutNode {
+  const attrs: Attrs = { icon: named };
+  const size = node.textAttrs['size'];
+  const textAttrs: Attrs = size === undefined ? {} : { size };
+  const body = bodyFor(attrs, attrs, node.line, icons);
+  const hasText = node.lines.some((line) => plain(line).length > 0);
+  const made: LayoutNode = {
+    name: `${node.name}.badge`,
+    kind: KIND_OF_BODY[body.kind],
+    body,
+    corners: 'rounded',
     text: '',
-    lines: linesFor('', {}, `"${parent.name}.badge"`, parent.line),
+    lines: linesFor('', textAttrs, `"${node.name}"`, node.line),
     children: [],
-    parent,
+    parent: node,
+    joinWith: 'text',
     x: 0,
     y: 0,
     width: 0,
     height: 0,
-    inset: 0,
-    deckTexts: [],
     headerHeight: 0,
     reach: { left: 0, top: 0, right: 0, bottom: 0 },
     banded: false,
     textBox: { x: 0, y: 0, width: 0, height: 0 },
     textSide: 'center',
-    textAttrs: size === undefined ? {} : { size },
-    attrs: icon,
-    appearance: icon,
+    textAttrs,
+    attrs,
+    appearance: attrs,
     placements: [
       {
         kind: 'offset',
         direction: 'right',
-        targets: [{ name: parent.name, part: 'text' }],
-        line: parent.line,
+        targets: [{ name: node.name, part: 'text' }],
+        ...(hasText ? { gap: '1' } : {}),
+        line: node.line,
       },
     ],
-    line: parent.line,
+    line: node.line,
   };
+  node.children.push(made);
+  return made;
+}
+
+/**
+ * Whether a child is joined to its container's text, directly or through
+ * siblings, judged from the statements before any node is built. A sibling
+ * `badge:` writes out is joined to the text.
+ */
+function joinsTextByName(name: string, parent: string, joins: Map<string, string>): boolean {
+  const seen = new Set<string>();
+  for (let at: string | undefined = name; at !== undefined && !seen.has(at); at = joins.get(at)) {
+    seen.add(at);
+    const target = joins.get(at);
+    if (target === `${parent} text`) return true;
+    if (target === `${parent}.badge` && !joins.has(target)) return true;
+  }
+  return false;
+}
+
+/** What `join-with:` names: the node's container's text, or a sibling it is placed against. */
+function joinTarget(node: LayoutNode, written: string, byName: Map<string, LayoutNode>): LayoutNode | 'text' {
+  const parent = node.parent;
+  const [name, part] = written.split(' ') as [string, string | undefined];
+  const example = parent ? `join-with: ${parent.name} text` : 'join-with: hub text';
+  if (part === 'text') {
+    if (!parent || name !== parent.name) {
+      throw new SourceError(
+        `"${node.name}" has join-with: ${written}, but a node joins only its own container's text — ` +
+          (parent ? `write ${example}, or join a sibling` : 'a top-level node has no container, so place it without joining'),
+        node.line,
+      );
+    }
+  } else {
+    const named = byName.get(name);
+    if (!named) throw new SourceError(`"${node.name}" has join-with: ${written}, which does not exist`, node.line);
+    if (named === node || named.parent !== parent) {
+      throw new SourceError(
+        `"${node.name}" has join-with: ${written}, but a node joins ${parent ? `its container's text, such as ${example}, or ` : ''}a sibling it is placed against`,
+        node.line,
+      );
+    }
+  }
+  const placedAgainst = node.placements.some((placement) =>
+    placement.targets.some((target) =>
+      part === 'text' ? target.name === name && target.part === 'text' : target.name === name,
+    ),
+  );
+  if (!placedAgainst) {
+    throw new SourceError(
+      `"${node.name}" has join-with: ${written}, but none of its placements is against "${written}", so nothing fixes ` +
+        `where it sits beside it — place it against "${written}", such as 1 right of ${written}`,
+      node.line,
+    );
+  }
+  return part === 'text' ? 'text' : byName.get(name)!;
+}
+
+/**
+ * A child placed against a title its side words place goes with the title,
+ * when another child anchors the frame (design.org 7.2): it is joined to the
+ * text as `join-with:` would join it, and so is whatever is placed only
+ * against it. The box then holds two groups nothing relates, each fully
+ * stated; if they land on each other, that is an overlap like any other.
+ */
+function joinBesideTitle(node: LayoutNode): void {
+  if (node.children.length === 0 || node.titlePlacements?.length || node.heading || node.attrs['layout'] !== undefined) return;
+  const free = node.children.filter((child) => !joinedToText(child));
+  if (!free.some((child) => child.placements.length === 0)) return;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const child of free) {
+      if (child.joinWith !== undefined || child.placements.length === 0) continue;
+      let onText = false;
+      let sibling: LayoutNode | undefined;
+      const besideTitle = child.placements.every((placement) =>
+        placement.targets.every((target) => {
+          if (target.point || target.fraction) return false;
+          if (target.name === node.name && target.part === 'text') return (onText = true);
+          const named = node.children.find((one) => one.name === target.name);
+          if (named === undefined || named === child || !joinedToText(named)) return false;
+          sibling ??= named;
+          return true;
+        }),
+      );
+      if (!besideTitle) continue;
+      child.joinWith = onText ? 'text' : sibling!;
+      changed = true;
+    }
+  }
+}
+
+/**
+ * A node joined to its container's text is placed only against the text and
+ * what is joined to it, so the unit has one shape wherever the text's position
+ * words put it.
+ */
+function checkJoinedPlacements(node: LayoutNode): void {
+  const parent = node.parent;
+  if (!parent || !joinedToText(node)) return;
+  for (const placement of node.placements) {
+    for (const target of placement.targets) {
+      if (target.name === parent.name && target.part === 'text') continue;
+      const named = parent.children.find((child) => child.name === target.name);
+      if (named && joinedToText(named)) continue;
+      throw new SourceError(
+        `"${node.name}" is joined to "${parent.name} text", so it is placed only against the text and what is ` +
+          `joined to it, but "${describePlacement(placement)}" is against "${nameTarget(target)}" — drop it, or the join`,
+        placement.line,
+      );
+    }
+  }
 }
 
 /**
@@ -440,8 +1276,8 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
 
     // Quoted back the way it was written. A bracketed value arrives one dotted
     // key at a time, and `contents: match` is not a line anybody could look for.
-    // A deck's texts are stored joined on a line break; quote them back as written.
-    const shown = key === 'deck' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+    // A deck's cards are stored joined on a line break; quote them back as written.
+    const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
     const wrote =
       written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
 
@@ -467,6 +1303,19 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
       );
     }
 
+    // Corners belong to an outline, so what the kind is made of explains their
+    // absence, as it does a color's. A line has corners too, but they are a
+    // property of the line and go in its bracket.
+    if (key === 'corners') {
+      throw new SourceError(
+        kind === 'edge'
+          ? `"${name}" is an edge and has ${wrote}. A line's corners go in its bracket — write \`line: (corners: ${shown})\``
+          : `"${name}" is ${article(KIND_WORD[kind])} and has ${wrote}. ${capital(article(KIND_WORD[kind]))} is ${KIND_PARTS[kind]}, ` +
+              'so it has no corners — `corners:` takes a node with an outline',
+        line,
+      );
+    }
+
     // A word only the whole drawing takes, such as a theme.
     if (belongTo(key).length === 0) {
       throw new SourceError(
@@ -486,6 +1335,36 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
       line,
     );
   }
+}
+
+/**
+ * How a node's corners are drawn. A value is checked wherever it came from — a
+ * style's `corners: sharpp` is as much a typo as a node's — but a circle refuses
+ * `corners:` only when the node itself says it, since a circle has none. From a
+ * style or a default it lands on the outlines that have corners, the way a
+ * line's `corners: rounded` from a style lands only on lines with corners. A
+ * node drawn as a picture or with no body has no outline; `checkAttrs` has
+ * already refused the word written on one, and a style's is unused.
+ */
+function cornersOf(node: LayoutNode, value: string | undefined, written: boolean): NodeCorners {
+  if (node.body.kind !== 'shape' || value === undefined) return NODE_CORNERS[0];
+  if (!(NODE_CORNERS as readonly string[]).includes(value)) {
+    throw new SourceError(
+      `"${node.name}" has corners: ${value}, which is not a way to draw corners — use ${NODE_CORNERS.join(' or ')}`,
+      node.line,
+    );
+  }
+  if (!isBoxy(node.body.outline)) {
+    // A circle has no corners, and a diamond's or a hexagon's are drawn as
+    // points; only a box's are rounded. From a style it lands where it can.
+    if (!written) return NODE_CORNERS[0];
+    throw new SourceError(
+      `"${node.name}" is a ${node.body.outline} and has corners: ${value}. Only a box's corners are rounded or sharp — ` +
+        '`corners:` takes a `rectangle`, a `document` or a `flow-subprocess`',
+      node.line,
+    );
+  }
+  return value as NodeCorners;
 }
 
 /**
@@ -539,6 +1418,36 @@ function checkStyleKeys(statements: Stmt[]): void {
   for (const stmt of statements) {
     if (stmt.kind !== 'style') continue;
     for (const [key, value] of Object.entries(stmt.attrs)) {
+      if (topKey(key) === 'heading') {
+        throw new SourceError(
+          `style "${stmt.name}" has heading:, which names one node's own child, so it is written on that node`,
+          stmt.line,
+        );
+      }
+      if (topKey(key) === 'join-with') {
+        throw new SourceError(
+          `style "${stmt.name}" has join-with:, which names the one thing a node moves with, so it is written on that node`,
+          stmt.line,
+        );
+      }
+      if (topKey(key) === 'depth') {
+        throw new SourceError(
+          `style "${stmt.name}" has depth:, which moves one thing in the drawing order, so it is written on that thing`,
+          stmt.line,
+        );
+      }
+      if (topKey(key) === 'cards') {
+        throw new SourceError(
+          `style "${stmt.name}" has cards:, which are one deck's own children, so it is written on that deck`,
+          stmt.line,
+        );
+      }
+      if (topKey(key) === 'from' || topKey(key) === 'to') {
+        throw new SourceError(
+          `style "${stmt.name}" has ${key}:, which says where one line ends, so it is written on that edge`,
+          stmt.line,
+        );
+      }
       if (ALL_ATTR_KEYS.includes(topKey(key))) continue;
       throw new SourceError(
         `style "${stmt.name}" has ${key}: ${value}, which is not an attribute. ` +
@@ -631,62 +1540,110 @@ function markAt(end: 'from' | 'to', stmt: EdgeStmt, appearance: Attrs, what: str
 function buildEdges(
   statements: Stmt[],
   byName: Map<string, LayoutNode>,
+  named: Map<string, PointStmt | RegionStmt>,
   styles: Map<string, Attrs>,
   defaults: Map<DefaultTarget, Attrs>,
+  measurer: Measurer,
+  fontSize: number,
 ): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
+  // A line's name is used before or after it is written, so every name is
+  // known before any end is looked up. A name belongs to one thing.
+  const lineNames = new Map<string, number>();
   for (const stmt of statements) {
-    if (stmt.kind !== 'edge') continue;
-    const from = byName.get(stmt.from);
-    const to = byName.get(stmt.to);
-    if (!from) throw new SourceError(`edge from "${stmt.from}", which does not exist`, stmt.line);
-    if (!to) throw new SourceError(`edge to "${stmt.to}", which does not exist`, stmt.line);
-    const between: LayoutPassage | undefined = stmt.between && {
-      nodes: stmt.between.targets.map(({ name, part }) => {
-        if (part !== undefined) {
-          // A passage is the gap between two boxes, and a side or a point has
-          // no gap on either hand. Refused by name rather than dropped.
-          throw new SourceError(
-            `edge passes between "${name} ${part}", and a passage runs between two whole boxes ` +
-              `— drop "${part}"`,
-            stmt.line,
-          );
-        }
+    if ((stmt.kind !== 'edge' && stmt.kind !== 'bundle') || stmt.name === undefined) continue;
+    if (byName.has(stmt.name) || named.has(stmt.name) || lineNames.has(stmt.name)) {
+      const was = byName.has(stmt.name)
+        ? "a node's"
+        : named.has(stmt.name)
+          ? `the ${named.get(stmt.name)!.kind}'s on line ${named.get(stmt.name)!.line}`
+          : `the line's on line ${lineNames.get(stmt.name)}`;
+      throw new SourceError(
+        `line "${stmt.name}": the name is already ${was} — a name belongs to one thing`,
+        stmt.line,
+      );
+    }
+    lineNames.set(stmt.name, stmt.line);
+  }
+  // A named leg works anywhere a line does, an end included (design.org 4.6).
+  // Clashes between leg names and other names are refused in `lines.ts`.
+  const legNames = new Map<string, number>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'edge' && stmt.kind !== 'bundle') continue;
+    for (const entry of stmt.via ?? []) {
+      if (entry.leg && !lineNames.has(entry.leg.name) && !byName.has(entry.leg.name)) legNames.set(entry.leg.name, stmt.line);
+    }
+  }
+  for (const [name, line] of legNames) lineNames.set(name, line);
+  // An end on another line (`edge log audit -> req`) has no box: it stands on
+  // a point of that line, which `lines.ts` fills in once the line is drawn.
+  const onLines = new Map<string, LayoutNode>();
+  // An end at a named point or region stands on a box of its own, put where
+  // the mark is once everything is placed (`standInForMarks`).
+  const onMarks = new Map<string, LayoutNode>();
+  const endNode = (name: string, which: string, line: number): LayoutNode => {
+    const node = byName.get(name);
+    if (node) return node;
+    if (named.has(name)) {
+      const mark = onMarks.get(name) ?? placeholder(name, line);
+      onMarks.set(name, mark);
+      return mark;
+    }
+    if (!lineNames.has(name)) throw new SourceError(`edge ${which} "${name}", which does not exist`, line);
+    const point = onLines.get(name) ?? placeholder(name, line);
+    onLines.set(name, point);
+    return point;
+  };
+  const pending: { edge: LayoutEdge; from?: string; to?: string }[] = [];
+  for (const stmt of statements) {
+    if (stmt.kind === 'bundle') {
+      // A line with no ends: its path is its via: list, and its ends stand
+      // where that starts and finishes, so they are placeholders like an end
+      // on a line.
+      const what = `bundle ${stmt.name}`;
+      const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
+      const asEdge = { marks: {}, attrs: stmt.attrs, line: stmt.line } as unknown as EdgeStmt;
+      const between = stmt.between?.map((name) => {
         const node = byName.get(name);
-        if (!node) {
-          throw new SourceError(`edge passes between "${name}", which does not exist`, stmt.line);
-        }
+        if (!node) throw new SourceError(`${what} runs between ${stmt.between![0]} and ${stmt.between![1]}, and ${name} does not exist`, stmt.line);
         return node;
-      }) as [LayoutNode, LayoutNode],
-      ...(stmt.between.axis !== undefined ? { axis: stmt.between.axis } : {}),
-    };
-    const passes: LayoutPass[] | undefined = stmt.passes?.map((placement) => {
-      const written = describePlacement(placement);
-      return {
-        direction: placement.direction,
-        written,
-        nodes: placement.targets.map(({ name, part }) => {
-          if (part !== undefined) {
-            // The line passes a box, and a side or a point has no side of its
-            // own to be passed on. Refused by name rather than dropped.
-            throw new SourceError(
-              `edge passes "${written}", and a line passes a whole box — drop "${part}"`,
-              stmt.line,
-            );
-          }
-          const node = byName.get(name);
-          if (!node) {
-            throw new SourceError(`edge passes "${written}", and "${name}" does not exist`, stmt.line);
-          }
-          return node;
-        }),
-      };
-    });
+      }) as [LayoutNode, LayoutNode] | undefined;
+      if (between && between[0] === between[1]) {
+        throw new SourceError(`${what} runs from ${between[0].name} to itself — a bundle between two boxes names two`, stmt.line);
+      }
+      edges.push({
+        from: placeholder(stmt.name, stmt.line),
+        to: placeholder(stmt.name, stmt.line),
+        marks: { from: markAt('from', asEdge, appearance, what), to: markAt('to', asEdge, appearance, what) },
+        texts: [],
+        arrow: '--',
+        name: stmt.name,
+        ...(stmt.via !== undefined ? { via: stmt.via } : {}),
+        look: lineLook(stmt.attrs, appearance, what, stmt.line),
+        attrs: stmt.attrs,
+        appearance,
+        // A parallel bundle's path is where its members run, not a line of its
+        // own; a bundle between two boxes has no path, and its members are
+        // drawn themselves, a collapsed one's on top of each other.
+        ...(stmt.arrangement !== 'collapsed' || between ? { guide: true } : {}),
+        bundle: {
+          arrangement: stmt.arrangement,
+          gap: stmt.gap === undefined ? GAPS['tight']! : gapPixels(stmt.gap, `bundle "${stmt.name}" layout: (gap: …)`, stmt.line),
+          ...(stmt.order ? { order: stmt.order } : {}),
+          ...(between ? { between } : {}),
+        },
+        line: stmt.line,
+      });
+      continue;
+    }
+    if (stmt.kind !== 'edge') continue;
+    const from = endNode(stmt.from, 'from', stmt.line);
+    const to = endNode(stmt.to, 'to', stmt.line);
     const appearance = { ...defaults.get('edge'), ...appearanceOf(stmt.attrs, styles, stmt.line) };
     const what = `${stmt.from} ${stmt.arrow} ${stmt.to}`;
     checkAttrs('edge', what, stmt.attrs, stmt.line);
     checkStyleUse('edge', what, stmt.attrs, styles, stmt.line);
-    if (stmt.attrs['url'] !== undefined && stmt.text === undefined) {
+    if (stmt.attrs['url'] !== undefined && stmt.texts.length === 0) {
       // Wrapping the line works, and `LINE_WIDTH` is 1.5 — a destination that
       // technically has a target and practically has none. That is the silent
       // defect shape the language refuses everywhere else, so it is refused
@@ -697,7 +1654,20 @@ function buildEdges(
         stmt.line,
       );
     }
-    const textAttrs = { ...bracketOf('text', appearance), ...stmt.textAttrs };
+    const texts = stmt.texts.map(({ text, textAttrs: own, place }) => {
+      const textAttrs = { ...bracketOf('text', appearance), ...own };
+      const lines = linesFor(text, textAttrs, `edge ${what}`, stmt.line);
+      const size = fontSizeFor('edge', textAttrs, fontSize, stmt.line);
+      return {
+        text,
+        lines,
+        textAttrs,
+        place,
+        size,
+        width: widestLine(lines, measurer, size),
+        height: lines.length * measurer.lineHeight(size),
+      };
+    });
     edges.push({
       from,
       to,
@@ -705,19 +1675,236 @@ function buildEdges(
         from: markAt('from', stmt, appearance, what),
         to: markAt('to', stmt, appearance, what),
       },
-      textAttrs,
-      ...(stmt.text !== undefined
-        ? { text: stmt.text, lines: linesFor(stmt.text, textAttrs, `edge ${what}`, stmt.line) }
-        : {}),
-      ...(between ? { between } : {}),
-      ...(passes ? { passes } : {}),
+      texts,
+      arrow: stmt.arrow,
+      ...(stmt.name !== undefined ? { name: stmt.name } : {}),
+      ...(stmt.via !== undefined ? { via: stmt.via } : {}),
+      ...(stmt.straight !== undefined ? { straight: stmt.straight } : {}),
+      ...(stmt.evenWith !== undefined ? { evenWith: stmt.evenWith } : {}),
       look: lineLook(stmt.attrs, appearance, what, stmt.line),
       attrs: stmt.attrs,
       appearance,
+      ...(stmt.guide ? { guide: true } : {}),
+      ...(named.has(stmt.from) || named.has(stmt.to)
+        ? {
+            onMark: {
+              ...(named.has(stmt.from) ? { from: named.get(stmt.from)!.kind } : {}),
+              ...(named.has(stmt.to) ? { to: named.get(stmt.to)!.kind } : {}),
+            },
+          }
+        : {}),
       line: stmt.line,
     });
+    pending.push({
+      edge: edges[edges.length - 1]!,
+      ...(onLines.has(stmt.from) && !byName.has(stmt.from) ? { from: stmt.from } : {}),
+      ...(onLines.has(stmt.to) && !byName.has(stmt.to) ? { to: stmt.to } : {}),
+    });
+  }
+  const byLine = new Map(edges.filter((edge) => edge.name !== undefined).map((edge) => [edge.name!, edge]));
+  for (const edge of edges) {
+    for (const entry of edge.via ?? []) {
+      if (entry.leg && legNames.has(entry.leg.name)) byLine.set(entry.leg.name, edge);
+    }
+  }
+  for (const { edge, from, to } of pending) {
+    if (from === undefined && to === undefined) continue;
+    edge.onLine = {
+      ...(from !== undefined ? { from: byLine.get(from)! } : {}),
+      ...(to !== undefined ? { to: byLine.get(to)! } : {}),
+    };
   }
   return edges;
+}
+
+/**
+ * An end at a named point or region is a box where the mark is: of no size at
+ * a point, the region's rectangle at a region. Done after the page is
+ * normalized, since the marks move with it.
+ */
+function standInForMarks(edges: LayoutEdge[], marks: LayoutMark[]): void {
+  const byName = new Map(marks.map((mark) => [mark.name, mark]));
+  for (const edge of edges) {
+    for (const which of ['from', 'to'] as const) {
+      if (edge.onMark?.[which] === undefined) continue;
+      const node = edge[which];
+      const mark = byName.get(node.name)!;
+      node.x = mark.x;
+      node.y = mark.y;
+      node.width = mark.width;
+      node.height = mark.height;
+    }
+  }
+}
+
+/** A box of no size standing for a point on a line, which `lines.ts` puts in place once the line is drawn. */
+function placeholder(name: string, line: number): LayoutNode {
+  return ({
+      name,
+      kind: 'none',
+      body: { kind: 'none' },
+      corners: 'rounded',
+      text: '',
+      lines: [],
+      children: [],
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      headerHeight: 0,
+      reach: { left: 0, top: 0, right: 0, bottom: 0 },
+      banded: false,
+      textBox: { x: 0, y: 0, width: 0, height: 0 },
+      textSide: 'center',
+      textAttrs: {},
+      attrs: {},
+      appearance: {},
+      placements: [],
+      line,
+    } as LayoutNode);
+}
+
+/**
+ * Where the box each text on a line is placed by sits: `straight right from c`,
+ * `above s1`. And a text's `on:` must name one of its own line's legs, since a
+ * leg is part of one line (design.org 7.3).
+ */
+function locateTextTargets(edges: LayoutEdge[], placer: Placer): void {
+  for (const edge of edges) {
+    const subject = `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    const legs = (edge.via ?? []).map((entry) => entry.leg?.name).filter((name) => name !== undefined);
+    for (const text of edge.texts) {
+      const on = text.place.on;
+      if (on !== undefined && !legs.includes(on)) {
+        throw new SourceError(
+          `${subject}: the text "${text.text}" is on: ${on}, and ${on} is not a leg of this line — ` +
+            (legs.length > 0 ? `its legs are ${legs.join(', ')}` : 'a leg is named in via:, such as `via: 2 below b bottom, leg rise`'),
+          edge.line,
+        );
+      }
+      const by = text.place.straight ?? text.place.by;
+      if (by) text.target = placer.locate(by.target, subject, edge.line);
+      if (text.place.even) {
+        text.evenAt = text.place.even.map(({ placement }) => {
+          // Several targets line up with the stretch round them all, as in a placement.
+          const rects = placement.targets.map((target) => placer.locate(target, subject, edge.line));
+          const x = Math.min(...rects.map((rect) => rect.x));
+          const y = Math.min(...rects.map((rect) => rect.y));
+          const width = Math.max(...rects.map((rect) => rect.x + rect.width)) - x;
+          const height = Math.max(...rects.map((rect) => rect.y + rect.height)) - y;
+          const side = placement.side === 'left' || placement.side === 'top' ? 'start' : placement.side === 'center' ? 'center' : 'end';
+          return { axis: placement.axis, side, rect: { x, y, width, height } };
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Where the thing each `to: left, even with cat1` end lines up with is, once
+ * everything is placed. Several targets (`even with a and b`) are the region
+ * round them all, as in a placement.
+ */
+function locateEvenWith(edges: LayoutEdge[], placer: Placer, byName: Map<string, LayoutNode>, named: Map<string, PointStmt | RegionStmt>): void {
+  const lineNames = new Set(edges.map((edge) => edge.name).filter((name) => name !== undefined));
+  for (const edge of edges) {
+    if (!edge.evenWith) continue;
+    const subject = `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    const evenAt: { from?: Rect; to?: Rect } = {};
+    for (const which of ['from', 'to'] as const) {
+      const targets = edge.evenWith[which];
+      if (!targets) continue;
+      const rects = targets.map((target) => {
+        if (target.point === undefined && !byName.has(target.name) && !named.has(target.name)) {
+          throw new SourceError(
+            lineNames.has(target.name)
+              ? `${subject}: "${which}: ${edge.attrs[which]}" — ${target.name} is a line; an end is even with a box, a part of one, or a point`
+              : `${subject}: "${which}: ${edge.attrs[which]}" names ${target.name}, which does not exist${partWordHint(target.name, byName.keys())}`,
+            edge.line,
+          );
+        }
+        return placer.locate(target, subject, edge.line);
+      });
+      const x = Math.min(...rects.map((rect) => rect.x));
+      const y = Math.min(...rects.map((rect) => rect.y));
+      evenAt[which] = {
+        x,
+        y,
+        width: Math.max(...rects.map((rect) => rect.x + rect.width)) - x,
+        height: Math.max(...rects.map((rect) => rect.y + rect.height)) - y,
+      };
+    }
+    edge.evenAt = evenAt;
+  }
+}
+
+/**
+ * Where each `via:` stop that names something placed is, worked out by the
+ * placer once everything is placed. A stop naming a line or a leg is left to
+ * `lines.ts`, which has the lines.
+ */
+function locateStops(edges: LayoutEdge[], placer: Placer, byName: Map<string, LayoutNode>, named: Map<string, PointStmt | RegionStmt>): void {
+  const lineNames = new Set(edges.map((edge) => edge.name).filter((name) => name !== undefined));
+  const legNames = new Set(edges.flatMap((edge) => (edge.via ?? []).map((entry) => entry.leg?.name)).filter((name) => name !== undefined));
+  const bundles = new Set(edges.filter((edge) => edge.bundle).map((edge) => edge.name!));
+  for (const edge of edges) {
+    if (!edge.via) continue;
+    const subject = edge.bundle ? `bundle ${edge.name}` : `edge ${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    edge.viaAt = edge.via.map((entry) => {
+      const stop = entry.stop;
+      if (!stop) return undefined;
+      if (stop.kind === 'place' && stop.target.point === undefined && bundles.has(stop.target.name)) {
+        // `via: trunk`: the whole of a bundle, in this line's lane (6.6).
+        const name = stop.target.name;
+        if (edge.bundle) {
+          throw new SourceError(`${subject}: "via: ${stop.written}" — a bundle's path is its own; ${name} is a bundle, and bundles don't run inside each other`, edge.line);
+        }
+        if (stop.target.part !== undefined || stop.target.fraction !== undefined || stop.mode !== 'outside') {
+          throw new SourceError(`${subject}: "via: ${stop.written}" — ${name} is a bundle, and a line joins it whole, written \`via: ${name}\``, edge.line);
+        }
+        if (stop.gap !== undefined) {
+          throw new SourceError(`${subject}: "via: ${stop.written}" — the gap between a bundle's lines is the bundle's, written \`bundle ${name}  layout: parallel (gap: ${stop.gap})\``, edge.line);
+        }
+        if (entry.leg) {
+          throw new SourceError(`${subject}: "leg ${entry.leg.name} ${stop.written}" — ${name} is a bundle, which has legs of its own; name the leg on the bundle`, edge.line);
+        }
+        entry.stop = { kind: 'bundle', bundle: name, ...(stop.order ? { order: stop.order } : {}), written: stop.written };
+        return undefined;
+      }
+      if (stop.kind === 'place' && stop.order !== undefined) {
+        throw new SourceError(
+          `${subject}: "via: ${stop.written}" — ${stop.order.way}: is a line's place in a bundle's order, and ${stop.target.name} is not a bundle`,
+          edge.line,
+        );
+      }
+      if (stop.kind === 'through') {
+        if (!named.has(stop.region) || named.get(stop.region)!.kind !== 'region') {
+          throw new SourceError(
+            `${subject}: "via: ${stop.written}" — ${stop.region} is not a region; name one with \`region ${stop.region}  …\``,
+            edge.line,
+          );
+        }
+        return placer.locate({ name: stop.region }, subject, edge.line);
+      }
+      if (stop.kind !== 'place') return undefined;
+      const target = stop.target;
+      if (target.point === undefined && (lineNames.has(target.name) || legNames.has(target.name))) {
+        if (target.part !== undefined || target.fraction !== undefined) {
+          throw new SourceError(
+            `${subject}: "via: ${stop.written}" — ${target.name} is a line, and a point on it is written \`${target.name} at 1/3\`, \`${target.name} start\` or \`${target.name} end\``,
+            edge.line,
+          );
+        }
+        // A bare line or leg name is its middle.
+        entry.stop = { kind: 'online', line: target.name, at: 1 / 2, written: stop.written };
+        return undefined;
+      }
+      if (target.point === undefined && !byName.has(target.name) && !named.has(target.name)) {
+        throw new SourceError(`${subject}: "via: ${stop.written}" names ${target.name}, which does not exist${partWordHint(target.name, byName.keys())}`, edge.line);
+      }
+      return placer.locate(target, subject, edge.line);
+    });
+  }
 }
 
 /**
@@ -735,7 +1922,7 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     if (!(LINE_VALUES[property] as readonly string[]).includes(value)) {
       throw new SourceError(
         `edge ${what}: "${property}: ${value}" is not a ${property} — use ${(property === 'thickness' ? ['thin', 'normal', 'thick'] : LINE_VALUES[property]).join(', ')}` +
-          (property === 'thickness' ? ', or a number of pixels' : ''),
+          (property === 'thickness' ? ', a multiple of normal such as 2, or pixels such as 3px' : ''),
         line,
       );
     }
@@ -745,17 +1932,36 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
   const thickness = ((): number => {
     const value = appearance['line.thickness'];
     if (value !== undefined && /^[0-9.]/.test(value)) {
-      if (!/^\d+(\.\d+)?$/.test(value) || Number(value) <= 0) {
+      // A bare number is a multiple of normal; `px` fixes it in pixels (design.org 3.8).
+      const number = /^(\d*\.?\d+)(px)?$/.exec(value);
+      if (!number || Number(number[1]) <= 0) {
         throw new SourceError(
           `edge ${what}: "thickness: ${value}" — a thickness is thin, normal, thick, ` +
-            'or a plain number of pixels greater than zero, such as `thickness: 3`',
+            'a multiple of normal greater than zero such as `thickness: 2`, or pixels such as `thickness: 3px`',
           line,
         );
       }
-      return Number(value);
+      return number[2] ? Number(number[1]) : LINE_WIDTH * Number(number[1]);
     }
     return THICKNESS[word('thickness')]!;
   })();
+
+  const turn = ((): number | undefined => {
+    const value = appearance['line.turn'];
+    if (value === undefined) return undefined;
+    const ratio = /^(\d+)\/(\d+)$/.exec(value);
+    const number = ratio ? Number(ratio[1]) / Number(ratio[2]) : /^\d*\.?\d+$/.test(value) ? Number(value) : NaN;
+    if (!(number >= 0 && number <= 1)) {
+      throw new SourceError(
+        `edge ${what}: "turn: ${value}" — a turn is a fraction of the way across from the start's box, such as \`turn: 1/3\``,
+        line,
+      );
+    }
+    return number;
+  })();
+  const stepOut = appearance['line.step-out'] === undefined
+    ? GAPS['normal']!
+    : gapPixels(appearance['line.step-out'], `edge ${what}: step-out:`, line);
 
   const look: LineLook = {
     path: word('path'),
@@ -763,7 +1969,28 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     crossing: word('crossing'),
     pattern: word('pattern'),
     thickness,
+    curve: word('curve'),
+    turn,
+    turnWritten: written['line.turn'],
+    stepOut,
   };
+  // Said on the edge itself, a property its path doesn't have is refused; from
+  // a style or a default it lands on the lines that have it.
+  if (look.path === 'straight' && (written['line.turn'] !== undefined || written['line.step-out'] !== undefined)) {
+    const key = written['line.turn'] !== undefined ? 'turn' : 'step-out';
+    throw new SourceError(
+      `edge ${what}: a straight line has no route to ${key === 'turn' ? 'move' : 'step out of'} — \`${key}:\` takes a ` +
+        '`path: square` or `path: curved` line',
+      line,
+    );
+  }
+  if (look.path !== 'curved' && written['line.curve'] !== undefined) {
+    throw new SourceError(
+      `edge ${what}: \`curve:\` says how widely a curved line swings, and this line is ${look.path} — ` +
+        (look.path === 'square' ? 'for rounded corners write `corners: rounded`' : 'write `path: curved` with it'),
+      line,
+    );
+  }
   if (look.path === 'curved' && written['line.corners'] === 'rounded') {
     throw new SourceError(
       `edge ${what}: a curved line has no corners to round — \`corners: rounded\` takes a ` +
@@ -776,1995 +2003,12 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
 
 // --- pass two: sizes, bottom-up ---------------------------------------------
 
-type Local = Map<LayoutNode, { x: number; y: number }>;
-
-/**
- * Give a node a width and height, sizing its children first. Also records each
- * child's offset within this node, which pass three turns into absolute
- * coordinates once this node itself is placed.
- */
-function sizeNode(
-  node: LayoutNode,
-  edges: LayoutEdge[],
-  measurer: Measurer,
-  fontSize: number,
-  local: Local,
-): void {
-  for (const child of node.children) sizeNode(child, edges, measurer, fontSize, local);
-
-  // Text is measured at the size it will be drawn at — the size lives in
-  // `constants.ts` precisely so the resolver reserving the room and the
-  // renderer filling it cannot disagree about how much room there is.
-  const textSize = fontSizeFor(node.kind, node.textAttrs, fontSize, node.line);
-  const lineHeight = measurer.lineHeight(textSize);
-  // A node with empty text takes no room for it. This is what makes an
-  // invisible grouping container size to exactly its contents.
-  const hasText = node.lines.some((line) => plain(line).length > 0);
-  const textWidth = hasText ? widestLine(node.lines, measurer, textSize) : 0;
-  const textHeight = hasText ? node.lines.length * lineHeight : 0;
-
-  const glyphSide = ICON_LINES * lineHeight;
-
-  if (node.body.kind === 'none') {
-    // No body, so the node is its text: no padding, no outline, no children.
-    if (node.children.length > 0) {
-      throw new SourceError(
-        `"${node.name}" has shape: none and has children. With no body there is no box for ` +
-          'anything to go inside',
-        node.line,
-      );
-    }
-    node.width = textWidth;
-    node.height = textHeight;
-    node.textBox = textBoxIn(
-      { x: 0, y: 0, width: node.width, height: node.height },
-      (node.textSide = textStyleFor(node.textAttrs, node.line, 'start', 'center').side),
-      textWidth,
-      textHeight,
-    );
-    return;
-  }
-
-  if (node.body.kind === 'icon') {
-    // Drawn as a picture, so there is no box to pad and the node's size is the
-    // picture's. A text goes under it rather than inside it, which is the
-    // arrangement that makes a row of these read as captioned things.
-    if (node.children.length > 0) {
-      throw new SourceError(
-        `"${node.name}" is drawn as a picture and has children. A picture is not a box, so nothing can go inside it`,
-        node.line,
-      );
-    }
-    node.width = Math.max(glyphSide, textWidth);
-    node.height = glyphSide + (hasText ? ICON_GAP + textHeight : 0);
-    // The caption is under the picture and nowhere else, so only the
-    // horizontal half of `at` reaches it.
-    node.textBox = textBoxIn(
-      { x: 0, y: glyphSide + ICON_GAP, width: node.width, height: textHeight },
-      (node.textSide = textStyleFor(node.textAttrs, node.line, 'middle', 'center').side),
-      textWidth,
-      textHeight,
-    );
-    return;
-  }
-
-  // Read before the split, so a misspelt word is refused on a childless node
-  // too. The *absence* of children makes the setting inert, which stays silent;
-  // a value the language does not have is wrong wherever it is written.
-  const contents = contentsStyleFor(node);
-  const circle = isCircle(node);
-  if (circle) refuseOnCircle(node);
-
-  if (node.children.length === 0) {
-    // `at` is read on a leaf too, and is inert wherever the box is exactly the
-    // size of what it holds — which is every leaf, since a leaf is sized from
-    // its own text. It bites once the box is sized by something else: a
-    // `widths:` that widens it, or a child placed beside the text. Inert-but-
-    // legal stays silent here, the same treatment `align` gets on a leaf with
-    // one line.
-    const style = textStyleFor(node.textAttrs, node.line, 'middle', 'center');
-    node.width = textWidth + PAD * 2;
-    node.height = textHeight + PAD * 2;
-    node.textBox = textBoxIn(
-      {
-        x: PAD,
-        y: leafTop(style.end, 0, node.height, textHeight),
-        width: node.width - PAD * 2,
-        height: textHeight,
-      },
-      (node.textSide = style.side),
-      textWidth,
-      textHeight,
-    );
-  } else if (framedChildren(node).size > 0) {
-    // Something is placed against this node's own frame or text, so where its
-    // text sits and how big it is come out of one solve with its children.
-    const own: OwnText = { textWidth, textHeight, contents };
-    const lay = (width: number): void => {
-      layoutFramed(node, own, edges, measurer, fontSize, local, width - node.deckTexts.length * DECK_STEP);
-      applyDeck(node, local);
-    };
-    lay(0);
-    relayout.set(node, lay);
-    return;
-  } else {
-    if (contents.widths === 'match') matchWidths(node.children, local);
-    let content = layoutChildren(node.children, edges, measurer, fontSize, local);
-    if (contents.widths === 'fill') {
-      // The band is the wider of the title and the contents, so filling it
-      // needs the contents measured first. Where they already set the width
-      // this is `match` exactly; where the title wins it is the answer `match`
-      // could not give.
-      const band = Math.max(textWidth, content.width);
-      for (const child of node.children) widenTo(child, band, local);
-      content = layoutChildren(node.children, edges, measurer, fontSize, local);
-      checkOneColumn(node, node.children, local);
-    }
-    // `headerHeight` is the band the text takes, whichever end of the box that
-    // band is at. Only the contents' offset depends on the side.
-    node.headerHeight = hasText ? textHeight + HEADER_GAP : 0;
-    node.width = Math.max(textWidth, content.width) + PAD * 2;
-    node.height = node.headerHeight + content.height + PAD * 2;
-
-    const style = textStyleFor(node.textAttrs, node.line);
-    if (style.end === 'center') throw bandInMiddle(node, style.at);
-    const above = style.end === 'top' ? node.headerHeight : 0;
-    // The text has a band at one end of the box, and the contents have the
-    // other.
-    node.textBox = textBoxIn(
-      {
-        x: PAD,
-        y: style.end === 'top' ? PAD : node.height - PAD - textHeight,
-        width: node.width - PAD * 2,
-        height: textHeight,
-      },
-      (node.textSide = style.side),
-      textWidth,
-      textHeight,
-    );
-    // Where the title is wider than the contents, the slack is all on the right
-    // — every member sits at the smallest position its constraints allow and
-    // nothing pushes it along. `align` is what says where the block goes in it.
-    const slack = node.width - PAD * 2 - content.width;
-    const shift = contents.align === 'left' ? 0 : contents.align === 'center' ? slack / 2 : slack;
-    for (const child of node.children) {
-      const offset = local.get(child)!;
-      offset.x += PAD + shift;
-      offset.y += PAD + above;
-    }
-    node.banded = true;
-  }
-
-  if (circle) circumscribe(node, local);
-  applyDeck(node, local);
-}
-
 function isCircle(node: LayoutNode): boolean {
   return node.body.kind === 'shape' && node.body.outline === 'circle';
 }
 
-/**
- * Grow a node sized as a rectangle into the circle around what it holds.
- *
- * The circle passes a padding outside the corners of the padded-in block —
- * the text of a leaf, or the band and contents of a container — so whatever
- * fits in the rectangle fits in the circle, clear of its edge by the same
- * padding at the corners where it comes closest. Everything inside moves to
- * keep the block centered.
- */
-function circumscribe(node: LayoutNode, local: Local): void {
-  const side = Math.hypot(node.width - PAD * 2, node.height - PAD * 2) + PAD * 2;
-  moveInside(node, (side - node.width) / 2, (side - node.height) / 2, local);
-  node.width = side;
-  node.height = side;
-}
-
-function moveInside(node: LayoutNode, dx: number, dy: number, local: Local): void {
-  node.textBox.x += dx;
-  node.textBox.y += dy;
-  for (const child of node.children) {
-    const offset = local.get(child)!;
-    offset.x += dx;
-    offset.y += dy;
-  }
-}
-
-/**
- * What a circle does not take yet, refused by name rather than drawn as an
- * ellipse or with a copy's text outside the outline.
- *
- * Something placed against the circle's own edge or text — a badge included —
- * sizes the frame in the same solve as the thing placed, and a circle's corner
- * points are a fraction of a radius that solve does not know yet. A deck's
- * copies write their text at the top-left of the face, which on a circle is
- * outside it.
- */
-function refuseOnCircle(node: LayoutNode): void {
-  const [framed] = framedChildren(node);
-  if (node.attrs['badge'] !== undefined || node.appearance['badge'] !== undefined) {
-    throw new SourceError(
-      `"${node.name}" is a circle with a badge:, and a badge is not built for circles yet — ` +
-        'make it a rectangle, or place the badge as a node of its own against the circle',
-      node.line,
-    );
-  }
-  if (framed !== undefined) {
-    throw new SourceError(
-      `"${framed.name}" is placed against "${node.name}" itself, and "${node.name}" is a circle. ` +
-        'Something placed against a circle\'s own edge or text is not built yet — place it against ' +
-        `another node, or make "${node.name}" a rectangle`,
-      framed.line,
-    );
-  }
-  if (node.deckTexts.length > 0) {
-    throw new SourceError(
-      `"${node.name}" is a circle with a deck:, and a deck is not built for circles yet`,
-      node.line,
-    );
-  }
-}
-
-/**
- * Make room for a deck's copies, once the node's own face has been sized.
- *
- * The copies sit behind and above-left, so the whole node grows by the depth
- * of the stack and its own face moves down and right by the same.
- */
-function applyDeck(node: LayoutNode, local: Local): void {
-  if (node.deckTexts.length > 0) {
-    node.inset = node.deckTexts.length * DECK_STEP;
-    node.width += node.inset;
-    node.height += node.inset;
-    node.textBox.x += node.inset;
-    node.textBox.y += node.inset;
-    for (const child of node.children) {
-      const offset = local.get(child)!;
-      offset.x += node.inset;
-      offset.y += node.inset;
-    }
-  }
-}
-
-/**
- * Where a block of text ends up in the room it was given: the *ink* box, which
- * is what `hub text` names as a placement target and what the renderer draws.
- *
- * Only the horizontal is decided here. The vertical is settled by whoever
- * knows which end of the box the text sits at, which differs between a leaf, a
- * container's band and a caption under a picture, and arrives as `room.y`.
- */
-function textBoxIn(
-  room: { x: number; y: number; width: number; height: number },
-  side: 'left' | 'center' | 'right',
-  inkWidth: number,
-  inkHeight: number,
-): { x: number; y: number; width: number; height: number } {
-  const x =
-    side === 'left'
-      ? room.x
-      : side === 'right'
-        ? room.x + room.width - inkWidth
-        : room.x + (room.width - inkWidth) / 2;
-  return { x, y: room.y, width: inkWidth, height: inkHeight };
-}
-
-/**
- * What `contents: (…)` said, with its two words checked. Read from the merged
- * appearance rather than from what the node wrote, so a style may carry it —
- * `align: widths` read only the node's own attributes, which made a style
- * carrying it do nothing at all and say nothing about it.
- */
-interface ContentsStyle {
-  widths: 'natural' | 'match' | 'fill';
-  align: 'left' | 'center' | 'right';
-}
-
-function contentsStyleFor(node: LayoutNode): ContentsStyle {
-  const written = bracketOf('contents', node.appearance);
-  const widths = written['widths'] ?? 'natural';
-  const align = written['align'] ?? 'left';
-  if (!(CONTENT_WIDTHS as readonly string[]).includes(widths)) {
-    throw new SourceError(
-      `"${node.name}" has contents: (widths: ${widths}), which is not one of ${CONTENT_WIDTHS.join(', ')}`,
-      node.line,
-    );
-  }
-  if (!(CONTENT_ALIGNMENTS as readonly string[]).includes(align)) {
-    throw new SourceError(
-      `"${node.name}" has contents: (align: ${align}), which is not one of ${CONTENT_ALIGNMENTS.join(', ')}`,
-      node.line,
-    );
-  }
-  return { widths, align } as ContentsStyle;
-}
-
-/**
- * `widths: match` widens every direct child to the widest one's natural width,
- * before layoutChildren sizes and positions anything from those widths. A
- * container's own children are already sized by this point.
- */
-function matchWidths(children: LayoutNode[], local: Local): void {
-  const maxWidth = Math.max(...children.map((child) => child.width));
-  for (const child of children) widenTo(child, maxWidth, local);
-}
-
-/**
- * `widths: fill` makes every child as wide as the band, which only holds for
- * a single column: two children set to the band's width and not one above the
- * other make the contents wider than the band, the band grows with them, and
- * no child is the width it was asked to be. Every child of a column starts at
- * the same x once they are all one width, so a child that does not is the
- * proof, and the pair is named rather than drawn wrong.
- */
-function checkOneColumn(node: LayoutNode, children: LayoutNode[], local: Local): void {
-  const [first, ...rest] = children;
-  if (!first) return;
-  const off = rest.find((child) => Math.abs(local.get(child)!.x - local.get(first)!.x) > 0.5);
-  if (!off) return;
-  throw new SourceError(
-    `"${node.name}" has contents: (widths: fill), which makes every child the full width of the box, ` +
-      `and that only works in a single column — "${first.name}" and "${off.name}" are not one above the other. ` +
-      'Put them in one column, or use contents: (widths: match) to make them one width without filling the box',
-    node.line,
-  );
-}
-
-/**
- * Make a node wider than it was sized, carrying its text with it.
- *
- * `widths: match` and `widths: fill` both set a child's width after that child
- * was sized from its own contents, and the text's box was worked out against
- * the old one. A left-ranged text stays where it is; a centered or right-ranged
- * one moves by its share of the difference.
- *
- * A circle grows both ways, since a wider circle is a bigger one, and what is
- * inside it stays centered.
- */
-function widenTo(node: LayoutNode, width: number, local: Local): void {
-  if (isCircle(node)) {
-    const grew = width - node.width;
-    moveInside(node, grew / 2, grew / 2, local);
-    node.width = width;
-    node.height = width;
-    return;
-  }
-  // A node with something placed against its own frame is laid out by a
-  // solve, and a wider frame is one more thing that solve has to hold: the
-  // things against its right edge move, and a centered text re-centers.
-  const again = relayout.get(node);
-  if (again) {
-    again(width);
-    return;
-  }
-  const grew = width - node.width;
-  node.width = width;
-  if (node.textSide === 'center') node.textBox.x += grew / 2;
-  else if (node.textSide === 'right') node.textBox.x += grew;
-}
-
-/**
- * Position a container's children relative to each other. Children that make
- * no placement stack vertically in written order; the rest are solved against the
- * siblings they name, by the same constraint pass that positions top-level
- * nodes. A placement may only name a sibling — containment scopes the group.
- */
-function layoutChildren(
-  children: LayoutNode[],
-  edges: LayoutEdge[],
-  measurer: Measurer,
-  fontSize: number,
-  local: Local,
-): { width: number; height: number } {
-  const siblings = new Map(children.map((child) => [child.name, child]));
-
-  // Children that say nothing keep the written order, down the page and flush
-  // left. Written as constraints rather than a cursor so a placed sibling can
-  // push them along like anything else.
-  const stack: Constraint[] = [];
-  const alignment: Constraint[] = [];
-  const quiet = children.filter((child) => child.placements.length === 0);
-  const indexOf = new Map(children.map((child, index) => [child, index]));
-  quiet.forEach((child, position) => {
-    const previous = quiet[position - 1];
-    if (!previous) return;
-    const before = indexOf.get(previous)!;
-    const after = indexOf.get(child)!;
-    stack.push({ from: before, to: after, weight: previous.height + CHILD_GAP });
-    alignment.push(...fix(before, after, 0));
-  });
-
-  const positions = positionGroup(
-    children,
-    (placement, owner) =>
-      placement.targets.map(({ name, part }) => {
-        const target = siblings.get(name);
-        if (!target) {
-          throw new SourceError(
-            `"${owner.name}" is placed against "${name}", which is not one of its siblings or its parent`,
-            placement.line,
-          );
-        }
-        return partOf(
-          {
-            name,
-            node: target,
-            index: indexOf.get(target)!,
-            offset: { x: 0, y: 0 },
-            width: target.width,
-            height: target.height,
-          },
-          part,
-          owner,
-          placement.line,
-        );
-      }),
-    { x: alignment, y: stack },
-    corridorsIn(edges, (node) => liftTo(node, indexOf, local), measurer, fontSize),
-  );
-
-  for (const child of children) local.set(child, positions.get(child)!);
-  return extentOf(children, local);
-}
-
-function extentOf(children: LayoutNode[], local: Local): { width: number; height: number } {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  // What a child has placed outside itself is still part of it, so the block
-  // holding the child holds that too.
-  for (const child of children) {
-    const offset = local.get(child)!;
-    const { reach } = child;
-    minX = Math.min(minX, offset.x - reach.left);
-    minY = Math.min(minY, offset.y - reach.top);
-    maxX = Math.max(maxX, offset.x + child.width + reach.right);
-    maxY = Math.max(maxY, offset.y + child.height + reach.bottom);
-  }
-
-  for (const child of children) {
-    const offset = local.get(child)!;
-    offset.x -= minX;
-    offset.y -= minY;
-  }
-
-  return { width: maxX - minX, height: maxY - minY };
-}
-
-/** What a node's own text takes, measured once by `sizeNode`. */
-interface OwnText {
-  textWidth: number;
-  textHeight: number;
-  contents: ContentsStyle;
-}
-
-/** How to lay a framed node out again at a given width, which is what `widenTo` needs. */
-const relayout = new WeakMap<LayoutNode, (width: number) => void>();
-
-/**
- * The children placed against their parent — its frame, a part of it, or its
- * text — together with any child placed against one of those, and so on.
- *
- * These hang off the frame. The rest hang off the default position under the
- * text, which is the contents stack as it always was. Nothing sorts a child
- * into one or the other; it is read off what each placement names.
- */
-function framedChildren(parent: LayoutNode): Set<LayoutNode> {
-  const framed = new Set<LayoutNode>();
-  const byName = new Map(parent.children.map((child) => [child.name, child]));
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const child of parent.children) {
-      if (framed.has(child)) continue;
-      const names = child.placements.flatMap((placement) => placement.targets.map((target) => target.name));
-      const hangs = names.some((name) => {
-        if (name === parent.name) return true;
-        const sibling = byName.get(name);
-        return sibling !== undefined && framed.has(sibling);
-      });
-      if (hangs) {
-        framed.add(child);
-        grew = true;
-      }
-    }
-  }
-  return framed;
-}
-
-/**
- * The sides of its parent's frame a child is not held inside by the padding.
- *
- * Every child is held a padding in from the frame on all four sides, which is
- * how a box grows to hold what is in it. A child placed against a side is
- * held by that placement instead — tucked a gap in with `inside`, straddling
- * it with `on`, beyond it with `outside` — and holding it by the padding as
- * well would contradict the placement whenever the gap is the smaller.
- *
- * `overlap: allow` on a child is "do not grow for me": it lies over whatever
- * is there, and the frame is not held open around it at all.
- */
-function freeSides(child: LayoutNode, parent: LayoutNode): Set<PartSide> {
-  if (allowsOverlap(child)) return new Set(PART_SIDES);
-  const free = new Set<PartSide>();
-  const across = (direction: string): PartSide[] => [
-    ...(/left|right/.test(direction) ? (['left', 'right'] as const) : []),
-    ...(/above|below/.test(direction) ? (['top', 'bottom'] as const) : []),
-  ];
-  for (const placement of child.placements) {
-    for (const target of placement.targets) {
-      if (target.name !== parent.name || target.part === 'text') continue;
-      if (placement.kind === 'offset' && placement.written !== 'inside') {
-        // Beyond the frame, so it neither holds the frame open nor is held in
-        // by it — on either axis. Held on the other one, a note taller than
-        // its parent's text would stretch the parent to fit a thing outside it.
-        for (const side of PART_SIDES) free.add(side);
-        continue;
-      }
-      const words = (target.part ?? '').split('-');
-      for (const side of PART_SIDES) if (words.includes(side)) free.add(side);
-      if (placement.kind === 'align' && placement.side !== 'center') free.add(placement.side as PartSide);
-    }
-  }
-  return free;
-}
-
-/**
- * The parent's frame as a target, narrowed to the part that was named.
- *
- * The frame is two members of the child system, its top-left corner and its
- * bottom-right, so a part of it is read off those two per axis: `right` is
- * across at the bottom-right corner and spans both down, `top-center` spans
- * both across and is down at the top-left. A part that spans comes as its two
- * ends, and a placement against two targets already means the region that
- * bounds them.
- */
-function frameTargets(parent: LayoutNode, part: Part | undefined, first: number, last: number): Target[] {
-  const words = (part ?? '').split('-');
-  const pick = (near: string, far: string): number[] =>
-    words.includes(near) ? [first] : words.includes(far) ? [last] : [first, last];
-  const xs = pick('left', 'right');
-  const ys = pick('top', 'bottom');
-  const name = part === undefined ? parent.name : `${parent.name} ${part}`;
-  const point = (x: number, y: number): Target => ({
-    name,
-    node: parent,
-    index: x,
-    byAxis: { x, y },
-    frame: true,
-    offset: { x: 0, y: 0 },
-    width: 0,
-    height: 0,
-  });
-  const start = point(xs[0]!, ys[0]!);
-  const end = point(xs[xs.length - 1]!, ys[ys.length - 1]!);
-  return xs.length === 1 && ys.length === 1 ? [start] : [start, end];
-}
-
-/**
- * A stand-in member for something of the parent's own that takes room among
- * its children: its text, its badge, the block of its contents, a corner of
- * its frame. Named after the parent so an error about it reads in the
- * author's words — `"hub text" and "star" overlap`.
- */
-function stand(of: LayoutNode, what: string, width: number, height: number): LayoutNode {
-  return {
-    ...of,
-    name: `${of.name} ${what}`,
-    parent: undefined,
-    children: [],
-    placements: [],
-    attrs: {},
-    appearance: {},
-    deckTexts: [],
-    reach: NO_REACH,
-    x: 0,
-    y: 0,
-    width,
-    height,
-  };
-}
-
-function bandInMiddle(node: LayoutNode, at: string): SourceError {
-  // A container's band is at one end precisely so its contents can have the
-  // other, so the three positions that name neither end have nothing to mean
-  // here. Refused rather than rounded to an end, for the reason every other
-  // word in the language is: a value that quietly becomes a different value
-  // looks like the tool being broken.
-  return new SourceError(
-    `"${node.name}" holds things and its text is at: ${at}. A container's text sits at ` +
-      'the top or the bottom so its contents can have the other end, so name a position on ' +
-      'one of those edges',
-    node.line,
-  );
-}
-
-/**
- * Lay out a node that has something placed against its own frame or text.
- *
- * One solve holds everything: the children placed against the frame, the
- * block of ordinary contents solved as it always was, the node's text and
- * badge, and the frame's two corners. Every one of them is held a padding in
- * from the frame, so the frame is the smallest box that holds them all, which
- * is what a node's size has always been. A part of the frame is then just a
- * target like any other.
- *
- * The band falls out rather than being decided. It exists because the
- * contents stack below the text; where every child hangs off the frame
- * instead, nothing is below the text, there is no band, and the node reads as
- * a leaf — its text centered, and whatever is beside the text centered with
- * it as one group.
- */
-function layoutFramed(
-  node: LayoutNode,
-  own: OwnText,
-  edges: LayoutEdge[],
-  measurer: Measurer,
-  fontSize: number,
-  local: Local,
-  minWidth: number,
-): void {
-  const { textWidth, textHeight, contents } = own;
-  const hasText = textWidth > 0;
-  const framed = framedChildren(node);
-  const stacked = node.children.filter((child) => !framed.has(child));
-  const placed = node.children.filter((child) => framed.has(child));
-  const banded = stacked.length > 0;
-  const style = banded
-    ? textStyleFor(node.textAttrs, node.line)
-    : textStyleFor(node.textAttrs, node.line, 'middle', 'center');
-  if (banded && style.end === 'center') throw bandInMiddle(node, style.at);
-  // The children placed against this node's text. With it they make the
-  // text's row: the contents stack past all of them, and they range and
-  // center with the text as one group.
-  const againstText = (placement: Placement) =>
-    placement.targets.some((target) => target.name === node.name && target.part === 'text');
-  const withText = placed.filter((child) => child.placements.some(againstText));
-
-  let block = { width: 0, height: 0 };
-  if (banded) {
-    if (contents.widths === 'match') matchWidths(stacked, local);
-    block = layoutChildren(stacked, edges, measurer, fontSize, local);
-    if (contents.widths === 'fill') {
-      // The row is the text and whatever stands beside it, each at its gap.
-      let row = textWidth;
-      for (const child of withText) {
-        const beside = child.placements.find(
-          (placement): placement is OffsetPlacement =>
-            placement.kind === 'offset' && /left|right/.test(placement.direction) && againstText(placement),
-        );
-        if (beside) row += child.width + (hasText ? gapFor(child, beside, node) : 0);
-      }
-      const across = Math.max(row, block.width);
-      for (const child of stacked) widenTo(child, across, local);
-      block = layoutChildren(stacked, edges, measurer, fontSize, local);
-      checkOneColumn(node, stacked, local);
-    }
-  }
-
-  const members: LayoutNode[] = [...placed];
-  const add = (member: LayoutNode): number => members.push(member) - 1;
-  const K = banded ? add(stand(node, 'contents', block.width, block.height)) : -1;
-  // An empty text is still somewhere, so a thing placed against it has a
-  // place to be: it is a point where the text would have been, and it takes
-  // no room — including the gap beside it, which `Target.empty` drops.
-  const T = hasText || withText.length > 0 ? add(stand(node, 'text', textWidth, textHeight)) : -1;
-  const TL = add(stand(node, 'frame', 0, 0));
-  const BR = add(stand(node, 'frame', 0, 0));
-
-  const x: Constraint[] = [];
-  const y: Constraint[] = [];
-  const hold = (index: number, free: Set<PartSide>): void => {
-    const { width, height, reach } = members[index]!;
-    if (!free.has('left')) x.push({ from: TL, to: index, weight: PAD + reach.left });
-    if (!free.has('right')) x.push({ from: index, to: BR, weight: width + reach.right + PAD });
-    if (!free.has('top')) y.push({ from: TL, to: index, weight: PAD + reach.top });
-    if (!free.has('bottom')) y.push({ from: index, to: BR, weight: height + reach.bottom + PAD });
-  };
-  placed.forEach((child, index) => hold(index, freeSides(child, node)));
-  for (const index of [K, T]) if (index >= 0) hold(index, new Set());
-  if (minWidth > 0) x.push({ from: TL, to: BR, weight: minWidth });
-
-  // The text's row, as members: the text and everything placed against it.
-  const row = [...(T >= 0 ? [T] : []), ...withText.map((child) => placed.indexOf(child))];
-  if (banded) {
-    // The text's row is at one end, the contents the other.
-    for (const index of row) {
-      const { height, reach } = members[index]!;
-      if (style.end === 'top') y.push({ from: index, to: K, weight: height + reach.bottom + HEADER_GAP });
-      else y.push({ from: K, to: index, weight: block.height + HEADER_GAP + reach.top });
-    }
-  }
-
-  const siblings = new Map(node.children.map((child) => [child.name, child]));
-  const indexOf = new Map(members.map((member, index) => [member, index]));
-  const locate = (placement: Placement, owner: LayoutNode): Target[] =>
-    placement.targets.flatMap(({ name, part }): Target[] => {
-      if (name === node.name) {
-        if (part !== 'text') return frameTargets(node, part, TL, BR);
-        const text = { x: 0, y: 0 };
-        return [
-          {
-            name: `${name} text`,
-            node,
-            index: T,
-            offset: text,
-            width: textWidth,
-            height: textHeight,
-            ...(hasText ? {} : { empty: true }),
-          },
-        ];
-      }
-      const sibling = siblings.get(name);
-      if (!sibling) {
-        throw new SourceError(
-          `"${owner.name}" is placed against "${name}", which is not one of its siblings or its parent`,
-          placement.line,
-        );
-      }
-      // A child of the contents is reached through the block that holds it,
-      // at the offset the contents solve already gave it.
-      const inBlock = !framed.has(sibling);
-      const target: Target = {
-        name,
-        node: sibling,
-        index: inBlock ? K : indexOf.get(sibling)!,
-        offset: inBlock ? { ...local.get(sibling)! } : { x: 0, y: 0 },
-        width: sibling.width,
-        height: sibling.height,
-      };
-      return [partOf(target, part, owner, placement.line)];
-    });
-
-  // Which way a child against a side stands from the rest of the box: across
-  // for a left or right side or corner, down for the top or bottom.
-  const facing = new Map<number, Axis>();
-  placed.forEach((child, index) => {
-    for (const placement of child.placements) {
-      for (const target of placement.targets) {
-        if (target.name !== node.name || target.part === undefined || target.part === 'text') continue;
-        const words = target.part.split('-');
-        if (words.includes('left') || words.includes('right')) facing.set(index, 'x');
-        else if (words.includes('top') || words.includes('bottom')) facing.set(index, 'y');
-      }
-    }
-  });
-  const across = (i: number, j: number): Axis | undefined => facing.get(i) ?? facing.get(j);
-
-  // An edge end inside this node, as a member of this solve: a framed child
-  // or something inside one, or something in the contents, reached through
-  // the block at the offset the contents solve gave it. An end outside the
-  // node is none of this solve's business.
-  const endOf = (end: LayoutNode): Target | undefined => {
-    let member = end;
-    const offset = { x: 0, y: 0 };
-    while (member.parent !== node) {
-      const step = local.get(member);
-      if (!step || !member.parent) return undefined;
-      offset.x += step.x;
-      offset.y += step.y;
-      member = member.parent;
-    }
-    const inBlock = !framed.has(member);
-    if (inBlock) {
-      const step = local.get(member)!;
-      offset.x += step.x;
-      offset.y += step.y;
-    }
-    return {
-      name: end.name,
-      node: end,
-      index: inBlock ? K : indexOf.get(member)!,
-      offset,
-      width: end.width,
-      height: end.height,
-    };
-  };
-  // Two ends both in the contents come out as one member and are skipped:
-  // the contents solve already made room for that edge's text.
-  const corridors = corridorsIn(edges, endOf, measurer, fontSize);
-
-  const solve = (pins: Record<Axis, Constraint[]>) =>
-    // Everything here is inside one box, so a collision separates by the step
-    // the contents stack by, not by the gap kept between strangers.
-    positionGroup(members, locate, { x: [...x, ...pins.x], y: [...y, ...pins.y] }, corridors, across, CHILD_GAP);
-  let solved = solve({ x: [], y: [] });
-
-  // Where a text is centered or ranged right, where it goes depends on how
-  // wide the frame came out, which depends on everything else. So it is
-  // measured off the first solve and pinned, the move `settle` makes.
-  const at = (index: number) => solved.get(members[index]!)!;
-  const inner = (axis: Axis) => ({
-    start: at(TL)[axis] + PAD,
-    size: at(BR)[axis] - at(TL)[axis] - PAD * 2,
-  });
-  const pins: Record<Axis, Constraint[]> = { x: [], y: [] };
-  const pin = (axis: Axis, index: number, to: number): void => {
-    if (to - at(index)[axis] <= 1e-9) return;
-    pins[axis].push(...fix(TL, index, to - at(TL)[axis]));
-  };
-  // The text and the things placed against it range and center as a group,
-  // which is the fan rule's sentence again: several things against one target
-  // are balanced on it together.
-  const extent = (axis: Axis) => {
-    let start = Infinity;
-    let end = -Infinity;
-    for (const index of row) {
-      const size = axis === 'x' ? members[index]!.width : members[index]!.height;
-      start = Math.min(start, at(index)[axis]);
-      end = Math.max(end, at(index)[axis] + size);
-    }
-    return { start, end };
-  };
-  if (banded) {
-    if (T >= 0 && style.side !== 'left') {
-      const { start, end } = extent('x');
-      pin('x', T, at(T).x + (alignedAt(style.side, inner('x'), end - start) - start));
-    }
-    if (contents.align !== 'left') pin('x', K, alignedAt(contents.align, inner('x'), block.width));
-  } else if (T >= 0) {
-    const sides: Record<Axis, Side> = { x: style.side, y: style.end };
-    // The text and its group range in the room their own row (across) or
-    // column (down) leaves them — between whatever sits beside, above or below
-    // them — not in the whole box. Ranged against the whole width, a
-    // right-ranged title runs into a child in the top-right corner, pushes it
-    // out and grows the box; centered on the whole height, a title with things
-    // placed below it and more in the bottom corners drops into the middle.
-    const room = (axis: Axis): { start: number; size: number } => {
-      const cross: Axis = axis === 'x' ? 'y' : 'x';
-      const whole = inner(axis);
-      const along = extent(axis);
-      const beside = extent(cross);
-      const size = (member: LayoutNode, on: Axis) => (on === 'x' ? member.width : member.height);
-      let start = whole.start;
-      let end = whole.start + whole.size;
-      members.forEach((member, index) => {
-        if (row.includes(index) || index === TL || index === BR) return;
-        const c0 = at(index)[cross];
-        if (c0 + size(member, cross) <= beside.start || c0 >= beside.end) return;
-        const a0 = at(index)[axis];
-        if (a0 + size(member, axis) <= along.start) start = Math.max(start, a0 + size(member, axis) + CHILD_GAP);
-        else if (a0 >= along.end) end = Math.min(end, a0 - CHILD_GAP);
-      });
-      return { start, size: end - start };
-    };
-    for (const axis of AXES) {
-      if (sides[axis] === 'left' || sides[axis] === 'top') continue;
-      const { start, end } = extent(axis);
-      const want = alignedAt(sides[axis], room(axis), end - start);
-      pin(axis, T, at(T)[axis] + (want - start));
-    }
-  }
-  if (pins.x.length > 0 || pins.y.length > 0) solved = solve(pins);
-
-  const origin = at(TL);
-  const corner = at(BR);
-  node.inset = 0;
-  node.width = corner.x - origin.x;
-  node.height = corner.y - origin.y;
-  node.banded = banded;
-  node.headerHeight = banded && hasText ? textHeight + HEADER_GAP : 0;
-  node.textSide = style.side;
-  const relative = (index: number, width: number, height: number) => ({
-    x: at(index).x - origin.x,
-    y: at(index).y - origin.y,
-    width,
-    height,
-  });
-  node.textBox = T >= 0 ? relative(T, textWidth, textHeight) : { x: 0, y: 0, width: 0, height: 0 };
-  const reach = { left: 0, top: 0, right: 0, bottom: 0 };
-  for (const child of placed) {
-    const position = solved.get(child)!;
-    const offset = { x: position.x - origin.x, y: position.y - origin.y };
-    local.set(child, offset);
-    // Whatever sticks out past the frame — a child placed outside it, or
-    // something one of the children placed outside itself.
-    reach.left = Math.max(reach.left, child.reach.left - offset.x);
-    reach.top = Math.max(reach.top, child.reach.top - offset.y);
-    reach.right = Math.max(reach.right, offset.x + child.width + child.reach.right - node.width);
-    reach.bottom = Math.max(reach.bottom, offset.y + child.height + child.reach.bottom - node.height);
-  }
-  node.reach = reach;
-  if (banded) {
-    const shift = relative(K, 0, 0);
-    for (const child of stacked) {
-      const offset = local.get(child)!;
-      offset.x += shift.x;
-      offset.y += shift.y;
-    }
-  }
-}
-
 // --- pass three: solve for positions -----------------------------------------
 
-function placeRoots(
-  roots: LayoutNode[],
-  byName: Map<string, LayoutNode>,
-  edges: LayoutEdge[],
-  measurer: Measurer,
-  fontSize: number,
-  local: Local,
-): void {
-  const anchors = roots.filter((root) => root.placements.length === 0);
-  if (anchors.length === 0) {
-    throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
-  }
-  if (anchors.length > 1) {
-    const names = anchors.map((node) => `"${node.name}"`).join(', ');
-    throw new SourceError(
-      `exactly one node may say nothing about where it goes, but ${anchors.length} do: ${names}`,
-      anchors[1]!.line,
-    );
-  }
-
-  const indexOf = new Map(roots.map((root, index) => [root, index]));
-
-  // A placement may name something nested — `right of server.docker` places a top-level
-  // node against a box inside another. Sizes and offsets within a container are
-  // already settled, so a nested target is its root's position plus a constant.
-  const positions = positionGroup(
-    roots,
-    (placement, owner) =>
-      placement.targets.map(({ name, part }) => {
-        const target = byName.get(name);
-        if (!target) {
-          throw new SourceError(
-            `"${owner.name}" is placed against "${name}", which does not exist`,
-            placement.line,
-          );
-        }
-        let root = target;
-        const offset = { x: 0, y: 0 };
-        while (root.parent) {
-          const step = local.get(root)!;
-          offset.x += step.x;
-          offset.y += step.y;
-          root = root.parent;
-        }
-        return partOf(
-          {
-            name,
-            node: target,
-            index: indexOf.get(root)!,
-            offset,
-            width: target.width,
-            height: target.height,
-          },
-          part,
-          owner,
-          placement.line,
-        );
-      }),
-    { x: [], y: [] },
-    corridorsIn(edges, (node) => liftTo(node, indexOf, local), measurer, fontSize),
-  );
-
-  for (const root of roots) {
-    const position = positions.get(root)!;
-    root.x = position.x;
-    root.y = position.y;
-    spreadToChildren(root, local);
-  }
-}
-
-/** Once a node has an absolute position, its whole subtree follows from the offsets. */
-function spreadToChildren(node: LayoutNode, local: Local): void {
-  for (const child of node.children) {
-    const offset = local.get(child)!;
-    child.x = node.x + offset.x;
-    child.y = node.y + offset.y;
-    spreadToChildren(child, local);
-  }
-}
-
-interface Box {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-const AXES: Axis[] = ['x', 'y'];
-const NO_REACH: Reach = { left: 0, top: 0, right: 0, bottom: 0 };
-const AXIS_WORD: Record<Axis, string> = { x: 'horizontally', y: 'vertically' };
-
-/** Where a placement's target sits: which member owns it, and where inside that member. */
-interface Target {
-  name: string;
-  /** The node that was named, which may be nested inside the member holding it. */
-  node: LayoutNode;
-  index: number;
-  /**
-   * A different member per axis, where one target's two coordinates come from
-   * two members. Only a point of a parent's frame needs this: its left and
-   * right edges are two members of the child system and its top and bottom
-   * two more, so `top-right` is across one and down another.
-   */
-  byAxis?: Record<Axis, number>;
-  /**
-   * A point or side of the parent's own frame, from inside it. The frame grows
-   * to hold the child, so every child is ahead of the frame's far edges by
-   * construction — which is not the circle `settle` refuses, and the one
-   * place it is told so.
-   */
-  frame?: boolean;
-  /** What a whole-node target has placed outside itself, kept clear with it. */
-  reach?: Reach;
-  /**
-   * An empty text, which takes no room: nothing stands a gap off it, so a
-   * thing placed beside it lands where the text would have been.
-   */
-  empty?: boolean;
-  offset: { x: number; y: number };
-  width: number;
-  height: number;
-}
-
-/** Which member a target's position on this axis is measured from. */
-function memberOn(target: Target, axis: Axis): number {
-  return target.byAxis ? target.byAxis[axis] : target.index;
-}
-
-/**
- * An edge with text's claim on the gap between its two ends.
- *
- * An edge is not a placement and never says where anything goes. But its text is
- * drawn in the gap it crosses, and a gap sized for two boxes to breathe is not a
- * gap sized to hold a word — which is how a diagram that says nothing wrong ends
- * up with `rclone` written across the box it points at. So an edge with text is
- * treated the way anything else put between two things is: it widens the space
- * between them by exactly what it needs, and closes it again when the text goes.
- *
- * The room is worked out per axis here, before anything is solved, because which
- * axis the text ends up crossing is not known until the boxes have landed once.
- */
-interface Corridor {
-  edge: LayoutEdge;
-  from: Target;
-  to: Target;
-  /** Room the edge needs in a gap on each axis: its text with clearance, or a bare run of line. */
-  need: Record<Axis, number>;
-  /**
-   * Where a named side points its end away from the other along an axis, and
-   * which order of the two ends makes it do so. Such an edge goes around its
-   * boxes rather than across the gap, so its text is not in the gap.
-   */
-  away: { axis: Axis; fromFirst: boolean }[];
-}
-
-/**
- * The ways named sides can face away from the other end. Opposite sides face
- * away together or not at all (`left right` with `from` first); sides at right
- * angles each may, and either is enough (`left top` with `from` first, where
- * the edge turns back over the top, or with `to` below, where it goes round).
- * The same side on both is left out on purpose: that edge goes round the box
- * behind, and its text rides on the stretch over that box and the gap, so the
- * room made in the gap is what keeps a long text clear of the line's turns.
- */
-function facingAway(fromSide: unknown, toSide: unknown): { axis: Axis; fromFirst: boolean }[] {
-  // The axis a side is on, and whether it faces away when its own end is first.
-  const SIDES: Record<string, { axis: Axis; first: boolean }> = {
-    left: { axis: 'x', first: true },
-    right: { axis: 'x', first: false },
-    top: { axis: 'y', first: true },
-    bottom: { axis: 'y', first: false },
-  };
-  const f = SIDES[String(fromSide)];
-  const t = SIDES[String(toSide)];
-  if (!f || !t) return [];
-  const byFrom = { axis: f.axis, fromFirst: f.first };
-  const byTo = { axis: t.axis, fromFirst: !t.first };
-  if (f.axis !== t.axis) return [byFrom, byTo];
-  return byFrom.fromFirst === byTo.fromFirst ? [byFrom] : [];
-}
-
-/**
- * Where a node sits within the group being solved: which member holds it, and
- * where inside that member. An edge may name anything at any depth, so its ends
- * are lifted to the members of whichever group is being solved — and a node
- * outside that group has no answer, which is how an edge is sorted into the one
- * group where its two ends are different members.
- */
-function liftTo(
-  node: LayoutNode,
-  indexOf: Map<LayoutNode, number>,
-  local: Local,
-): Target | undefined {
-  let member = node;
-  const offset = { x: 0, y: 0 };
-  while (!indexOf.has(member)) {
-    const step = local.get(member);
-    if (!step || !member.parent) return undefined;
-    offset.x += step.x;
-    offset.y += step.y;
-    member = member.parent;
-  }
-  return {
-    name: node.name,
-    node,
-    index: indexOf.get(member)!,
-    offset,
-    width: node.width,
-    height: node.height,
-  };
-}
-
-/** The edges whose two ends are different members of this group. */
-function corridorsIn(
-  edges: LayoutEdge[],
-  locate: (node: LayoutNode) => Target | undefined,
-  measurer: Measurer,
-  fontSize: number,
-): Corridor[] {
-  const corridors: Corridor[] = [];
-  for (const edge of edges) {
-    // An edge told to pass between two named things carries its text in *that*
-    // corridor rather than in the gap between its own ends, so widening this one
-    // would make room where the text never goes.
-    // An edge that says which side of something it passes is routed round it,
-    // and its text rides on that route for the same reason.
-    if (edge.between || edge.passes) continue;
-    const from = locate(edge.from);
-    const to = locate(edge.to);
-    if (!from || !to || from.index === to.index) continue;
-    // With no text, the gap still has to show a run of line behind each mark,
-    // or two stacked children with an arrow between them draw as a head alone.
-    const marked = [edge.marks.from, edge.marks.to].filter((mark) => mark !== 'none').length;
-    if (edge.text === undefined) {
-      const bare = BARE_EDGE_RUN + arrowLength(edge.look.thickness) * marked;
-      corridors.push({
-        edge,
-        from,
-        to,
-        need: { x: bare, y: bare },
-        away: facingAway(edge.attrs['from'], edge.attrs['to']),
-      });
-      continue;
-    }
-    // The clearance is doubled because the text is drawn at the *midpoint* of
-    // the line, so the room it needs is symmetric about that point whatever sits
-    // at either end. The arrowhead is charged on both sides for the same reason:
-    // it covers the head's length of the line it arrives on, and reserving that
-    // at one end only would move the midpoint rather than lengthen the run. A
-    // thick line's head is longer, and takes the room it needs. A line with no
-    // mark at either end is charged for none.
-    const head = marked > 0 ? arrowLength(edge.look.thickness) : 0;
-    const extent = (axis: Axis): number =>
-      textExtent(edge.lines!, edge.textAttrs, axis, measurer, fontSize, edge.line) +
-      (TEXT_CLEARANCE + head) * 2;
-    corridors.push({
-      edge,
-      from,
-      to,
-      need: { x: extent('x'), y: extent('y') },
-      away: facingAway(edge.attrs['from'], edge.attrs['to']),
-    });
-  }
-  return corridors;
-}
-
-/**
- * An alignment whose target region cannot be measured yet.
- *
- * Naming several targets aligns a node to the box that just bounds them, and
- * where those targets sit at fixed offsets from one another — siblings in a
- * container, say — that box is a constant and the alignment is an ordinary
- * constraint. Where they do not, its sides are a minimum and a maximum over
- * positions the solve has yet to produce, which is not a distance the solver
- * can be told in advance. So it is measured off the first solution instead.
- */
-interface Pending {
-  node: LayoutNode;
-  me: number;
-  axis: Axis;
-  side: Side;
-  targets: Target[];
-  placement: Placement;
-  /** The extent being aligned, where it is not the node's own — a fan's whole height. */
-  own?: number;
-}
-
-/**
- * Position a set of nodes against each other from their placements.
- *
- * Every placement becomes a minimum distance, and the answer is the arrangement
- * where nothing is further apart than its placements require — which is what an
- * author does by hand when they push two things apart to fit something between
- * them and then pull the slack back out.
- *
- * Because a gap is a floor rather than a fixed distance, a corridor widens to
- * hold whatever is put in it and closes again when that is removed. No number
- * anywhere has to be guessed, and nothing is ever tried and rejected.
- */
-function positionGroup(
-  members: LayoutNode[],
-  locate: (placement: Placement, owner: LayoutNode) => Target[],
-  extra: { x: Constraint[]; y: Constraint[] },
-  corridors: Corridor[] = [],
-  across?: (i: number, j: number) => Axis | undefined,
-  clearance = SEPARATION_GAP,
-): Map<LayoutNode, { x: number; y: number }> {
-  const constraints: Record<Axis, Constraint[]> = { x: [...extra.x], y: [...extra.y] };
-  const indexOf = new Map(members.map((member, index) => [member, index]));
-  const pending: Pending[] = [];
-  /** Pairs an overlay put on top of each other, which is the point of it. */
-  const overlaid: Array<[number, number]> = [];
-
-  // Several nodes saying the identical thing are one list, running down the
-  // page in the order they were written. The first carries the placement for
-  // the whole list; each of the rest hangs a fixed step below the one before,
-  // and places itself across as it said.
-  const fans = fansIn(members);
-  for (const fan of fans.values()) {
-    for (let at = 1; at < fan.members.length; at += 1) {
-      const previous = fan.members[at - 1]!;
-      constraints.y.push(
-        ...fix(indexOf.get(previous)!, indexOf.get(fan.members[at]!)!, previous.height + CHILD_GAP),
-      );
-    }
-  }
-
-  for (const node of members) {
-    // Checked here as well as in `gapFor`, so a misspelt node-wide gap is caught
-    // on a node whose placements all name their own or are alignments — and on
-    // one that carries no placements at all, where it now still has an effect.
-    namedGap(node, node.attrs['gap'], node.line);
-    if (node.placements.length === 0) continue;
-    const me = indexOf.get(node)!;
-    const fan = fans.get(node);
-    // A later member of a fan has its vertical from the list, so its own
-    // placements speak only across; the first speaks for the whole list.
-    const follows = fan !== undefined && fan.members[0] !== node;
-    const size: Record<Axis, number> = { x: node.width, y: fan ? fan.height : node.height };
-    const located = node.placements.map((placement) => ({ placement, targets: locate(placement, node) }));
-    const speaks = (axis: Axis): boolean => !(follows && axis === 'y');
-
-    const spokenFor: Record<Axis, boolean> = { x: false, y: false };
-    for (const { placement } of located) {
-      if (placement.kind === 'align') {
-        spokenFor[placement.axis] = true;
-      } else if (placement.kind === 'on') {
-        // An overlay names a point of a box, so it settles both axes at once.
-        spokenFor.x = true;
-        spokenFor.y = true;
-      } else {
-        if (/left|right/.test(placement.direction)) spokenFor.x = true;
-        if (/above|below/.test(placement.direction)) spokenFor.y = true;
-      }
-    }
-
-    // Aligning to several targets means aligning to the box that just bounds
-    // them. That box is a constant only while its members hold still relative
-    // to one another; otherwise the alignment waits for the first solution.
-    const alignOn = (axis: Axis, side: Side, targets: Target[], placement: Placement): void => {
-      if (!speaks(axis)) return;
-      const anchor = sharedMember(targets, axis);
-      if (anchor === undefined) {
-        pending.push({ node, me, axis, side, targets, placement, own: size[axis] });
-        return;
-      }
-      const span = spanOf(targets, axis, () => 0);
-      constraints[axis].push(...fix(anchor, me, alignedAt(side, span, size[axis]), placement));
-    };
-
-    for (const { placement, targets } of located) {
-      if (placement.kind === 'align') {
-        alignOn(placement.axis, placement.side, targets, placement);
-        continue;
-      }
-      if (placement.kind === 'on') {
-        // The node's center at the part's center, on both axes. That is the
-        // ordinary center alignment the language already has on one axis, said
-        // twice — which is why `on` needs nothing of its own in the solver.
-        // A side of a parent's frame comes as its two ends, so centering on
-        // the part is centering on everything it came as.
-        overlaid.push([me, targets[0]!.index]);
-        for (const axis of AXES) alignOn(axis, 'center', targets, placement);
-        continue;
-      }
-      // Saying `inside` is the author stating the overlap, so there is
-      // nothing for the separation pass to report. `outside` is clear of the
-      // box by construction and needs no exemption.
-      if (placement.written === 'inside') {
-        for (const target of targets) overlaid.push([me, target.index]);
-      }
-      // One constraint per target, so the node clears the furthest of them.
-      // Taking that maximum is what longest paths already does, which is why a
-      // direction against a whole region needs nothing added to the solver.
-      const { direction } = placement;
-      // A gap belongs to the relationship rather than to either box in it, so
-      // each placement may name its own and the node's `gap:` is only the
-      // default. That is what lets a node wedged between two things sit tight
-      // against one of them and wide of the other.
-      for (const target of targets) {
-        const gap = target.empty ? 0 : gapFor(node, placement, target.node);
-        // Tucked inside the frame of the box that holds it, a child is *at*
-        // that edge rather than at least so far from it: the frame is also
-        // held open around every child, which is a pull the other way, and
-        // without this the child would sit wherever that left it.
-        const exact = target.frame === true && placement.written === 'inside';
-        const push = (axis: Axis, from: number, to: number, weight: number): void => {
-          if (!speaks(axis)) return;
-          constraints[axis].push({ from, to, weight, placement });
-          if (exact) constraints[axis].push({ from: to, to: from, weight: -weight, placement });
-        };
-        const x = memberOn(target, 'x');
-        const y = memberOn(target, 'y');
-        // The gap is between what each has placed outside itself, not only
-        // their boxes: a note beside a box is part of it.
-        const theirs = target.reach ?? NO_REACH;
-        const mine = node.reach;
-        if (direction.includes('right')) {
-          push('x', x, me, target.offset.x + target.width + theirs.right + gap + mine.left);
-        }
-        if (direction.includes('left')) push('x', me, x, size.x + mine.right + gap + theirs.left - target.offset.x);
-        if (direction.includes('below')) {
-          push('y', y, me, target.offset.y + target.height + theirs.bottom + gap + mine.top);
-        }
-        if (direction.includes('above')) push('y', me, y, size.y + mine.bottom + gap + theirs.top - target.offset.y);
-      }
-    }
-
-    // An axis nobody spoke to falls back to the center line of whatever the
-    // node was placed against, which is why "right of docker" alone is a whole
-    // position. Two different targets would decide which row the node shares,
-    // so that is refused rather than guessed — but two targets named by one
-    // placement are a single region, and centering on it is unambiguous.
-    for (const axis of AXES) {
-      if (spokenFor[axis] || !speaks(axis)) continue;
-      const offers = located.filter((entry) => entry.placement.kind === 'offset');
-      const first = offers[0];
-      if (!first) {
-        throw new SourceError(
-          `"${node.name}" says nothing about where it sits ${AXIS_WORD[axis]}`,
-          node.placements[0]!.line,
-        );
-      }
-      const named = (entry: { placement: Placement }) =>
-        entry.placement.targets.map(nameTarget).join('\u0000');
-      const other = offers.find((entry) => named(entry) !== named(first));
-      if (other) {
-        throw new SourceError(
-          `"${node.name}" does not say where it sits ${AXIS_WORD[axis]}: ` +
-            `"${describePlacement(first.placement)}" and "${describePlacement(other.placement)}" ` +
-            `would put it in different places`,
-          other.placement.line,
-        );
-      }
-      alignOn(axis, 'center', first.targets, first.placement);
-    }
-  }
-
-  const solved: Record<Axis, number[]> = { x: [], y: [] };
-  const solveAll = (): void => {
-    for (const axis of AXES) {
-      const outcome = tightest(members.length, constraints[axis]);
-      if ('contradiction' in outcome) throw noRoom(outcome.contradiction, axis, members);
-      solved[axis] = outcome.positions;
-    }
-  };
-
-  // An edge's text is given room only once everything is where it goes: a
-  // box still waiting to be centered, or still on top of another, is not yet
-  // where it will be, and room judged against it goes in the wrong gap. Room
-  // can move things in turn, so the centering and pulling-in are measured
-  // again from what the file said, and the texts looked at again, until a
-  // look adds nothing. What was placed, separated or widened stays.
-  //
-  // It stops: each text can be given room once across and once down, room
-  // is never taken back, and a look that gives none ends it.
-  const lasting: Record<Axis, Constraint[]> = { x: [...constraints.x], y: [...constraints.y] };
-  const made = new Set<string>();
-  const keep = (step: () => boolean | void): boolean => {
-    const before = { x: constraints.x.length, y: constraints.y.length };
-    const changed = step();
-    for (const axis of AXES) lasting[axis].push(...constraints[axis].slice(before[axis]));
-    return changed === true;
-  };
-  for (;;) {
-    constraints.x = [...lasting.x];
-    constraints.y = [...lasting.y];
-    solveAll();
-    settle(pending, members, constraints, solved, solveAll);
-    snug(members, constraints, solved, solveAll);
-    keep(() => separate(members, constraints, solved, solveAll, overlaid, across, clearance));
-    if (!keep(() => room(corridors, constraints, solved, solveAll, made))) break;
-  }
-  confirm(pending, solved);
-
-  return new Map(
-    members.map((member, index) => [
-      member,
-      { x: solved.x[index]!, y: solved.y[index]! },
-    ]),
-  );
-}
-
-/** The member every target belongs to on this axis, or nothing if they are spread across several. */
-function sharedMember(targets: Target[], axis: Axis): number | undefined {
-  const first = memberOn(targets[0]!, axis);
-  return targets.every((target) => memberOn(target, axis) === first) ? first : undefined;
-}
-
-interface Fan {
-  /** In declaration order, which is the order they run down the page. */
-  members: LayoutNode[];
-  /** The whole list, top of the first to bottom of the last. */
-  height: number;
-}
-
-/**
- * The fans in a group: two or more members whose placements say the identical
- * thing, each member mapped to the one fan it is in.
- *
- * `b right of a`, `c right of a` and `d right of a` otherwise put three boxes
- * on one spot, and what they mean is "a points at three things" — the three
- * balanced against `a`, which no chain of placements can say. The same holds
- * of a part: three children `inside parent right` are a column against that
- * edge. The list runs down the page whatever the direction, including at a
- * corner, where it stacks into the corner and grows down.
- *
- * A node saying `overlap: allow` has asked for the literal pile, and gets it.
- */
-function fansIn(members: LayoutNode[]): Map<LayoutNode, Fan> {
-  const bySaying = new Map<string, LayoutNode[]>();
-  for (const node of members) {
-    if (node.placements.length === 0 || allowsOverlap(node)) continue;
-    const saying = node.placements.map(describePlacement).join('\n');
-    const list = bySaying.get(saying) ?? [];
-    list.push(node);
-    bySaying.set(saying, list);
-  }
-  const fans = new Map<LayoutNode, Fan>();
-  for (const list of bySaying.values()) {
-    if (list.length < 2) continue;
-    const height = list.reduce((sum, node) => sum + node.height, 0) + CHILD_GAP * (list.length - 1);
-    const fan = { members: list, height };
-    for (const node of list) fans.set(node, fan);
-  }
-  return fans;
-}
-
-/** The stretch of one axis that just covers every target. */
-function spanOf(
-  targets: Target[],
-  axis: Axis,
-  base: (target: Target) => number,
-): { start: number; size: number } {
-  let start = Infinity;
-  let end = -Infinity;
-  for (const target of targets) {
-    const at = base(target) + target.offset[axis];
-    start = Math.min(start, at);
-    end = Math.max(end, at + (axis === 'x' ? target.width : target.height));
-  }
-  return { start, size: end - start };
-}
-
-/**
- * Narrow a target to the part of it the placement named — its text, one of its
- * four sides, or one of its nine points.
- *
- * A side comes back as a segment of zero thickness and a point as a rectangle
- * of no size at all, which is the whole of what a part is to the solver: an
- * extent, exactly as a whole box is, just a thinner one. Everything else — the
- * direction, the gap, the alignment on the axis nobody spoke to — then works
- * on it unchanged, which is why a part target needed nothing added to the
- * constraint system.
- *
- * Each position is read as two independent halves, one per axis, which is why
- * nine words need no table of nine entries: `top-right` is "right" across and
- * "top" down, `top-center` is "top" down and centered across.
- */
-function partOf(target: Target, part: Part | undefined, owner: LayoutNode, line: number): Target {
-  // The whole node is what it has placed outside itself too; a part of it is
-  // just that part.
-  if (part === undefined) return { ...target, reach: target.node.reach };
-  const box = { ...target, offset: { ...target.offset } };
-
-  if (part === 'text') {
-    const text = target.node.textBox;
-    if (text.width === 0 && text.height === 0) {
-      throw new SourceError(
-        `"${owner.name}" is placed against "${target.name} text", and "${target.name}" has no text`,
-        line,
-      );
-    }
-    box.offset.x += text.x;
-    box.offset.y += text.y;
-    box.width = text.width;
-    box.height = text.height;
-    return box;
-  }
-
-  const words = part.split('-');
-  const isSide = (PART_SIDES as readonly string[]).includes(part);
-  const narrow = (axis: Axis, near: string, far: string): void => {
-    const size = axis === 'x' ? box.width : box.height;
-    const named = words.includes(near) ? 0 : words.includes(far) ? size : undefined;
-    // A *side* leaves the axis it does not name alone: `right` is the whole
-    // right edge, top to bottom, where `right-center` is the one point on it.
-    if (named === undefined && isSide) return;
-    box.offset[axis] += named ?? size / 2;
-    if (axis === 'x') box.width = 0;
-    else box.height = 0;
-  };
-  narrow('x', 'left', 'right');
-  narrow('y', 'top', 'bottom');
-  // A circle has no corners, so a corner of one is the point on it halfway
-  // between the two sides named: on the outline, as a rectangle's corner is.
-  const across = words.includes('left') || words.includes('right');
-  const down = words.includes('top') || words.includes('bottom');
-  if (isCircle(target.node) && across && down) {
-    const pull = (target.width / 2) * (1 - Math.SQRT1_2);
-    box.offset.x += words.includes('left') ? pull : -pull;
-    box.offset.y += words.includes('top') ? pull : -pull;
-  }
-  return box;
-}
-
-/** Where a node of this size sits so that the named side of it meets the span's. */
-function alignedAt(side: Side, span: { start: number; size: number }, own: number): number {
-  if (side === 'center') return span.start + (span.size - own) / 2;
-  if (side === 'top' || side === 'left') return span.start;
-  return span.start + span.size - own;
-}
-
-/**
- * Widen a corridor to hold the text of the edge crossing it.
- *
- * This is the one place an edge reaches the constraint system, and it is the same
- * measure-then-constrain move `settle` makes rather than edges joining the graph
- * outright: the first solution says which gap each text actually falls in, and
- * from there the room it needs is an ordinary minimum distance like any other.
- * Nothing is nudged and no layout is repaired — a constraint the file already
- * implied is derived and the whole system is solved again.
- *
- * Which gap that is, is derived and never chosen. A pair clear of each other on
- * exactly one axis has exactly one corridor between them, and the text is in
- * it. A pair clear on *both* axes sits corner to corner, so the line runs
- * diagonally through open space and there is no corridor to widen; a pair clear
- * on neither overlaps, which is the separation pass's business and not this
- * one's. Both are left alone, which is why this only ever moves boxes that a
- * text is genuinely wedged between.
- *
- * A gap being a minimum does the rest. Where the corridor is already wide enough
- * — because the author said `gap: wide`, or because something else is in there
- * — the constraint is slack and nothing moves; delete the text and the corridor
- * closes back to whatever the file asked for.
- */
-function room(
-  corridors: Corridor[],
-  constraints: Record<Axis, Constraint[]>,
-  solved: Record<Axis, number[]>,
-  solveAll: () => void,
-  made: Set<string>,
-): boolean {
-  let added = false;
-
-  for (const [index, { from, to, need, away }] of corridors.entries()) {
-    const clear = (axis: Axis): { before: Target; after: Target } | undefined => {
-      const at = (end: Target): number => solved[axis][end.index]! + end.offset[axis];
-      const size = (end: Target): number => (axis === 'x' ? end.width : end.height);
-      if (at(to) - (at(from) + size(from)) > 1e-9) return { before: from, after: to };
-      if (at(from) - (at(to) + size(to)) > 1e-9) return { before: to, after: from };
-      return undefined;
-    };
-
-    const open = AXES.filter((axis) => clear(axis));
-    if (open.length !== 1) continue;
-    const axis = open[0]!;
-    // Ends facing away along the only open axis mean the boxes share a row, and
-    // the renderer takes the line over the top with its text — see `planLoops`.
-    // Widening the gap would make room where the text never goes.
-    if (away.some((way) => way.axis === axis && (clear(axis)!.before === from) === way.fromFirst)) continue;
-    // Given already, and a minimum stays met: asking again would widen
-    // nothing and only keep the caller looking.
-    if (made.has(`${index}:${axis}`)) continue;
-    made.add(`${index}:${axis}`);
-    const { before, after } = clear(axis)!;
-
-    constraints[axis].push({
-      from: before.index,
-      to: after.index,
-      weight:
-        before.offset[axis] +
-        (axis === 'x' ? before.width : before.height) +
-        need[axis] -
-        after.offset[axis],
-    });
-    added = true;
-  }
-
-  if (added) solveAll();
-  return added;
-}
-
-/**
- * Fix the alignments that had to wait, by measuring what they align to.
- *
- * The first solution says where every target actually landed, so the region
- * they bound is now a number rather than an expression, and the alignment
- * becomes an ordinary constraint at a fixed distance. Nothing already solved is
- * moved by hand; a distance is read off and added, which is the same shape as
- * the separation pass and not the repair pass this design refuses.
- *
- * That is exact so long as the region does not depend on the node being aligned
- * to it. Where it does, measuring changes the thing measured and there is no
- * order that settles, so the file is refused rather than iterated at. The test
- * is the same reachability the separation pass uses.
- */
-function settle(
-  pending: Pending[],
-  members: LayoutNode[],
-  constraints: Record<Axis, Constraint[]>,
-  solved: Record<Axis, number[]>,
-  solveAll: () => void,
-): void {
-  if (pending.length === 0) return;
-
-  for (const axis of AXES) {
-    const here = pending.filter((entry) => entry.axis === axis);
-    if (here.length === 0) continue;
-    const reach = reachability(members.length, constraints[axis]);
-
-    for (const entry of here) {
-      for (const target of entry.targets) {
-        if (target.frame) continue;
-        const at = memberOn(target, axis);
-        if (at !== entry.me && !reach[entry.me]![at]) continue;
-        throw new SourceError(
-          `"${entry.node.name}" is ${describePlacement(entry.placement)}, but "${target.name}" ` +
-            `is placed ${AXIS_WORD[axis]} against "${entry.node.name}" in turn, so there is no ` +
-            `arrangement where each waits for the other`,
-          entry.placement.line,
-        );
-      }
-
-      const span = spanOf(entry.targets, axis, (target) => solved[axis][memberOn(target, axis)]!);
-      const own = entry.own ?? (axis === 'x' ? entry.node.width : entry.node.height);
-      const anchor = memberOn(entry.targets[0]!, axis);
-      constraints[axis].push(
-        ...fix(anchor, entry.me, alignedAt(entry.side, span, own) - solved[axis][anchor]!, entry.placement),
-      );
-    }
-  }
-
-  solveAll();
-}
-
-/**
- * Check the measured alignments still hold.
- *
- * Separation runs afterwards and only ever adds, so it can push two targets
- * apart and leave a region wider than it was when it was measured. Nothing here
- * repairs that — the picture is reported as unbuildable, because silently
- * drawing a node that is no longer level with what it names is the failure the
- * diagnostics work exists to prevent.
- */
-function confirm(pending: Pending[], solved: Record<Axis, number[]>): void {
-  for (const entry of pending) {
-    const { axis } = entry;
-    const span = spanOf(entry.targets, axis, (target) => solved[axis][memberOn(target, axis)]!);
-    const own = entry.own ?? (axis === 'x' ? entry.node.width : entry.node.height);
-    if (Math.abs(alignedAt(entry.side, span, own) - solved[axis][entry.me]!) <= 0.5) continue;
-    throw new SourceError(
-      `"${entry.node.name}" cannot be ${describePlacement(entry.placement)}: keeping boxes off ` +
-        `each other moved them apart after that region was measured`,
-      entry.placement.line,
-    );
-  }
-}
-
-/**
- * Pull in a node that nothing pushes back the other way.
- *
- * Every constraint reads "this one is at least so far along the axis from that
- * one", and the solve puts each member at the smallest position its constraints
- * allow. That is the tightest arrangement for anything with something behind
- * it — but `left of X` and `above X` bound *X*, not the node that wrote them,
- * so a node carrying only those has nothing behind it at all. It settles at the
- * far edge of the drawing while the thing it names is carried away by the rest
- * of the diagram, which is neither what the file says nor what the language
- * promises: as close together as the placements allow.
- *
- * The remedy is to look the other way for exactly those members. A member with
- * no incoming edge cannot be pushed by anything, so moving it along the axis
- * disturbs nothing; the furthest it may travel is set by whichever of its own
- * placements binds first, and pinning that one placement to an exact distance
- * puts it there. Every other placement it wrote had more room to spare and is
- * still satisfied.
- *
- * The pins are worked out against the first solution and applied together,
- * which keeps them independent: a member with no incoming edge is never the
- * target of another member's pin, because being a target is what an incoming
- * edge is.
- */
-function snug(
-  members: LayoutNode[],
-  constraints: Record<Axis, Constraint[]>,
-  solved: Record<Axis, number[]>,
-  solveAll: () => void,
-): void {
-  const pins: { axis: Axis; constraint: Constraint }[] = [];
-
-  for (const axis of AXES) {
-    const pushed = new Array<boolean>(members.length).fill(false);
-    for (const constraint of constraints[axis]) pushed[constraint.to] = true;
-
-    for (let index = 0; index < members.length; index += 1) {
-      if (pushed[index]) continue;
-
-      let binding: Constraint | undefined;
-      let slack = Infinity;
-      for (const constraint of constraints[axis]) {
-        if (constraint.from !== index) continue;
-        const room = solved[axis][constraint.to]! - solved[axis][index]! - constraint.weight;
-        if (room < slack) {
-          slack = room;
-          binding = constraint;
-        }
-      }
-      // Nothing to travel toward, or already against it.
-      if (!binding || slack <= 1e-9) continue;
-
-      pins.push({
-        axis,
-        constraint: {
-          from: binding.to,
-          to: index,
-          weight: -binding.weight,
-          ...(binding.placement ? { placement: binding.placement } : {}),
-        },
-      });
-    }
-  }
-
-  if (pins.length === 0) return;
-  for (const pin of pins) constraints[pin.axis].push(pin.constraint);
-  solveAll();
-}
-
-/**
- * Push apart any two boxes that landed on top of each other.
- *
- * Two boxes not overlapping is a placement the author never has to write, but on
- * its own it says nothing about *which way* to separate them — left, right,
- * above and below all satisfy it, and choosing among four is the search this
- * whole design refuses. So the direction is never chosen. It is read off the
- * constraints already built from the file: if the file lets one box travel away
- * from the other along an axis and offers no way back, that is the only
- * separation consistent with what was written. Where nothing in the file orders
- * a pair on either axis, this reports the pair instead of guessing.
- *
- * One case is genuinely free. When both axes already imply an order, either
- * would do, and the tie is broken by separating along the axis where the two
- * overlap least — the smallest movement, and the one a person makes by hand.
- * That is the single place the tool decides something nobody wrote.
- *
- * The loop only ever adds constraints and re-solves the whole system, so no
- * arrangement is ever tried and rejected and it settles without backtracking.
- * A solved layout is never nudged in place; that is a different thing and it is
- * the thing the design rules out.
- *
- * Members here are always siblings, or the roots of the diagram, so no member
- * ever contains another and containment needs no exemption of its own.
- */
-function separate(
-  members: LayoutNode[],
-  constraints: Record<Axis, Constraint[]>,
-  solved: Record<Axis, number[]>,
-  solveAll: () => void,
-  overlaid: Array<[number, number]> = [],
-  across?: (i: number, j: number) => Axis | undefined,
-  clearance = SEPARATION_GAP,
-): void {
-  const eligible = members.map(allowsOverlap).map((allowed) => !allowed);
-  if (eligible.filter(Boolean).length < 2) return;
-  // An overlay and the box it is on overlap by construction, so that one pair
-  // is exempt while both remain ordinary boxes to everything else. This is a
-  // pair exemption rather than `overlap: allow` on the node for exactly that
-  // reason: a badge sitting on its box says nothing about the box next door.
-  const stamped = new Set(overlaid.map(([a, b]) => pairKey(a, b)));
-
-  // Adding only, so the number of separations is bounded; the cap is a
-  // backstop against a bug rather than an expected outcome.
-  for (let round = 0; round < members.length * members.length + 1; round += 1) {
-    let reach: Record<Axis, boolean[][]> | undefined;
-    let added = false;
-
-    // One separation per round, then solve again: a pair that collided only
-    // because another pair had not yet been moved apart is not a collision,
-    // and separating it anyway leaves an ordering that later moves drag along.
-    scan: for (let i = 0; i < members.length; i += 1) {
-      if (!eligible[i]) continue;
-      for (let j = i + 1; j < members.length; j += 1) {
-        if (!eligible[j]) continue;
-
-        if (stamped.has(pairKey(i, j))) continue;
-
-        const over = overlapOf(members, solved, i, j);
-        if (!over) continue;
-
-        reach ??= { x: reachability(members.length, constraints.x), y: reachability(members.length, constraints.y) };
-        const orders: Partial<Record<Axis, { before: number; after: number }>> = {};
-        for (const axis of AXES) {
-          const order = impliedOrder(reach[axis], i, j);
-          if (order) orders[axis] = order;
-        }
-
-        // A child against a side of its parent's frame has said which way it
-        // stands from the rest of the box — `inside p right` is beside it —
-        // so where that way is open, it is the way, and the smaller overlap
-        // is not asked.
-        const named = across?.(i, j);
-        const axis = named !== undefined && orders[named] ? named : pickAxis(orders, over);
-        if (!axis) throw unordered(members[i]!, members[j]!);
-
-        const { before, after } = orders[axis]!;
-        const span = axis === 'x' ? members[before]!.width : members[before]!.height;
-        const [near, far] = axis === 'x' ? (['left', 'right'] as const) : (['top', 'bottom'] as const);
-        const past = members[before]!.reach[far] + members[after]!.reach[near];
-        constraints[axis].push({ from: before, to: after, weight: span + past + clearance });
-        reach = undefined;
-        added = true;
-        break scan;
-      }
-    }
-
-    if (!added) return;
-    solveAll();
-  }
-}
-
-function pairKey(a: number, b: number): string {
-  return a < b ? `${a}:${b}` : `${b}:${a}`;
-}
-
-/** How far two members share space on each axis, or nothing if they are clear of each other. */
-function overlapOf(
-  members: LayoutNode[],
-  solved: Record<Axis, number[]>,
-  i: number,
-  j: number,
-): Record<Axis, number> | undefined {
-  const shared = (axis: Axis): number => {
-    const [near, far] = axis === 'x' ? (['left', 'right'] as const) : (['top', 'bottom'] as const);
-    const start = (index: number) => solved[axis][index]! - members[index]!.reach[near];
-    const end = (index: number) =>
-      solved[axis][index]! + (axis === 'x' ? members[index]!.width : members[index]!.height) + members[index]!.reach[far];
-    return Math.min(end(i), end(j)) - Math.max(start(i), start(j));
-  };
-  const x = shared('x');
-  const y = shared('y');
-  return x > 1e-9 && y > 1e-9 ? { x, y } : undefined;
-}
-
-/** Which of two members the file lets the other move past, if either. */
-function impliedOrder(
-  reach: boolean[][],
-  i: number,
-  j: number,
-): { before: number; after: number } | undefined {
-  const forward = reach[i]![j]!;
-  const backward = reach[j]![i]!;
-  if (forward === backward) return undefined;
-  return forward ? { before: i, after: j } : { before: j, after: i };
-}
-
-/** Of the axes that can separate a pair, the one where they overlap least. */
-function pickAxis(
-  orders: Partial<Record<Axis, { before: number; after: number }>>,
-  over: Record<Axis, number>,
-): Axis | undefined {
-  const available = AXES.filter((axis) => orders[axis]);
-  if (available.length < 2) return available[0];
-  return over.x <= over.y ? 'x' : 'y';
-}
-
-function allowsOverlap(node: LayoutNode): boolean {
-  const value = node.attrs['overlap'];
-  if (value === undefined) return false;
-  if (value !== 'allow') {
-    throw new SourceError(`"${node.name}" has overlap: ${value}, which is not one of allow`, node.line);
-  }
-  return true;
-}
-
-function unordered(first: LayoutNode, second: LayoutNode): SourceError {
-  const [earlier, later] = first.line <= second.line ? [first, second] : [second, first];
-  return new SourceError(
-    `"${earlier.name}" and "${later.name}" overlap, and nothing says which side of the ` +
-      `other either one sits on — place one against the other, or say overlap: allow`,
-    later.line,
-  );
-}
-
-/** Report a set of placements that cannot all hold, in the words they were written in. */
-function noRoom(contradiction: Contradiction, axis: Axis, members: LayoutNode[]): SourceError {
-  const { placements } = contradiction;
-  if (placements.length === 0) {
-    return new SourceError(
-      `these placements run in a circle ${AXIS_WORD[axis]} and cannot all hold`,
-      members[0]?.line ?? 1,
-    );
-  }
-  const quoted = placements.map((placement) => `"${describePlacement(placement)}"`).join(' and ');
-  return new SourceError(
-    `${quoted} cannot all hold — they leave no room ${AXIS_WORD[axis]}`,
-    placements[placements.length - 1]!.line,
-  );
-}
-
-
-/**
- * How far this placement holds the node off its target.
- *
- * A gap is a property of the relationship, not of either box in it, so the
- * placement's own bracketed gap is the specific statement about this pair and
- * wins outright. Where it says nothing, `gap:` on a node is a default — and both
- * ends of the relationship may offer one. The node doing the placing wrote its
- * gap down; the target had someone else's placement written against it. Neither
- * is more entitled than the other, so the larger applies, which is the only
- * answer consistent with a gap being a minimum in the first place.
- *
- * That is what makes `gap: wide` on a node that carries no placements of its own
- * do the obvious thing rather than nothing at all: an author looking at two boxes
- * pushed too close together has no reason to know which of the two happened to
- * name the other.
- */
-function gapFor(node: LayoutNode, placement: OffsetPlacement, target: LayoutNode): number {
-  if (placement.gap !== undefined) return namedGap(node, placement.gap, placement.line);
-  // Against the box that holds it, a child is spaced as that box spaces what it
-  // holds: tucked in by the padding, and deaf to the box's own `gap:`, which
-  // says how that box stands off its neighbours and not how it holds things.
-  const own = target.children.includes(node);
-  if (own && placement.written === 'inside') return PAD;
-  // Beside or below the text of the box holding it, as the contents sit below
-  // a title: a band said by placing things below the text is the band the
-  // contents would have made.
-  if (own && placement.targets.some((each) => each.name === target.name && each.part === 'text')) return CHILD_GAP;
-  // An `inside` placement is an inset rather than a standoff, and the two want
-  // different defaults: "beside that box" reads as room to breathe, "tucked in
-  // that corner" reads as close to it. A node-wide `gap:`, which says how this
-  // node stands off its *neighbours*, has no business setting an inset either
-  // — so `inside` takes `tight` and stops there unless the placement says.
-  if (placement.written === 'inside') return namedGap(node, 'tight', placement.line);
-  const mine = node.attrs['gap'];
-  const theirs = own ? undefined : target.attrs['gap'];
-  // Only a gap somebody actually wrote down counts. Reading an absent one as the
-  // default would make it a floor rather than a fallback, and every `gap: tight`
-  // placed against a silent node would quietly widen back to normal.
-  const stated: number[] = [];
-  if (mine !== undefined) stated.push(namedGap(node, mine, node.line));
-  if (theirs !== undefined) stated.push(namedGap(target, theirs, target.line));
-  if (stated.length === 0) return namedGap(node, undefined, node.line);
-  return Math.max(...stated);
-}
-
-/**
- * A gap is one of the named steps or a plain number of pixels. The names are
- * the default because retuning `tight` moves every tight gap together, but a
- * number is no less relative: it is still a minimum distance from the target,
- * and nothing unrelated moving can make it wrong.
- */
-function namedGap(node: LayoutNode, named: string | undefined, line: number): number {
-  const gap = GAPS[named ?? 'normal'];
-  if (gap !== undefined) return gap;
-  if (named !== undefined && /^\d+(\.\d+)?$/.test(named)) return Number(named);
-  const known = Object.keys(GAPS).join(', ');
-  const unit = named?.match(/^(\d+(?:\.\d+)?)px$/);
-  const hint = unit
-    ? `; write "gap: ${unit[1]}", a gap's number is already in pixels`
-    : named?.startsWith('-')
-      ? '; a gap is a distance and cannot be negative, and "overlap: allow" is what lets two boxes meet'
-      : '';
-  throw new SourceError(
-    `"${node.name}" asks for gap: ${named}, which is not one of ${known} or a number of pixels${hint}`,
-    line,
-  );
-}
 
 // --- shared helpers ----------------------------------------------------------
 
@@ -2790,13 +2034,15 @@ function markupColors(
   nodes: LayoutNode[],
   edges: LayoutEdge[],
   styles: Map<string, Attrs>,
+  marks: LayoutMark[] = [],
 ): Record<string, string> {
   const colors: Record<string, string> = {};
   const used: Array<{ lines: Line[]; what: string; line: number }> = [
     ...nodes.map((node) => ({ lines: node.lines, what: `"${node.name}"`, line: node.line })),
     ...edges.flatMap((edge) =>
-      edge.lines ? [{ lines: edge.lines, what: `edge ${edge.from.name} -> ${edge.to.name}`, line: edge.line }] : [],
+      edge.texts.map((text) => ({ lines: text.lines, what: `edge ${edge.from.name} -> ${edge.to.name}`, line: edge.line })),
     ),
+    ...marks.flatMap((mark) => (mark.text ? [{ lines: mark.text.lines, what: `${mark.kind} "${mark.name}"`, line: mark.line }] : [])),
   ];
   for (const { lines, what, line } of used) {
     for (const name of markupStyles(lines)) {
@@ -2847,27 +2093,29 @@ function linesFor(text: string, textAttrs: Attrs, subject: string, line: number)
   return lines.flatMap((part) => wrapLine(part, columns));
 }
 
-function bounds(nodes: LayoutNode[]) {
+function bounds(nodes: LayoutNode[], marks: LayoutMark[]) {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const node of nodes) {
-    minX = Math.min(minX, node.x);
-    minY = Math.min(minY, node.y);
-    maxX = Math.max(maxX, node.x + node.width);
-    maxY = Math.max(maxY, node.y + node.height);
+  for (const box of [...nodes, ...marks, ...marks.flatMap((mark) => (mark.text ? [mark.text.box] : []))]) {
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
   }
   return { minX, minY, maxX, maxY };
 }
 
 /** Shift everything so the diagram starts at the margin rather than wherever the anchor fell. */
-function normalize(nodes: LayoutNode[], margin: number): void {
-  const { minX, minY } = bounds(nodes);
+function normalize(nodes: LayoutNode[], marks: LayoutMark[], margin: number, stops: Rect[] = []): void {
+  const { minX, minY } = bounds(nodes, marks);
   const dx = margin - minX;
   const dy = margin - minY;
-  for (const node of nodes) {
-    node.x += dx;
-    node.y += dy;
+  // A line's stops move with everything else, but don't widen the page: the
+  // renderer grows it to hold whatever the lines reach.
+  for (const box of [...nodes, ...marks, ...marks.flatMap((mark) => (mark.text ? [mark.text.box] : [])), ...stops]) {
+    box.x += dx;
+    box.y += dy;
   }
 }

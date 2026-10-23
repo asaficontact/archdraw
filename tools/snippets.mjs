@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { parse } from '../dist/index.js';
 
-const KEYWORDS = /^(node|edge|style|diagram|default)\s/;
+const KEYWORDS = /^(node|edge|style|diagram|default|point|region|bundle|guide|icon)\s/;
 // The caret-and-bar lines that label the parts of a statement in SYNTAX.md.
 const ANNOTATION = /^\s*[\^|]/;
 const FENCE = /^```/;

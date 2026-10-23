@@ -7,202 +7,146 @@ description: Write, render and edit diagrams in reladraw, a text diagram languag
 
 A text language for diagrams. Source in, standalone SVG out, no runtime dependencies.
 
-Every other diagram language hands the arrangement to a layout engine, so where things land is an output you cannot predict from what you wrote. reladraw inverts that: the file states the arrangement in the terms a person would say out loud — `right of api`, `between web and worker`, `level with queue` — and the tool works out only the distances. Nothing is ever chosen for you.
+Every other diagram language hands the arrangement to a layout engine, so where things land is an output you can't predict from what you wrote. reladraw inverts that: the file states the arrangement in the terms a person would say out loud (`right of api`, `below worker (gap: tight)`, `even with queue`), and the tool draws exactly that. It never chooses an arrangement, never moves a box to make room, and never routes a line round anything.
 
-That matters here specifically. You cannot see the SVG you produced. With auto-layout that leaves you guessing; with reladraw the arrangement is in the sentences you just wrote, so re-reading your own source tells you where everything is.
+That matters here specifically. You can't see the SVG you produced. With auto-layout that leaves you guessing; with reladraw the arrangement is in the sentences you just wrote, and where the picture may not read as meant, the tool tells you in words.
 
-## Check it is installed
+## Check it is installed, and the same version as this skill
+
+This skill teaches reladraw 0.19.0. Once per session, before the first render, run:
 
 ```
-reladraw --help
+reladraw --version
 ```
 
-If that fails, `npx reladraw` works without installing, and `npm install -g reladraw` installs the command.
+- **The same:** say nothing.
+- **Older, or `--version` isn't recognized** (it arrived in 0.17.1): the tool is older than this page and will refuse some of what it teaches. Tell the user, and give them `npm install -g reladraw@latest`.
+- **Newer:** this skill is out of date. Tell the user, and give them `npx skills add reladraw/reladraw -g` to refresh it. Carry on meanwhile; where an error names a replacement spelling, trust the error over this page.
+
+If `reladraw` isn't installed, `npx reladraw` works without installing, and `npm install -g reladraw` installs it.
 
 ## The loop
 
 1. Write a `.reladraw` file.
-2. `reladraw diagram.reladraw -o diagram.svg` (`-o -` writes to stdout; the default output path is the input with `.svg` in place of its extension).
-3. If it fails, the error names the statement and what is wrong with it. Fix and re-run.
-4. Re-read your own source to confirm the picture says what you meant.
-
-Errors are the feedback you have. A file that renders is a file whose arrangement you fully stated, because anything left ambiguous is refused rather than guessed:
+2. `reladraw render diagram.reladraw -o diagram.svg`. (`-o -` writes to stdout; the default is the input path with `.svg`.)
+3. If it fails, the **error** names the line and what to write instead. Fix and re-run.
+4. If it succeeds, read the **findings** it printed. Each is one line saying what may not read as meant, where, and how much:
 
 ```
-diagram.reladraw:3: "c" does not say where it sits vertically: "right of a" and "left of b" would put it in different places
+diagram.reladraw:12: warning(text-overlap): text "statements" covers the top-left corner of node resolver; the overlap is 3 units wide and 2 units tall
+diagram.reladraw:9: warning(edge-node-overlap): line api -> db crosses node cache, in and out of its top
 ```
 
-**Be honest about what this does not give you.** Re-reading the source confirms *intent* — that the worker landed under the API, that all four machines hang off the hub. It does not confirm *outcome*: whether a long text overflowed, whether a line crosses four others, whether two independently-anchored clusters collided. A machine-readable diagnostics report is planned and is not built yet, so for a large or dense diagram, say plainly that you have stated the arrangement but not verified the render.
+5. Fix each finding in the source, by placing something differently or saying where a line goes, and re-run until there are none. `reladraw check diagram.reladraw` prints the findings without writing the SVG.
+6. `reladraw format diagram.reladraw` before handing the file over. It lines statements up in columns and evens out spacing, by the project's `.reladraw-format` if there is one, and changes nothing about what the file draws. A file you wrote then reads like one the user's project already has.
+
+A file with no errors and no findings has nothing on top of anything. That is still not the same as a good picture: re-read your source to confirm the arrangement says what you meant, and for a large diagram tell the user you have checked the findings but not seen the render.
 
 ## The one idea
 
-**A gap is a minimum distance, never an exact one.** Everything ends up as close together as your statements allow.
+**The file says where things go, and the tool draws exactly that.** A gap is the distance you wrote. A box goes where its placements put it and nothing pushes it. A line is straight between its two boxes unless you say it is square or curved or name the places it passes. Anything that overlaps is drawn overlapping and reported.
 
-So putting something between two things is what pushes them apart, by exactly what it needs:
-
-```
-node hub    "Hub"
-node side   "Side"    left of hub
-node wedge  "Wedged"  right of side  left of hub  level with hub
-```
-
-Nothing says how far apart `hub` and `side` are. Delete `wedge` and they close back up. You never pick a number and no number goes stale when a text grows. There are no coordinates in this language, in any form.
+So the fix for a problem is always more said in the source, never hoping the tool will sort it out. Two boxes on one spot: place one against the other. A line through a box: say where it passes with `via:`. A text crowding a box: widen the gap.
 
 ## Writing a file
 
-A statement starts at the beginning of a line, and a long one continues onto following lines that are indented; a blank or unindented line ends it. How much indentation makes no difference, and there are no blocks — indentation never puts one thing inside another. `//` starts a comment and may trail a statement.
+A statement starts at the beginning of a line. A long one continues onto following lines that are indented; a blank or unindented line ends it. Indentation never puts one thing inside another. `//` starts a comment and may trail a statement.
 
-A statement is a positional head — the keyword, a name, then a text — followed by attributes and placements **in any order**. A token ending in a colon opens an attribute and nothing else does, so `node n "text" gap: wide below worker` and `node n "text" below worker gap: wide` are the same statement.
+A statement is a positional head (the keyword, a name, then a text) followed by attributes and placements **in any order**. A word ending in a colon opens an attribute and nothing else does.
 
 ### Nodes
 
 ```
-node <name> ["<text>" [(<text properties>)]] [<placement> | <attribute>] ...
+node <name> ["<text>" [(<text settings>)]] [<placement> | <attribute>] ...
 ```
 
-Leave the text out and the node takes its own name as its text (`node parser` draws a node reading "parser"). Write `""` for a deliberately blank node. Inside text, ` / ` — a slash with a space on each side — is a line break; a slash without spaces is an ordinary character, so `TCP/IP` and URLs survive.
+Leave the text out and the node shows its name (`node parser` reads "parser"). Write `""` for a deliberately blank node. Inside a text, ` / ` (a slash with a space on each side) is a line break; `TCP/IP` and URLs survive.
 
-Containment is a dotted name and the parent must be declared first. Children stack vertically in written order unless a child carries its own placement.
-
-```
-node server   "Server"
-node server.api    "API"
-node server.worker "Worker"
-```
-
-A container with `""` and `fill: none  border: none` draws nothing and takes no room of its own, which is how you make a group that can be placed against as one shape.
-
-Node attributes: `style`, `fill` and `border` (each a color), `shape`, `icon`, `badge`, `gap`, `overlap: allow`, `url` (a quoted destination), `deck` (a stack of copies behind the box, one quoted text each: `deck: "Drive 2" "Drive 3"`), and `contents:` on a container.
-
-`contents: (widths: match, align: center)` says how a container's children sit when its title is wider than they are. `widths:` takes `natural`, `match` (all as wide as the widest) or `fill` (all as wide as the band); `align:` takes `left`, `center` or `right`.
-
-### The text and its brackets
-
-Everything a text says about *itself* goes in brackets after it, never among the node's attributes: `color`, `size` (`small | normal | large`), `wrap` (fold every n characters), `align` (`left | center | right`, how the lines range against each other) and `at` (where the block sits, named from the nine positions — `top-left`, `bottom-center`, `center` and the rest).
-
-```
-node docker "Docker" (at: bottom-center, align: center)  below deploy
-node aside  "a longer remark that folds" (size: small, wrap: 30)  shape: none
-edge a -> b "rclone" (color: theme-muted)
-```
-
-An edge's text takes the same keys less `at`. A **style** has no text of its own, so it hangs the bracket off a key: `style aside  text: (size: small, color: theme-muted)`.
-
-A stretch of a text can borrow a style's text color, which is how a node carries a quieter qualifier:
-
-```
-style dim  text: (color: theme-muted)
-node grinder "Grinder / [dim]medium-fine[/dim]"
-```
-
-The mark names a style and never a color; the closer repeats the name; `\[` is a literal bracket. There is no `subtext` attribute — it was removed, and an older file carrying it gets an error naming the mark to write instead.
-
-### The body
-
-Every node has one body and two keys can name it. `shape: rectangle | document | circle | none` is the outline it is drawn with — `rectangle` is the default, `circle` is sized to its text and always round, and `none` is text with no box at all, which is what an annotation is. `icon: <name>` draws the node **as** a picture, with no box: `disk`, `desktop`, `laptop`, `package`, `cubes`, `cube`, `database`. Writing both is an error.
-
-`badge: <name>` is different again: it puts one of those pictures *beside* a node's text, and the node keeps its own body and grows to hold both.
-
-A picture outside the set is declared with `icon <name>`, followed by SVG pasted between `"""` marks or a quoted `.svg` file path, and then used by name like a built-in. Only the command-line tool reads files. Prefer the built-ins; declare one only when the user supplies the SVG or asks for a picture the set lacks.
+The body is `shape: rectangle | document | circle | diamond | pill | parallelogram | hexagon | trapezoid | triangle | cylinder | none` (`none` is bare text, for notes and captions; a flowchart shape with no geometric name is `flow-` and its meaning, such as `flow-subprocess` or `flow-delay`; settings follow in a bracket, `shape: triangle (aim: up)`) or `icon: disk | desktop | laptop | package | cubes | cube | database`, a picture with no box. `badge: <icon>` puts a picture beside the text as part of the label. A picture outside the set is declared with `icon <name>` and SVG between `"""` marks; prefer the built-ins.
 
 ```
 node dump  "nightly dump"  shape: document
-node aside "a remark" (wrap: 30)  shape: none
-node unit  icon: cube
-node drive "External HD"   badge: disk
+node unit  icon: cube  right of dump
+node drive "External HD"  badge: disk  below dump
+node aside "a remark that folds" (wrap: 20)  shape: none  right of drive
 ```
 
-A node drawn as a picture and given no text shows none — everywhere else a node with no text takes its name, but a picture usually is the statement.
-
-A color attribute names the part it colors: `fill` is the area, `border` the outline, `text` the text, and `line` the drawn line of an edge. A word is refused on a kind that has no such part, so `border:` on a `shape: none` node is an error — with no body there is no outline, and `text:` is its only color.
-
-A style contributes a part only to the kinds that have it, so a style shared between nodes and edges writes one key for each — `style backup  border: #d2904e  line: #d2904e` colors the nodes' borders and the edges' lines from one name.
-
-There is no `stroke` attribute. It was removed because it named no part; if you have seen it in an older file, it is `border` on a node, `text` on one with no body or a picture body, and `line` on an edge.
-
-**Every attribute is checked by name, so do not invent one.** A word the tool does not know is an error, and so is a real word on a kind that has no use for it — `fill:` on a node with no body, `gap:` or `overlap:` on an edge, `contents:` on a node that can have no children. The error says either what the kind takes or where the word does belong. A key handed over by a style is exempt, which is what lets one style dress both nodes and edges.
-
-### Placement
+### Placing
 
 ```
 above X          below X          left of X        right of X
 above-left of X  above-right of X below-left of X  below-right of X
-level with X     top level with X    bottom level with X
-                 left level with X   right level with X
+even with X      top even with X  bottom even with X  left even with X  right even with X
 ```
 
-`of` is optional after a direction. A node carries as many placements as it needs, and any of them may name several targets joined by `and` — `right of borg and bare` places against the box that just bounds them.
+- **Exactly one node in the file is unplaced**, the anchor. Every other is placed against something, directly or through others.
+- **A gap is exact**: `none`, `tight`, `normal` (the default) or `wide`, in the placement's bracket, `right of a (gap: tight)`, or a number of the file's unit in front, `2 right of a`. A normal box is about 4 units tall.
+- **A lone direction also centers on its target.** `right of a` alone puts the box level with `a`. Another placement on that axis replaces the centering: `right of a  even with b`.
+- **Each axis is stated once.** Two placements on one axis are refused. The one exception: `right of a  left of b` centers the box in the space between them, and then something must say how high.
+- **Several targets are one region**: `below a and b` sits under the pair, centered between them.
+- **Nothing moves a box.** Two boxes placed `right of a` both land on one spot and are reported. Chain them (`b right of a`, `c right of b`) or put them in a container with a layout.
 
-Three rules that decide most of what you write:
+### Containers
 
-- **A lone directional placement binds both axes.** `right of docker` also centers the node vertically on Docker, because walking right from something keeps you on its center line. That half drops away as soon as another placement claims that axis.
-- **Two placements on one axis with nothing on the other is an error**, because the tool would have to choose which row the node shares. Add `level with X` or a `below`.
-- **Exactly one node in the file may be left unplaced.** Everything else is positioned, directly or transitively, against it.
-
-Gaps are named — `none`, `tight`, `normal` (default), `wide` — and belong to the placement, in brackets:
-
-```
-node stack "Stack"  below wedge  right of wall (gap: tight)  gap: wide
-```
-
-`gap:` as a plain attribute is the node's default and reaches every relationship the node is in, including placements written *against* it. `(gap: none)` puts two sides flat against each other.
-
-### Edges
+A dotted name is a child: `server.api` is inside `server`, and the parent is declared first. A container is the box round its children. Arrange them one of two ways:
 
 ```
-edge <from> -> <to> ["<text>"] [between <a> and <b> [vertically|horizontally]] [above|below|left of|right of <node> ...] [attributes]
+node server "Server"  layout: column (widths: match)
+node server.api    "API"
+node server.worker "Worker"
+
+node lab "Lab"  right of server (gap: wide)
+node lab.pc   "PC"
+node lab.nas  "NAS"  right of lab.pc (gap: tight)
 ```
 
-`<-` and `<->` also work, and `--` is a plain line; `a <- b` draws the same as `b -> a` and lets you write the subject first. Endpoints may be nested (`server.api`).
+`layout: column` or `layout: row` puts the children in written order; its bracket takes `gap:`, `widths: match`, and `align-children: left | center | right`. Without a layout, exactly one child is unplaced and the rest are placed against it. `shape: none` on a container draws no box, which makes a group you can place things against as one shape.
 
-Each end may carry a mark, written in the arrow: `arrow` (glyph `>`/`<`), `oarrow` (`|>`/`<|`), `dot` (`*`), `odot` (`o`), `diamond`, `odiamond`, `bar` (`|`), `none`. So `a <|-- b`, `a *--o b`, `a diamond--> b`. A mark touches the dashes or is bracketed (`[dot] -- b`). `from-mark:` and `to-mark:` say the same as attributes and can live in a style; they fill only ends the arrow leaves blank, and contradicting a mark written in the arrow is an error.
+A title goes `(inside top)` by default, centered along it; `(inside top, align: left)` puts it at the top left, and `(on top)` or `(outside top)` sit it on or above the border.
 
-`from:` and `to:` name a side of the first and second node written, whichever way the arrow points — `top`, `bottom`, `left`, `right` — and turn the line into a curve that actually leaves and arrives that way. Name them when it matters which side a line meets a box on.
+### Text
 
-A line never passes through a box: every edge takes the shortest way between its ends that goes through none, going round whatever is in its way. Of two ways round that are equally short, it goes over the top (round the right for a column). An end with no side named leaves by whichever side makes the way shortest.
-
-`between a and b` says the line travels down the gap between two named nodes. `below c` (or `above`, `left of`, `right of`) says which side of a node the line passes, only where it goes by that node; write one per node, and `below c and d` covers the stretch between them too. Use these when you want a line to go a particular way rather than the shortest.
-
-An edge with text widens the corridor between its own two ends by what the text needs, so texts are safe to add.
-
-How the line is drawn goes in its bracket: `line: (path: square, corners: rounded, pattern: dashed, thickness: thick, crossing: arc)`. `path:` is `curved` (the default), `square` (right angles) or `straight`; it changes how the line joins its ends, never which side of anything it passes. `line: red` alone is the color. To draw a whole diagram with right angles, write `default edge  line: (path: square, corners: rounded)`.
-
-### Annotations
+Everything a text says about itself goes in brackets after it: `color`, `size` (`small | normal | large`), `wrap` (fold every n characters) and `align`.
 
 ```
-node <name> "<text>" (wrap: 30)  shape: none  <placement> ...
+style dim  text: (color: theme-muted)
+node grinder "Grinder / [dim]medium-fine[/dim]"
+node note "a longer remark that folds" (size: small, wrap: 30)  shape: none  below grinder (gap: tight)
 ```
 
-There is no `note` statement — an annotation is a node with no body, anchored to a node so it travels with it. **Always give one a `(wrap: n)`** — without one a sentence is drawn as one very long line across whatever is beside it.
+`[dim]…[/dim]` borrows a style's look for a stretch of text. A style hangs the bracket off a key: `style aside  text: (size: small, color: theme-muted)`. **Always give bare text a `(wrap: n)`**, or a sentence is one long line across whatever is beside it.
+
+### Lines
+
+```
+edge [<name>] <from> -> <to> ["<text>" [(<placement>)]] [attributes]
+```
+
+`<-`, `<->` and `--` work too, and each end may carry a mark: `a <|-- b`, `a *--o b`, `a diamond--> b`. `from:` and `to:` name the side of the first and second name written: `from: right  to: left`.
+
+- **Straight by default**, between the two boxes and through anything in between, which is reported. `line: (path: square)` or `line: (path: curved)` for a route read off the line's own two boxes and sides.
+- **`via:` lists the places a line passes**: `via: cache top` runs just above `cache`; `via: between a and b` goes through the point between them; `via: proxy` goes through a box's center. This is how to take a line round something.
+- **A text sits at the middle of its line.** Place it with `(at: start)`, `(at: 1/4)`, `(above edge)`, `(on: longest level)` or `(above some_box)`. Texts never move boxes, so give a labeled line room: a `normal` gap is too short for a word, so use `(gap: 12)` or so between boxes joined by a labeled line.
+- `line: (pattern: dashed, thickness: thick, corners: rounded, color: #d2904e)`; `line: red` alone is the color.
 
 ### Against a part of a box
 
 ```
-inside <node> <part>
-outside <node> <part>
-on <node> <part>
+node bob      "Bob the builder" (inside top)  height: 7
+node bob_link "bob.example.com" (size: small)  inside bob bottom-center  shape: none
+node count    "3"  on bob top-right  shape: circle
 ```
 
-A placement may target a *part* of a node: its `text`, a side (`top`, `bottom`, `left`, `right`), or one of nine points — `top-left`, `top-center`, `top-right`, `left-center`, `center`, `right-center`, `bottom-left`, `bottom-center`, `bottom-right`. A bare side is the whole edge; the `-center` point is its midpoint.
+A box's parts are its `text`, its sides `top`, `bottom`, `left`, `right`, and nine points (`top-left`, `top-center`, … `center` … `bottom-right`). `inside` tucks a node within the box against that part, `outside` puts it beyond, `on` centers it on the part.
 
-`inside` tucks the node within the box against that part, inset `tight` unless `(gap: …)` says otherwise; `(gap: none)` puts it hard against the edge. `outside` puts it wholly beyond that part. `on` centers it on the part, so a node on a corner straddles it.
-
-```
-node bob      "Bob the builder"
-node bob_link "bob.example.com"  inside bob bottom-center
-node count    "3"                on bob top-right
-```
-
-This is not containment: a dotted name puts something *in* a box and widens it, while a node placed against a part is stamped on it and changes nothing. Use it for a mark, a count, or a link line at the bottom of a box.
-
-### Styles
+### Styles and colors
 
 ```
 style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 node records "Records"  style: store
 ```
 
-Prefer theme colors, which follow the theme so the diagram reads in light and dark alike: `theme-primary` and `theme-secondary` are the theme's two accents, `-subtle` is an accent softened toward the page (the one to fill a box with), and `theme-muted` is quieter text. `theme-page`, `theme-text`, `theme-fill`, `theme-border` and `theme-line` are the theme's own colors for each part. A hex or CSS color also works, or `none`, but stays fixed in every theme — a dark fill chosen on a dark page is unreadable on a light one.
+`fill` is a box's area, `border` its outline, `line` an edge's line, and a text's color goes in its bracket. `corners: sharp` squares a box's rounded corners. Prefer theme colors, which read in light and dark themes alike: `theme-primary` and `theme-secondary` are the accents, `-subtle` is an accent softened toward the page (the one to fill a box with), `theme-muted` is quieter text. A hex or CSS color stays fixed in every theme.
 
 ## A complete small file
 
@@ -211,26 +155,29 @@ Prefer theme colors, which follow the theme so the diagram reads in light and da
 style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 
 node browser  "Browser"
-node api      "API server"  right of browser
-node db       "Postgres"    right of api    style: store
-node worker   "Worker"      below api
+node api      "API server"  right of browser (gap: 10)
+node db       "Postgres"    right of api (gap: 10)  style: store
+node worker   "Worker"      below api (gap: wide)
 
-edge browser -> api  "HTTP"    from: right  to: left
-edge api -> db       "SQL"     from: right  to: left
-edge worker -> db    "writes"  from: right  to: bottom
+edge browser -> api  "HTTP"
+edge api -> db       "SQL"
+edge worker -> db    "writes"  to: bottom  line: (path: square)
 
 node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 30)  shape: none  below worker (gap: tight)
 ```
 
 ## What will bite you
 
-- **Reaching for `note`, `box` or `link`.** They are not statements. A note is `node … shape: none`; the keywords are `node` and `edge`. Each gets an error naming the replacement.
-- **Nodes that nothing orders.** Every pair of nodes must clear the other, and where the file says nothing about which side of what, it is an error naming the pair: `"b" and "c" overlap, and nothing says which side of the other either one sits on`. Hanging two children off the same side of the same target is the usual cause. Place one against the other.
-- **An annotation with no wrap.**
-- **Reaching for a coordinate, an offset, or a waypoint.** None exist. If a line goes somewhere wrong, say more about it with `between`, `below <node>` and `from:`/`to:`; if a node is in the wrong place, add a placement.
-- **`#` is not a comment.** It opens a hex color. Comments are `//`.
-- **Guessing at syntax from another language.** There are no braces, no semicolons, no `-->`, no subgraphs. If you want something not written here, check `reference/syntax.md` before inventing it.
+- **Two boxes placed the same way.** `node b right of a` and `node c right of a` put `b` and `c` on one spot. Place `c` against `b`, or use a container with `layout:`.
+- **A labeled line between close boxes.** The text sits on the line and nothing widens the gap, so it covers the boxes and is reported. Give the placement a larger gap.
+- **Two unplaced boxes.** Only one may be. The error names both.
+- **Saying an axis twice.** `right of a  even with a` is fine; `below a  even with b` is two statements about height, and refused.
+- **Old syntax.** `level with` is `even with`; `gap:` on a node goes in a placement's bracket; edge clauses like `below c` and `between a and b` are `via: c bottom` and `via: between a and b`; `contents:` is `layout: column (…)`; `at:` on a node's text is `(inside top, align: left)` and the like; `deck:` is a container, `layout: deck  cards: "Drive 1" "Drive 2"`. Each is refused with what to write instead.
+- **`note`, `box` or `link`.** Not statements: a note is `node … shape: none`, and the keywords are `node` and `edge`.
+- **A coordinate.** None exist. Every position is relative to something in the diagram.
+- **`#` as a comment.** It opens a hex color; comments are `//`.
+- **Guessing from another language.** No braces, no semicolons, no subgraphs. If you want something not written here, check `reference/syntax.md` before inventing it.
 
 ## Reference
 
-[reference/syntax.md](reference/syntax.md) is the full syntax reference — every construct, the shape, icon and position sets, how edges sharing a side or a channel are ordered, what the language deliberately refuses and why, and the known defects. Read it when you need a construct this page does not cover, or when an error message points at behavior you did not expect.
+[reference/syntax.md](reference/syntax.md) is the full syntax reference: every construct, points and regions, waypoints and named legs, bundles, sizes, guides, drawing order, the findings, what the language refuses and why, and what changed in each version. Read it when you need a construct this page doesn't cover, or when an error or a finding points at behavior you didn't expect.
