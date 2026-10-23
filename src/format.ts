@@ -22,7 +22,10 @@ export function format(source: string, settings: FormatSettings = DEFAULT_FORMAT
 
   const items = gatherItems(lines, statements, starts, settings);
   const out = layOutItems(items, settings);
-  const result = out.join('\n') + (endsWithBreak ? '\n' : '');
+  // A file keeps the line breaks it came with, so formatting on Windows
+  // doesn't turn every line into a change. The first break decides.
+  const lineBreak = /\r\n/.test(source.match(/\r?\n/)?.[0] ?? '') ? '\r\n' : '\n';
+  const result = out.join(lineBreak) + (endsWithBreak ? lineBreak : '');
 
   if (!sameMeaning(source, result)) {
     throw new Error('the formatter would change what this file draws, so it was left alone — please report this as a bug');
