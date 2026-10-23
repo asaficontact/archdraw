@@ -83,7 +83,7 @@ type Item =
   /** A statement on one line. */
   | { kind: 'statement'; keyword: string; cells: Cell[]; comment?: string }
   /** A statement too long for one line, broken by `wrap-at` or `clause-per-line-at`. */
-  | { kind: 'broken'; lines: string[]; comment?: string };
+  | { kind: 'broken'; keyword: string; first: Cell[]; rest: string[]; oneEach: boolean; comment?: string };
 
 /** Everything after `//` outside quotes on a line, or nothing. */
 function trailingCommentAfter(line: string, from: number): string | undefined {
@@ -320,15 +320,14 @@ function textWidth(text: string): number {
 const TAB_WIDTH = 4;
 
 /**
- * A statement past `wrap-at` or `clause-per-line-at` on its own lines, or the
- * statement as it was. Its length is measured on its own, unaligned, so
+ * Whether a statement goes past `wrap-at` or `clause-per-line-at`, and if so
+ * where its first line ends. Its length is measured on its own, unaligned, so
  * whether one statement breaks never depends on its neighbors. The first line
  * holds the keyword and name, and the texts after them if `first-line` says
- * so; the clauses after it go one to a line, or as many as fit under
- * `wrap-at`. A clause is never split, so one longer than the width stands
- * alone on its line.
+ * so, and shares columns with its neighbors like a one-line statement; the
+ * clauses after it are laid out by `continuedLines`.
  */
-function breakStatement(item: Extract<Item, { kind: 'statement' }>, settings: FormatSettings, gap: string, gapWidth: number): Item {
+function breakStatement(item: Extract<Item, { kind: 'statement' }>, settings: FormatSettings, gap: string): Item {
   const texts = item.cells.map((cell) => cell.text);
   const length = textWidth(texts.filter((text, at) => text !== '' || at === 0).join(gap));
   const perLine = settings['clause-per-line-at'];
@@ -341,42 +340,56 @@ function breakStatement(item: Extract<Item, { kind: 'statement' }>, settings: Fo
   if (settings['first-line'] === 'text') while (item.cells[firstEnd]?.quoted) firstEnd += 1;
   const rest = item.cells.slice(firstEnd).map((cell) => cell.text);
   if (rest.length === 0) return item;
+  return {
+    kind: 'broken',
+    keyword: item.keyword,
+    first: item.cells.slice(0, firstEnd),
+    rest,
+    oneEach,
+    ...(item.comment !== undefined ? { comment: item.comment } : {}),
+  };
+}
 
-  const first = item.cells.slice(0, firstEnd);
-  const firstLine = first.map((cell) => cell.text).filter((text, at) => text !== '' || at === 0).join(gap);
-  const indent = continuedIndent(first, settings, gapWidth);
+/**
+ * A broken statement's lines after its first: one clause to a line, or as
+ * many as fit under `wrap-at`. A clause is never split, so one longer than
+ * the width stands alone on its line.
+ */
+function continuedLines(item: Extract<Item, { kind: 'broken' }>, indent: string, settings: FormatSettings, gap: string, gapWidth: number): string[] {
+  if (item.oneEach) return item.rest.map((text) => indent + text);
+  const wrap = settings['wrap-at'] as number;
   const indentWidth = indent === '\t' ? TAB_WIDTH : indent.length;
-  const lines = [firstLine];
-  if (oneEach) lines.push(...rest.map((text) => indent + text));
-  else {
-    let line = '';
-    for (const text of rest) {
-      if (line !== '' && indentWidth + textWidth(line) + gapWidth + textWidth(text) > (wrap as number)) {
-        lines.push(indent + line);
-        line = '';
-      }
-      line = line === '' ? text : line + gap + text;
+  const lines: string[] = [];
+  let line = '';
+  for (const text of item.rest) {
+    if (line !== '' && indentWidth + textWidth(line) + gapWidth + textWidth(text) > wrap) {
+      lines.push(indent + line);
+      line = '';
     }
-    lines.push(indent + line);
+    line = line === '' ? text : line + gap + text;
   }
-  return { kind: 'broken', lines, ...(item.comment !== undefined ? { comment: item.comment } : {}) };
+  lines.push(indent + line);
+  return lines;
 }
 
 function layOutItems(written: Item[], settings: FormatSettings): string[] {
   const gap = settings['clause-gap'] === 'tab' ? '\t' : ' '.repeat(settings['clause-gap']);
   const gapWidth = settings['clause-gap'] === 'tab' ? 1 : settings['clause-gap'];
-  const items = written.map((item) => (item.kind === 'statement' ? breakStatement(item, settings, gap, gapWidth) : item));
+  const items = written.map((item) => (item.kind === 'statement' ? breakStatement(item, settings, gap) : item));
+  // What lines up in columns: a one-line statement whole, a broken one's first line.
+  const aligned = (item: Item): Cell[] | undefined =>
+    item.kind === 'statement' ? item.cells : item.kind === 'broken' ? item.first : undefined;
 
-  // Which one-line statements share columns: each is given a group number. A
-  // comment line is passed over, as if it weren't there: it labels what
-  // follows rather than separating it.
+  // Which statements share columns: each is given a group number. A comment
+  // line is passed over, as if it weren't there: it labels what follows
+  // rather than separating it.
   const group = new Map<number, number>();
   let current = -1;
   let previous: Item | undefined;
-  let lastStatement: Extract<Item, { kind: 'statement' }> | undefined;
+  let lastStatement: Extract<Item, { kind: 'statement' | 'broken' }> | undefined;
   items.forEach((item, index) => {
     if (item.kind === 'comment') return;
-    if (item.kind !== 'statement') {
+    if (item.kind !== 'statement' && item.kind !== 'broken') {
       if (item.kind !== 'blank' || settings['columns-shared-by'] !== 'same-keyword') {
         if (settings['columns-shared-by'] !== 'file') lastStatement = undefined;
       }
@@ -400,27 +413,54 @@ function layOutItems(written: Item[], settings: FormatSettings): string[] {
   const widths = new Map<number, number[]>();
   const commentAt = new Map<number, number>();
   items.forEach((item, index) => {
-    if (item.kind !== 'statement') return;
+    const cells = aligned(item);
+    if (cells === undefined) return;
     const id = group.get(index)!;
     const own = widths.get(id) ?? [];
-    item.cells.forEach((cell, at) => (own[at] = Math.max(own[at] ?? 0, textWidth(cell.text))));
+    cells.forEach((cell, at) => (own[at] = Math.max(own[at] ?? 0, textWidth(cell.text))));
     widths.set(id, own);
   });
-  const lineOf = (item: Extract<Item, { kind: 'statement' }>, id: number): string => {
-    if (settings.columns === 'off') return item.cells.map((cell) => cell.text).filter((text, at) => text !== '' || at === 0).join(gap);
+  // Each cell's text, and where on the line it starts.
+  const placed = (cells: Cell[], id: number): { text: string; at: number }[] => {
     const own = widths.get(id)!;
-    // A column empty in every statement of the set, such as the name column
-    // of unnamed edges, takes no room.
-    return item.cells
-      .map((cell, at) => (at === item.cells.length - 1 || own[at] === 0 ? cell.text : cell.text + ' '.repeat(own[at]! - textWidth(cell.text) + gapWidth)))
-      .join('')
-      .trimEnd();
+    const result: { text: string; at: number }[] = [];
+    let at = 0;
+    cells.forEach((cell, index) => {
+      // A column empty in every statement of the set, such as the name column
+      // of unnamed edges, takes no room; with columns off, neither does an
+      // empty cell.
+      if (settings.columns === 'off' ? cell.text === '' && index > 0 : own[index] === 0) return;
+      result.push({ text: cell.text, at });
+      at += (settings.columns === 'off' ? textWidth(cell.text) : own[index]!) + gapWidth;
+    });
+    return result;
+  };
+  const lineOf = (cells: Cell[], id: number): string => {
+    if (settings.columns === 'off') return placed(cells, id).map((one) => one.text).join(gap);
+    let line = '';
+    for (const one of placed(cells, id)) line += ' '.repeat(one.at - textWidth(line)) + one.text;
+    return line;
   };
   items.forEach((item, index) => {
     if (item.kind !== 'statement') return;
     const id = group.get(index)!;
-    commentAt.set(id, Math.max(commentAt.get(id) ?? 0, textWidth(lineOf(item, id))));
+    commentAt.set(id, Math.max(commentAt.get(id) ?? 0, textWidth(lineOf(item.cells, id))));
   });
+  // Where a broken statement's later lines start, measured on its first line
+  // as aligned, so `under-text` sits under the text where it was drawn.
+  const brokenIndent = (item: Extract<Item, { kind: 'broken' }>, id: number): string => {
+    const indent = settings['continued-lines-indent'];
+    if (indent === 'tab' || typeof indent === 'number') return continuedIndent(item.first, settings, gapWidth);
+    const cells = placed(item.first, id);
+    const name = cells[1]?.at ?? textWidth(item.first[0]!.text) + gapWidth;
+    if (indent === 'under-name') return ' '.repeat(name);
+    if (indent === 'under-text') {
+      const at = item.first.findIndex((cell) => cell.quoted);
+      const text = cells.find((one) => one.text === item.first[at]?.text);
+      return ' '.repeat(text?.at ?? name);
+    }
+    return ' '.repeat(name + indent.underName);
+  };
 
   const out: string[] = [];
   let blankRun = 0;
@@ -445,12 +485,15 @@ function layOutItems(written: Item[], settings: FormatSettings): string[] {
       case 'verbatim':
         out.push(...item.lines);
         return;
-      case 'broken':
-        item.lines.forEach((line, at) => {
-          const last = at === item.lines.length - 1;
+      case 'broken': {
+        const id = group.get(index)!;
+        const lines = [lineOf(item.first, id), ...continuedLines(item, brokenIndent(item, id), settings, gap, gapWidth)];
+        lines.forEach((line, at) => {
+          const last = at === lines.length - 1;
           out.push(last && item.comment !== undefined ? `${line}${gap}${item.comment}` : line);
         });
         return;
+      }
       case 'kept': {
         const indent = continuedIndent(item.first, settings, gapWidth);
         item.lines.forEach((line, at) => {
@@ -462,7 +505,7 @@ function layOutItems(written: Item[], settings: FormatSettings): string[] {
       }
       case 'statement': {
         const id = group.get(index)!;
-        const text = lineOf(item, id);
+        const text = lineOf(item.cells, id);
         if (item.comment === undefined) out.push(text);
         else if (settings['trailing-comments'] === 'shared-column') {
           out.push(text + ' '.repeat(commentAt.get(id)! - textWidth(text) + gapWidth) + item.comment);

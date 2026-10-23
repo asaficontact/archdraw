@@ -1204,7 +1204,7 @@ clause-gap: 2
 
 An unknown setting, one written twice, or a value it doesn't take is an error naming it.
 
-**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured on its own, before columns, so whether it breaks never depends on its neighbors, and a broken statement shares no columns. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
+**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured on its own, before columns, so whether it breaks never depends on its neighbors; its first line still lines up with theirs. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
 
 ```
 // wrap-at: 60
