@@ -138,6 +138,10 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
       if (c === ')' && depth > 0) break;
       text += c;
       i += 1;
+      // A comma ends a word, so `rounded,path: square` reads as
+      // `rounded, path: square`. Not inside a word's own bracket, which keeps
+      // `rgb(20,20,20)` whole.
+      if (c === ',' && !text.includes('(')) break;
     }
     // `gap:tight` is `gap: tight` with no space, since how much whitespace there
     // is never matters. A word straight after a key is its value and is left
@@ -149,6 +153,13 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
     if (joined) {
       tokens.push({ text: joined[1]!, quoted: false, joined: text, start, end: start + joined[1]!.length });
       i = start + joined[1]!.length;
+      continue;
+    }
+    // A comma written apart from its word, `start , above`, is the comma of
+    // `start, above`. A bracket or a quoted text keeps its comma separate, so
+    // neither is changed by what follows it.
+    if (text === ',' && previous && !previous.quoted && !isAttrKey(previous) && !/^[()]$/.test(previous.text) && !previous.text.endsWith(',')) {
+      previous.text += ',';
       continue;
     }
     tokens.push({ text, quoted: false, start, end: i });

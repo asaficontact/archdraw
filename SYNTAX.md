@@ -55,7 +55,7 @@ What every statement of a kind has is positional; what is optional is a key. A w
 
 **A value ends when its own shape is complete.** `height: 0.5 group height  right of a` reads a size, then a placement. `to: top, right of z` keeps `right of z` inside `to:`, because it is part of that value. So word order stays free and nothing is ambiguous.
 
-**A bracket modifies the one thing it follows.** A setting that belongs to one part of a statement is written in brackets right after that part: a placement's `(gap: wide)`, a text's `(size: small, wrap: 30)`, a line's `line: (path: square)`, a layout's `layout: column (gap: none)`, a waypoint's `b top (gap: wide)`. The scope is visible instead of inferred. Inside a bracket the comma is optional.
+**A bracket modifies the one thing it follows.** A setting that belongs to one part of a statement is written in brackets right after that part: a placement's `(gap: wide)`, a text's `(size: small, wrap: 30)`, a line's `line: (path: square)`, a layout's `layout: column (gap: none)`, a waypoint's `b top (gap: wide)`. The scope is visible instead of inferred. Inside a bracket the comma is optional, and spaces around it don't matter: `(corners: rounded,path: square)` and `(corners: rounded , path: square)` are both `(corners: rounded, path: square)`.
 
 ### Names and words
 
@@ -1172,6 +1172,8 @@ reladraw format --init
 
 `format` lays each file out again in place. By default every statement is on one line, and neighboring statements with the same keyword line their clauses up in columns, each as wide as its longest clause plus two spaces; a blank line, a comment or a new keyword starts a new set of columns. A comment at the end of a line lines up with the others in its set. A statement written over several lines with a comment among them keeps its lines, with the indent tidied. Blank lines stay as written.
 
+Inside a clause, spacing comes out as these pages write it, whatever was typed: one space after a key's colon and between words, none just inside a bracket, and a comma against the word before it, so `line:( corners:rounded , path:square )` becomes `line: (corners: rounded, path: square)`.
+
 Only whitespace changes: every word is copied as it was written, and the result is checked to draw exactly what the original did. A file that doesn't parse is reported and left alone, and the other files still run. `--check` changes nothing, prints each file that would change, and fails if there is one, for a pre-commit hook or CI. A shell expands `*.reladraw` into the files; folders aren't searched.
 
 The settings are in the nearest `.reladraw-format`, in the file's folder or a folder above it; with none, the defaults. A project that puts one at its top keeps everyone's formatting the same. `reladraw format --init` writes one in the current folder with every setting at its default and a comment on what each value does, and refuses if one is there already. One setting a line, as in a diagram:
@@ -1263,7 +1265,8 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 
 **Unreleased**
 
-- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. Prompted by #14, where a long statement was hard to read in a plain editor.
+- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. Spacing inside a clause is evened out too: `gap:tight` becomes `gap: tight`, `( gap: tight )` becomes `(gap: tight)`. Prompted by #14, where a long statement was hard to read in a plain editor.
+- **A comma may touch the next word or stand apart from both.** `(corners: rounded,path: square)` used to be refused with "`corners` has no value", and `(at: start , above edge)` was refused in a text's bracket; both now read as `rounded, path:` and `start, above` do.
 - **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
 - **The playground's error message can be copied**, with a Copy button beside it or by selecting it. Only the underlined line number jumps to the line now; a click anywhere on the message used to, which took a selection away.
 

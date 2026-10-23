@@ -7,7 +7,7 @@ import { clausesOf, looksLikeArrow, parse, type Gathered } from './parser.js';
  * Lay a source file out again: spacing between clauses, columns shared by
  * statements that belong together, comments and blank lines, as `settings`
  * say. Only whitespace changes. Every token is copied out of the line it was
- * written on, so nothing is respelled, and the result is parsed again and
+ * written on, so no word is respelled, and the result is parsed again and
  * compared with the original, so a mistake here can never change what a file
  * draws: it throws instead.
  *
@@ -228,16 +228,24 @@ function edgeHeadCells(head: { token: Token; line: string }[]): Cell[] {
 }
 
 /**
- * Tokens written back as one stretch of text. Two tokens that touched stay
- * touching, as in `gap:tight` or `(gap: tight)`; any other space between them,
- * a line break included, becomes one space.
+ * Tokens written back as one stretch of text, spaced the way the docs spell a
+ * clause however it was written: one space between words and after a key's
+ * colon, none just inside a bracket, and a lone comma against the word before
+ * it. `line:( corners:rounded , path:square )` comes out as
+ * `line: (corners: rounded, path: square)`.
  */
 function joinTokens(tokens: { token: Token; line: string }[]): string {
   let text = '';
   tokens.forEach(({ token, line }, index) => {
     const previous = tokens[index - 1];
-    if (previous) text += previous.line === line && previous.token.end === token.start ? '' : ' ';
-    text += line.slice(token.start, token.end);
+    if (previous) {
+      const opens = !previous.token.quoted && previous.token.text === '(';
+      const closes = !token.quoted && (token.text === ')' || token.text === ',');
+      text += opens || closes ? '' : ' ';
+    }
+    const written = line.slice(token.start, token.end);
+    // A comma the lexer joined on from further along the line.
+    text += !token.quoted && token.text.endsWith(',') && !written.endsWith(',') ? `${written},` : written;
   });
   return text;
 }
