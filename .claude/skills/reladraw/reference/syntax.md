@@ -1167,6 +1167,7 @@ The output is a standalone SVG: every picture is drawn into it as path data, nev
 ```
 reladraw format diagram.reladraw other.reladraw
 reladraw format --check diagram.reladraw
+reladraw format - < diagram.reladraw
 reladraw format --init
 ```
 
@@ -1175,6 +1176,8 @@ reladraw format --init
 Inside a clause, spacing comes out as these pages write it, whatever was typed: one space after a key's colon and between words, none just inside a bracket, and a comma against the word before it, so `line:( corners:rounded , path:square )` becomes `line: (corners: rounded, path: square)`.
 
 Only whitespace changes: every word is copied as it was written, and the result is checked to draw exactly what the original did. A file that doesn't parse is reported and left alone, and the other files still run. `--check` changes nothing, prints each file that would change, and fails if there is one, for a pre-commit hook or CI. A shell expands `*.reladraw` into the files; folders aren't searched.
+
+`-` in place of the files reads the diagram from standard input and prints it formatted, touching no file. That is how an editor formats a buffer, saved or not: Vim's `:%!reladraw format -`, or the command a format-on-save package runs. Its settings come from the nearest `.reladraw-format` to the current folder.
 
 The settings are in the nearest `.reladraw-format`, in the file's folder or a folder above it; with none, the defaults. A project that puts one at its top keeps everyone's formatting the same. `reladraw format --init` writes one in the current folder with every setting at its default and a comment on what each value does, and refuses if one is there already. One setting a line, as in a diagram:
 
@@ -1265,7 +1268,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 
 **Unreleased**
 
-- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. Spacing inside a clause is evened out too: `gap:tight` becomes `gap: tight`, `( gap: tight )` becomes `(gap: tight)`. Prompted by #14, where a long statement was hard to read in a plain editor.
+- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. `reladraw format -` reads standard input and prints the result, for editors. Spacing inside a clause is evened out too: `gap:tight` becomes `gap: tight`, `( gap: tight )` becomes `(gap: tight)`. Prompted by #14, where a long statement was hard to read in a plain editor.
 - **A comma may touch the next word or stand apart from both.** `(corners: rounded,path: square)` used to be refused with "`corners` has no value", and `(at: start , above edge)` was refused in a text's bracket; both now read as `rounded, path:` and `start, above` do.
 - **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
 - **The playground's error message can be copied**, with a Copy button beside it or by selecting it. Only the underlined line number jumps to the line now; a click anywhere on the message used to, which took a selection away.

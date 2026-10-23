@@ -14,6 +14,7 @@ const USAGE = `reladraw — draw a diagram from stated placement
   reladraw render <input.reladraw> [-o <output.svg>] [options]
   reladraw check <input.reladraw> [options]
   reladraw format <input.reladraw>... [--check]
+  reladraw format - [--check]
   reladraw format --init
 
   render      draw the diagram to an SVG, and print any findings: places
@@ -25,6 +26,9 @@ const USAGE = `reladraw — draw a diagram from stated placement
               doesn't parse is left alone. The nearest .reladraw-format, in
               the file's folder or one above it, holds the settings.
               --check changes nothing, and fails if a file would change.
+              - reads the diagram from standard input and prints it
+              formatted, for an editor; settings come from the current
+              folder up.
               --init writes a .reladraw-format here, every setting at its
               default with what it does.
 
@@ -222,9 +226,10 @@ async function formatFiles(args: string[]): Promise<number> {
     return 0;
   }
   if (files.length === 0) {
-    process.stderr.write('reladraw: no input file — reladraw format <input.reladraw>...\n');
+    process.stderr.write('reladraw: no input file — reladraw format <input.reladraw>..., or - to read standard input\n');
     return 1;
   }
+  if (files.includes('-')) return formatStandardInput(files, check);
 
   let status = 0;
   const found = new Map<string, { path: string; settings: FormatSettings } | null>();
@@ -266,6 +271,49 @@ async function formatFiles(args: string[]): Promise<number> {
     process.stderr.write(`formatted ${file}\n`);
   }
   return status;
+}
+
+/**
+ * `reladraw format -`: the diagram read from standard input and printed
+ * formatted, which is how an editor formats a buffer it hasn't saved. The
+ * settings are the nearest `.reladraw-format` from the current folder. With
+ * `--check` nothing is printed, and it fails if the text would change.
+ */
+async function formatStandardInput(files: string[], check: boolean): Promise<number> {
+  if (files.length > 1) {
+    process.stderr.write('reladraw: - reads standard input, so it goes on its own — reladraw format -\n');
+    return 1;
+  }
+  if (process.stdin.isTTY) {
+    process.stderr.write('reladraw: format - reads a diagram from standard input — pipe one in: reladraw format - < diagram.reladraw\n');
+    return 1;
+  }
+  let settings = DEFAULT_FORMAT;
+  try {
+    settings = nearestSettings(process.cwd(), new Map())?.settings ?? DEFAULT_FORMAT;
+  } catch (error) {
+    if (!(error instanceof SettingsError)) throw error;
+    process.stderr.write(`${error.cause.format(error.path)}\n`);
+    return 1;
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const source = Buffer.concat(chunks).toString('utf8');
+  let laid: string;
+  try {
+    laid = format(source, settings);
+  } catch (error) {
+    process.stderr.write(error instanceof SourceError ? `${error.format('<stdin>')}\n` : `reladraw: <stdin>: ${(error as Error).message}\n`);
+    return 1;
+  }
+  if (check) {
+    if (laid === source) return 0;
+    process.stderr.write('<stdin>: not formatted\n');
+    return 1;
+  }
+  process.stdout.write(laid);
+  return 0;
 }
 
 /** A `.reladraw-format` that doesn't read, and where it is. */
