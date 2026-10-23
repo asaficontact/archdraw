@@ -2290,9 +2290,12 @@ function readPlacement(
   at: number,
   line: number,
   subject: string,
+  nested = false,
 ): { placement: Placement; next: number } {
   const word = tokens[at]!;
-  clauseStarts?.add(word);
+  // A placement read after its own distance or part (`6 above x`) is still
+  // the clause that word began, so only the outermost read starts one.
+  if (!nested) clauseStarts?.add(word);
   if (word.quoted) {
     throw new SourceError(`${subject}: unexpected text "${word.text}"`, line);
   }
@@ -2302,7 +2305,7 @@ function readPlacement(
   // the distance is required.
   if (!word.quoted && isPart(word.text) && !follows(tokens, at + 1, 'of') && !follows(tokens, at + 1, 'even')) {
     if (opensPartPlacement(tokens, at)) {
-      const read = readPlacement(tokens, at + 1, line, subject);
+      const read = readPlacement(tokens, at + 1, line, subject, true);
       if (read.placement.kind !== 'offset') return read;
       return { placement: { ...read.placement, own: word.text }, next: read.next };
     }
@@ -2344,7 +2347,7 @@ function readPlacement(
           line,
         );
       }
-      const read = readPlacement(tokens, at + 3, line, subject);
+      const read = readPlacement(tokens, at + 3, line, subject, true);
       if (read.placement.kind !== 'offset') return read;
       const y = vertical(first) ? first : second;
       const x = vertical(first) ? second : first;
@@ -2355,7 +2358,7 @@ function readPlacement(
         next: read.next,
       };
     }
-    const read = readPlacement(tokens, at + 1, line, subject);
+    const read = readPlacement(tokens, at + 1, line, subject, true);
     if (read.placement.kind !== 'offset') return read;
     if (read.placement.gap !== undefined) {
       throw new SourceError(

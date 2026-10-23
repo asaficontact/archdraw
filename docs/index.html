@@ -10971,9 +10971,12 @@ function refuseNameMark(token, where, line) {
  * helps and never demanded. Shorthands added later extend this without
  * disturbing what it already reads.
  */
-function readPlacement(tokens, at, line, subject) {
+function readPlacement(tokens, at, line, subject, nested = false) {
     const word = tokens[at];
-    clauseStarts?.add(word);
+    // A placement read after its own distance or part (`6 above x`) is still
+    // the clause that word began, so only the outermost read starts one.
+    if (!nested)
+        clauseStarts?.add(word);
     if (word.quoted) {
         throw new SourceError(`${subject}: unexpected text "${word.text}"`, line);
     }
@@ -10982,7 +10985,7 @@ function readPlacement(tokens, at, line, subject) {
     // the distance is required.
     if (!word.quoted && isPart(word.text) && !follows(tokens, at + 1, 'of') && !follows(tokens, at + 1, 'even')) {
         if (opensPartPlacement(tokens, at)) {
-            const read = readPlacement(tokens, at + 1, line, subject);
+            const read = readPlacement(tokens, at + 1, line, subject, true);
             if (read.placement.kind !== 'offset')
                 return read;
             return { placement: { ...read.placement, own: word.text }, next: read.next };
@@ -11015,7 +11018,7 @@ function readPlacement(tokens, at, line, subject) {
                 throw new SourceError(`${subject}: "${word.text} ${first} and ${other.text} ${second}" gives two distances, one for each axis, ` +
                     'so one direction is above or below and the other left or right', line);
             }
-            const read = readPlacement(tokens, at + 3, line, subject);
+            const read = readPlacement(tokens, at + 3, line, subject, true);
             if (read.placement.kind !== 'offset')
                 return read;
             const y = vertical(first) ? first : second;
@@ -11027,7 +11030,7 @@ function readPlacement(tokens, at, line, subject) {
                 next: read.next,
             };
         }
-        const read = readPlacement(tokens, at + 1, line, subject);
+        const read = readPlacement(tokens, at + 1, line, subject, true);
         if (read.placement.kind !== 'offset')
             return read;
         if (read.placement.gap !== undefined) {
