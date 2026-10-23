@@ -4,7 +4,7 @@ reladraw is a text language for diagrams where you say where things go.
 
 > The language is changing frequently. The playground always runs the newest syntax, so a diagram that draws there today may need a small edit later. An installed copy from npm changes only when you upgrade it.
 
-**[Try it in your browser →](https://reladraw.github.io/reladraw/)**
+**[Try it in your browser in the reladraw playground →](https://reladraw.github.io/reladraw/)**
 
 I wanted to be able to create custom, expressive diagrams where I decided how to arrange the diagram, but without the inefficiency of manually drawing in draw.io. For example, this is a diagram drawn in draw.io:
 
