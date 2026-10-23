@@ -10,7 +10,7 @@
 import { isWithin, joinedToText, type Layout, type LayoutEdge, type LayoutNode } from './model.js';
 import { ARROW_MARKER_WIDTH, LINE_WIDTH, UNIT, arrowLength } from './constants.js';
 import { centerOf, crossingPoints, describeEdge, faceOfNode, planSides, traceRoute, traceVisible, type Face, type Point, type Route, type SideEnds } from './lines.js';
-import { clearOf, insideOutline as insidePolygon, sizeFor } from './outline.js';
+import { clearOf, insideOutline,sizeFor } from './outline.js';
 import { placeLineTexts, type PlacedText } from './linetexts.js';
 
 /**
@@ -258,7 +258,7 @@ function crossingCircle(trace: { x: number; y: number }[], node: LayoutNode, fac
   const center = centerOf(face);
   const polygon = face.outline;
   const inside = polygon
-    ? (p: { x: number; y: number }): boolean => insidePolygon(polygon, p) && clearOf(polygon, p, 1)
+    ? (p: { x: number; y: number }): boolean => insideOutline(polygon, p) && clearOf(polygon, p, 1)
     : (p: { x: number; y: number }): boolean => Math.hypot(p.x - center.x, p.y - center.y) < radius;
   const sideAt = (p: { x: number; y: number }): string => {
     const dx = p.x - center.x;
@@ -577,7 +577,7 @@ function textOverflows(layout: Layout): Finding[] {
       // Any other outline than a box's: the text spills where it passes the outline.
       const { outline, look } = node.body;
       const corners = [0, 0.5, 1].flatMap((fx) => [0, 0.5, 1].map((fy) => ({ x: node.x + text.x + text.width * fx, y: node.y + text.y + text.height * fy })));
-      if (corners.every((p) => insidePolygon(face.outline!, p))) continue;
+      if (corners.every((p) => insideOutline(face.outline!, p))) continue;
       const needs = sizeFor(outline, look, text.width, text.height);
       const wider = Math.max(0, needs.width - node.width);
       const taller = Math.max(0, needs.height - node.height);

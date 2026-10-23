@@ -69,8 +69,8 @@ Commands:
                                  stranger's-first-command check, run before
                                  every release.
   check-version <version>       Refuse unless README.md, SYNTAX.md's title and
-                                 changelog, and the skill's copy of SYNTAX.md
-                                 all say <version>. Run by `npm version` as the
+                                 changelog, the skill's SKILL.md and its copy
+                                 of SYNTAX.md all say <version>. Run by `npm version` as the
                                  preversion script, so a release whose docs
                                  name the old number stops before anything is
                                  bumped, committed or tagged.
@@ -84,6 +84,13 @@ Commands:
                                  language model to read at one URL. Re-run after
                                  editing either. docs/llms.txt, the short index
                                  that points at it, is written by hand.
+  format-examples ["setting: value" ...]
+                                 Format a scratch copy of every example under the
+                                 settings given (the defaults when none are), and
+                                 check a second pass changes nothing. format
+                                 itself refuses a result that draws differently,
+                                 so a clean run means no example's picture moved.
+                                 Prints where the copies are, to read them.
   snippets [file.md ...]        Parse every reladraw snippet in the hand-written
                                  docs and name the ones the parser now refuses.
                                  Defaults to README.md, SYNTAX.md, CONTRIBUTING.md,
@@ -591,6 +598,10 @@ case "$cmd" in
       || { echo "SYNTAX.md: the changelog still has an **Unreleased** entry" >&2; bad=1; }
     cmp -s SYNTAX.md .claude/skills/reladraw/reference/syntax.md \
       || { echo "the skill's copy of SYNTAX.md is stale: run ./dev.sh skill" >&2; bad=1; }
+    # The skill compares this number with `reladraw --version` to tell the
+    # user which of the two is out of date.
+    grep -q "^This skill teaches reladraw $v\. " .claude/skills/reladraw/SKILL.md \
+      || { echo "the skill's SKILL.md does not say \"This skill teaches reladraw $v.\"" >&2; bad=1; }
     llms="$(tmp_path llms txt)"
     llms_full "$llms"
     cmp -s "$llms" docs/llms-full.txt \
@@ -623,6 +634,15 @@ case "$cmd" in
     # links to, generated so it cannot drift from the two documents it joins.
     llms_full docs/llms-full.txt
     echo "docs/llms-full.txt regenerated from the skill and SYNTAX.md"
+    ;;
+  format-examples)
+    [ -f dist/cli.js ] || compile
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/reladraw-format.XXXXXX")"
+    cp examples/*.reladraw "$dir/"
+    for setting in "$@"; do echo "$setting" >> "$dir/.reladraw-format"; done
+    out="$(node dist/cli.js format "$dir"/*.reladraw 2>&1)" || { echo "$out" | grep -v '^formatted '; exit 1; }
+    node dist/cli.js format --check "$dir"/*.reladraw || exit 1
+    echo "$(ls "$dir"/*.reladraw | wc -l | tr -d ' ') examples formatted, a second pass changes nothing: $dir"
     ;;
   snippets)
     [ -f dist/index.js ] || compile
@@ -660,10 +680,11 @@ case "$cmd" in
     v="$(node -p 'require("./package.json").version')"
     readme_v="$(grep -oE '^Version [0-9.]+' README.md | cut -d' ' -f2 | sed 's/\.$//')"
     syntax_v="$(head -1 SYNTAX.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')"
-    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ]; then
-      fresh "version $v in package.json, README.md and SYNTAX.md"
+    skill_v="$(grep -oE '^This skill teaches reladraw [0-9]+\.[0-9]+\.[0-9]+' .claude/skills/reladraw/SKILL.md | grep -oE '[0-9.]+$')"
+    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ] && [ "$skill_v" = "$v" ]; then
+      fresh "version $v in package.json, README.md, SYNTAX.md and the skill"
     else
-      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none} — expected only mid-release"
+      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none}, skill ${skill_v:-none} — expected only mid-release"
       found=1
     fi
 

@@ -421,14 +421,16 @@
         display: none;
       }
 
-      #error.locatable {
-        cursor: pointer;
-      }
-
       #error b {
         font-weight: 600;
         color: var(--warn);
         border-bottom: 1px solid currentColor;
+        cursor: pointer;
+      }
+
+      #error button {
+        float: right;
+        margin: -3px 0 0 12px;
       }
 
       .toggle {
@@ -604,6 +606,81 @@
         margin-left: auto;
       }
 
+      /* Format settings: one row a setting, its name, its control, and a line
+         on what it does. A list, not the picker's two panes. */
+      #format-settings[open] {
+        display: flex;
+        flex-direction: column;
+        width: min(640px, calc(100vw - 32px));
+        height: auto;
+        max-height: calc(100vh - 32px);
+      }
+
+      #format-settings .note {
+        margin: 0;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--edge);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      #format-fields {
+        overflow-y: auto;
+        padding: 6px 18px;
+      }
+
+      #format-fields label {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 2px 12px;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--edge);
+        font-size: 13px;
+      }
+
+      #format-fields label code {
+        font-family: var(--mono);
+      }
+
+      #format-fields label span {
+        grid-column: 2;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      #format-fields select,
+      #format-fields input {
+        font: 12px var(--mono);
+        color: var(--ink);
+        background: var(--page);
+        border: 1px solid var(--edge);
+        border-radius: 3px;
+        padding: 3px 6px;
+        min-width: 0;
+      }
+
+      #format-problem {
+        margin: 0;
+        padding: 0 18px;
+        color: var(--warn);
+        font-size: 12px;
+      }
+
+      #format-problem:not(:empty) {
+        padding: 8px 18px;
+      }
+
+      @media (max-width: 760px) {
+        #format-fields label {
+          grid-template-columns: 1fr;
+        }
+
+        #format-fields label span {
+          grid-column: 1;
+        }
+      }
+
       kbd {
         font: inherit;
         color: var(--ink);
@@ -669,9 +746,35 @@
       </footer>
     </dialog>
 
+    <dialog id="format-settings" aria-label="Format settings">
+      <div class="bar">
+        <h2>Format settings</h2>
+        <div><button type="button" data-close>Close</button></div>
+      </div>
+      <p class="note">
+        How Format lays the source out. These are remembered in this browser only; for a project, put them in a
+        <code>.reladraw-format</code> file beside its diagrams.
+      </p>
+      <form id="format-fields"></form>
+      <p id="format-problem" role="alert"></p>
+      <footer>
+        <button type="button" id="format-reset">Reset to defaults</button>
+        <button type="button" id="format-copy" title="Copy these settings as the text of a .reladraw-format file">Copy as .reladraw-format</button>
+      </footer>
+    </dialog>
+
     <main>
       <section>
-        <div class="bar"><h2>Source</h2></div>
+        <div class="bar">
+          <h2>Source</h2>
+          <div>
+            <button id="open" type="button" title="Open a .reladraw file into the source">Open…</button>
+            <button id="save" type="button" title="Save the source as a .reladraw file">Save…</button>
+            <button id="format" type="button" title="Lay the source out again (Shift+Alt+F)">Format</button>
+            <button id="format-open" type="button" aria-haspopup="dialog" title="How Format lays the source out">Format settings…</button>
+            <input id="file" type="file" accept=".reladraw,text/plain" hidden />
+          </div>
+        </div>
         <div class="editor">
           <pre id="highlight" aria-hidden="true"></pre>
           <textarea id="source" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
@@ -2365,13 +2468,13 @@ function tokenizeLine(line, lineNumber, depth = 0) {
             break;
         if (ch === '(') {
             depth += 1;
-            tokens.push({ text: '(', quoted: false });
+            tokens.push({ text: '(', quoted: false, start: i, end: i + 1 });
             i += 1;
             continue;
         }
         if (ch === ')' && depth > 0) {
             depth -= 1;
-            tokens.push({ text: ')', quoted: false });
+            tokens.push({ text: ')', quoted: false, start: i, end: i + 1 });
             i += 1;
             continue;
         }
@@ -2382,11 +2485,12 @@ function tokenizeLine(line, lineNumber, depth = 0) {
             const end = line.indexOf('"""', i + 3);
             if (end === -1)
                 throw new OpenString('this """ string is never closed — end it with """', lineNumber);
-            tokens.push({ text: line.slice(i + 3, end), quoted: true, triple: true });
+            tokens.push({ text: line.slice(i + 3, end), quoted: true, triple: true, start: i, end: end + 3 });
             i = end + 3;
             continue;
         }
         if (ch === '"') {
+            const start = i;
             let text = '';
             i += 1;
             let closed = false;
@@ -2413,7 +2517,7 @@ function tokenizeLine(line, lineNumber, depth = 0) {
             }
             if (!closed)
                 throw new SourceError('unterminated string', lineNumber);
-            tokens.push({ text, quoted: true });
+            tokens.push({ text, quoted: true, start, end: i });
             continue;
         }
         const start = i;
@@ -2428,6 +2532,11 @@ function tokenizeLine(line, lineNumber, depth = 0) {
                 break;
             text += c;
             i += 1;
+            // A comma ends a word, so `rounded,path: square` reads as
+            // `rounded, path: square`. Not inside a word's own bracket, which keeps
+            // `rgb(20,20,20)` whole.
+            if (c === ',' && !text.includes('('))
+                break;
         }
         // `gap:tight` is `gap: tight` with no space, since how much whitespace there
         // is never matters. A word straight after a key is its value and is left
@@ -2437,11 +2546,18 @@ function tokenizeLine(line, lineNumber, depth = 0) {
         const previous = tokens[tokens.length - 1];
         const joined = previous && isAttrKey(previous) ? null : JOINED_KEY.exec(text);
         if (joined) {
-            tokens.push({ text: joined[1], quoted: false, joined: text });
+            tokens.push({ text: joined[1], quoted: false, joined: text, start, end: start + joined[1].length });
             i = start + joined[1].length;
             continue;
         }
-        tokens.push({ text, quoted: false });
+        // A comma written apart from its word, `start , above`, is the comma of
+        // `start, above`. A bracket or a quoted text keeps its comma separate, so
+        // neither is changed by what follows it.
+        if (text === ',' && previous && !previous.quoted && !isAttrKey(previous) && !/^[()]$/.test(previous.text) && !previous.text.endsWith(',')) {
+            previous.text += ',';
+            continue;
+        }
+        tokens.push({ text, quoted: false, start, end: i });
     }
     return tokens;
 }
@@ -7628,7 +7744,7 @@ function crossingCircle(trace, node, face) {
     const center = centerOf(face);
     const polygon = face.outline;
     const inside = polygon
-        ? (p) => insidePolygon(polygon, p) && clearOf(polygon, p, 1)
+        ? (p) => insideOutline(polygon, p) && clearOf(polygon, p, 1)
         : (p) => Math.hypot(p.x - center.x, p.y - center.y) < radius;
     const sideAt = (p) => {
         const dx = p.x - center.x;
@@ -7942,7 +8058,7 @@ function textOverflows(layout) {
             // Any other outline than a box's: the text spills where it passes the outline.
             const { outline, look } = node.body;
             const corners = [0, 0.5, 1].flatMap((fx) => [0, 0.5, 1].map((fy) => ({ x: node.x + text.x + text.width * fx, y: node.y + text.y + text.height * fy })));
-            if (corners.every((p) => insidePolygon(face.outline, p)))
+            if (corners.every((p) => insideOutline(face.outline, p)))
                 continue;
             const needs = sizeFor(outline, look, text.width, text.height);
             const wider = Math.max(0, needs.width - node.width);
@@ -8952,6 +9068,30 @@ const SHAPE_FLAGS = [...new Set(Object.values(SHAPE_SETTINGS).flatMap((one) => O
 
 
 /**
+ * Set while `clausesOf` runs: the first token of every clause the parser
+ * reads, so the formatter can tell where one clause ends and the next begins
+ * without a second grammar of its own. Clauses inside brackets are recorded
+ * too, and the formatter passes over them.
+ */
+let clauseStarts = null;
+/**
+ * Parse a source for the formatter: each statement as gathered, and the first
+ * token of each clause read. Throws as `parse` does, so a file that does not
+ * parse is never rewritten.
+ */
+function clausesOf(source) {
+    const statements = [];
+    const starts = new Set();
+    clauseStarts = starts;
+    try {
+        parse(source, (statement) => statements.push(statement));
+    }
+    finally {
+        clauseStarts = null;
+    }
+    return { statements, starts };
+}
+/**
  * Parse a whole source file. A statement starts on an unindented line and runs
  * on through any line that starts with whitespace; a blank line or the next
  * unindented one ends it. How much whitespace never matters, only whether
@@ -8966,16 +9106,18 @@ const SHAPE_FLAGS = [...new Set(Object.values(SHAPE_SETTINGS).flatMap((one) => O
  * are its own, blank or not, and a line opening with one continues the
  * statement above without being indented.
  */
-function parse(source) {
+function parse(source, seen) {
     const statements = [];
-    /** The statement being gathered, and the line it starts on. */
+    /** The statement being gathered, the line it starts on, and its lines' tokens. */
     let open = null;
     // Brackets may close on a later line, and the lexer only reads `)` as a
     // bracket while one is open, so the depth is carried from line to line.
     let depth = 0;
     const close = () => {
-        if (open)
+        if (open) {
+            seen?.({ line: open.line, lines: open.lines });
             statements.push(parseStatement(open.tokens, open.line));
+        }
         open = null;
         depth = 0;
     };
@@ -9016,7 +9158,7 @@ function parse(source) {
         if (tokens.length === 0)
             continue;
         if (!continues) {
-            open = { tokens, line: lineNumber };
+            open = { tokens: [...tokens], line: lineNumber, lines: [{ line: lineNumber, tokens }] };
         }
         else {
             const first = tokens[0];
@@ -9032,6 +9174,7 @@ function parse(source) {
                     `the one before it, so remove the indentation to start a new statement`, lineNumber);
             }
             open.tokens.push(...tokens);
+            open.lines.push({ line: lineNumber, tokens });
         }
         for (const token of tokens) {
             if (token.quoted)
@@ -9198,6 +9341,7 @@ function parseTail(tokens, start, line, subject, other) {
     let i = start;
     while (i < tokens.length) {
         const token = tokens[i];
+        clauseStarts?.add(token);
         if (isAttrKey(token)) {
             i = readAttr(tokens, i, attrs, line, subject);
             continue;
@@ -9266,6 +9410,7 @@ function setOnce(attrs, key, value, subject, line, shown = { key, value: (v) => 
 /** Read one `key: value` pair, and refuse the words that used to be keys. */
 function readAttr(tokens, at, attrs, line, subject) {
     const keyToken = tokens[at];
+    clauseStarts?.add(keyToken);
     const key = keyToken.text.slice(0, -1);
     if (key === 'gap') {
         throw new SourceError(`${subject}: a node has no gap:, only a placement does — write it in the placement's bracket, ` +
@@ -10700,6 +10845,7 @@ function parsePoint(head, line) {
     if (!head[start] || isAttrKey(head[start])) {
         throw new SourceError(`${subject} says where it is, such as \`point ${name}  between a and b\``, line);
     }
+    clauseStarts?.add(head[start]);
     const read = readOneTarget(head, start, subject, line, true);
     if (read.listed)
         throw new SourceError(`${subject} is one point, so it takes no list`, line);
@@ -10718,6 +10864,7 @@ function parseRegion(head, line) {
     if (!head[start] || isAttrKey(head[start])) {
         throw new SourceError(`${subject} says what it covers: two corners, \`region ${name}  a top-left to b bottom-right\`, or \`region ${name}  between a and b\``, line);
     }
+    clauseStarts?.add(head[start]);
     const first = readOneTarget(head, start, subject, line, true);
     if (first.listed)
         throw new SourceError(`${subject}: a region runs from one point to another, written with "to", not a list`, line);
@@ -10930,8 +11077,12 @@ function refuseNameMark(token, where, line) {
  * helps and never demanded. Shorthands added later extend this without
  * disturbing what it already reads.
  */
-function readPlacement(tokens, at, line, subject) {
+function readPlacement(tokens, at, line, subject, nested = false) {
     const word = tokens[at];
+    // A placement read after its own distance or part (`6 above x`) is still
+    // the clause that word began, so only the outermost read starts one.
+    if (!nested)
+        clauseStarts?.add(word);
     if (word.quoted) {
         throw new SourceError(`${subject}: unexpected text "${word.text}"`, line);
     }
@@ -10940,7 +11091,7 @@ function readPlacement(tokens, at, line, subject) {
     // the distance is required.
     if (!word.quoted && isPart(word.text) && !follows(tokens, at + 1, 'of') && !follows(tokens, at + 1, 'even')) {
         if (opensPartPlacement(tokens, at)) {
-            const read = readPlacement(tokens, at + 1, line, subject);
+            const read = readPlacement(tokens, at + 1, line, subject, true);
             if (read.placement.kind !== 'offset')
                 return read;
             return { placement: { ...read.placement, own: word.text }, next: read.next };
@@ -10973,7 +11124,7 @@ function readPlacement(tokens, at, line, subject) {
                 throw new SourceError(`${subject}: "${word.text} ${first} and ${other.text} ${second}" gives two distances, one for each axis, ` +
                     'so one direction is above or below and the other left or right', line);
             }
-            const read = readPlacement(tokens, at + 3, line, subject);
+            const read = readPlacement(tokens, at + 3, line, subject, true);
             if (read.placement.kind !== 'offset')
                 return read;
             const y = vertical(first) ? first : second;
@@ -10985,7 +11136,7 @@ function readPlacement(tokens, at, line, subject) {
                 next: read.next,
             };
         }
-        const read = readPlacement(tokens, at + 1, line, subject);
+        const read = readPlacement(tokens, at + 1, line, subject, true);
         if (read.placement.kind !== 'offset')
             return read;
         if (read.placement.gap !== undefined) {
@@ -12530,7 +12681,7 @@ function patchSvg(patch, beneath, theme) {
     const { x, y } = patch.center;
     const under = beneath.flatMap((drawn) => drawn.fills ?? []).filter((fill) => {
         if (fill.polygon)
-            return insidePolygon(fill.polygon, { x, y });
+            return insideOutline(fill.polygon, { x, y });
         if (!fill.round)
             return x >= fill.x && x <= fill.x + fill.width && y >= fill.y && y <= fill.y + fill.height;
         const r = Math.min(fill.width, fill.height) / 2;
@@ -15367,6 +15518,764 @@ function normalize(nodes, marks, margin, stops = []) {
     }
 }
 
+// ---- format-settings.js ----
+const SETTING_COUNT = /^[1-9]\d*$/;
+/**
+ * A setting whose values are words, one of them the default. Anything else is
+ * refused with the list.
+ */
+function wordSetting(name, about, values) {
+    return {
+        name,
+        about,
+        values,
+        written: values[0][0],
+        read: (value) => {
+            if (values.some(([word]) => word === value))
+                return value;
+            const near = nearMatch(value, values.map(([word]) => word));
+            throw `${name}: "${value}" is not one of its values${near ? ` — did you mean ${near}?` : ''} — it takes ${orList(values.map(([word]) => word))}`;
+        },
+    };
+}
+/**
+ * The kinds of clause `clause-order` can list: a statement's texts, its
+ * placements, and each key by its own name. `text` is also a style's `text:`
+ * key, which is a style's way of saying what a text says.
+ */
+const CLAUSE_KINDS = [...new Set(['text', 'placement', ...ALL_ATTR_KEYS])];
+const SETTINGS = [
+    {
+        name: 'wrap-at',
+        about: 'Past this many characters, a statement wraps onto more lines, as few as fit.',
+        values: [
+            ['off', 'never wrap'],
+            ['a number', 'wrap past that many characters, such as 80'],
+        ],
+        written: 'off',
+        read: (value) => {
+            if (value === 'off')
+                return value;
+            if (SETTING_COUNT.test(value))
+                return Number(value);
+            throw `wrap-at: "${value}" is not one of its values — it takes off, or a number of characters such as 80`;
+        },
+    },
+    {
+        name: 'clause-per-line-at',
+        about: 'Past this many characters, each clause goes on its own line instead.',
+        values: [
+            ['off', 'never'],
+            ['a number', 'past that many characters, such as 120'],
+            ['always', 'every statement, whatever its length'],
+        ],
+        written: 'off',
+        read: (value) => {
+            if (value === 'off' || value === 'always')
+                return value;
+            if (SETTING_COUNT.test(value))
+                return Number(value);
+            throw `clause-per-line-at: "${value}" is not one of its values — it takes off, always, or a number of characters such as 120`;
+        },
+    },
+    wordSetting('first-line', 'When a statement breaks onto more lines, where its first line ends.', [
+        ['text', 'after the text: keyword, name and text stay together'],
+        ['name', 'after the name'],
+    ]),
+    {
+        name: 'continued-lines-indent',
+        about: 'Where the lines after a statement\'s first one start.',
+        values: [
+            ['4', 'that many spaces in, such as 4'],
+            ['tab', 'one tab in'],
+            ['under-name', 'under the statement\'s name'],
+            ['under-name + 2', 'that many characters past the start of the name'],
+            ['under-text', 'under the statement\'s text, or what comes after the name'],
+        ],
+        written: '4',
+        read: (value) => {
+            if (SETTING_COUNT.test(value))
+                return Number(value);
+            if (value === 'tab' || value === 'under-name' || value === 'under-text')
+                return value;
+            const shifted = /^under-name \+ ([1-9]\d*)$/.exec(value);
+            if (shifted)
+                return { underName: Number(shifted[1]) };
+            throw `continued-lines-indent: "${value}" is not one of its values — it takes a number of spaces, tab, under-name, under-name + 2 or under-text`;
+        },
+    },
+    {
+        name: 'clause-order',
+        about: 'The order a statement\'s clauses are written in after its text, which always\ncomes straight after the name. A list names placement and keys such as style;\nwhat it leaves out follows, in the order written.',
+        values: [
+            ['as-written', 'the order the writer chose'],
+            ['a list', 'that order, such as: placement, style, fill'],
+        ],
+        written: 'as-written',
+        read: (value) => {
+            if (value === 'as-written')
+                return value;
+            const kinds = value.split(',').map((kind) => kind.trim());
+            const seen = new Set();
+            for (const kind of kinds) {
+                if (kind === '')
+                    throw `clause-order: "${value}" has an empty place in its list — name a kind of clause between each comma`;
+                if (!CLAUSE_KINDS.includes(kind)) {
+                    const near = nearMatch(kind, CLAUSE_KINDS);
+                    throw `clause-order: "${kind}" is not a kind of clause${near ? ` — did you mean ${near}?` : ''} — it takes text, placement and keys such as style or fill`;
+                }
+                if (seen.has(kind))
+                    throw `clause-order: ${kind} is listed twice — keep one`;
+                seen.add(kind);
+            }
+            return kinds;
+        },
+    },
+    {
+        name: 'clause-gap',
+        about: 'The least space between two clauses on a line.',
+        values: [
+            ['2', 'that many spaces, such as 2'],
+            ['tab', 'one tab, which only works with columns: off'],
+        ],
+        written: '2',
+        read: (value) => {
+            if (SETTING_COUNT.test(value))
+                return Number(value);
+            if (value === 'tab')
+                return 'tab';
+            throw `clause-gap: "${value}" is not one of its values — it takes a number of spaces, or tab`;
+        },
+    },
+    wordSetting('columns', 'Whether statements that belong together line their clauses up in columns.', [
+        ['aligned', 'each column as wide as its longest clause'],
+        ['off', 'each clause straight after the one before, a clause gap apart'],
+    ]),
+    wordSetting('columns-shared-by', 'Which statements line their clauses up in shared columns. A comment line\nbetween them never ends a set.', [
+        ['same-keyword-neighbors', 'adjacent, with the same keyword\n(a blank line or new keyword ends the set)'],
+        ['neighbors', 'adjacent, whatever their keyword'],
+        ['same-keyword', 'the same keyword, across blank lines'],
+        ['file', 'the whole file'],
+    ]),
+    wordSetting('comments-inside', 'What happens to a statement written over several lines, with comments\namong them.', [
+        ['keep-lines', 'it stays on its own lines, with the indent tidied'],
+        ['move-above', 'the comments move above it, and it is joined onto one line'],
+        ['refuse', 'the file is left alone, and the comment in the way is named'],
+    ]),
+    wordSetting('trailing-comments', 'Where a comment at the end of a statement\'s line goes.', [
+        ['shared-column', 'lined up with the other comments in its set'],
+        ['after-statement', 'a clause gap after its own statement'],
+    ]),
+    {
+        name: 'blank-lines',
+        about: 'What happens to runs of blank lines. A run is never removed, since a blank\nline starts a new set of columns.',
+        values: [
+            ['as-written', 'every blank line stays'],
+            ['exactly 2', 'every run becomes that many'],
+            ['at-most 3', 'longer runs shrink to that many; shorter ones stay'],
+        ],
+        written: 'as-written',
+        read: (value) => {
+            if (value === 'as-written')
+                return value;
+            const counted = /^(exactly|at-most) ([1-9]\d*)$/.exec(value);
+            if (counted)
+                return counted[1] === 'exactly' ? { exactly: Number(counted[2]) } : { atMost: Number(counted[2]) };
+            throw `blank-lines: "${value}" is not one of its values — it takes as-written, exactly and a number, or at-most and a number`;
+        },
+    },
+    wordSetting('edge-name-and-ends', 'How an edge\'s name and ends, such as one a -> b, line up.', [
+        ['one-column', 'together, as one column, the way a node\'s name is'],
+        ['own-columns', 'the name, each end and the arrow in a column each'],
+    ]),
+];
+const SETTING_BY_NAME = new Map(SETTINGS.map((setting) => [setting.name, setting]));
+const DEFAULT_FORMAT = Object.fromEntries(SETTINGS.map((setting) => [setting.name, setting.read(setting.written)]));
+/** The file a project's settings are written in. */
+const SETTINGS_FILE = '.reladraw-format';
+/**
+ * Read a `.reladraw-format` file: one `key: value` setting a line, `//`
+ * comments, blank lines. An unknown setting, one written twice, or a value it
+ * doesn't take is refused by name, with the line.
+ */
+function readFormatSettings(text) {
+    const settings = { ...DEFAULT_FORMAT };
+    const seen = new Map();
+    text.split(/\r?\n/).forEach((raw, index) => {
+        const line = index + 1;
+        const written = raw.replace(/\/\/.*$/, '').trim();
+        if (written === '')
+            return;
+        const colon = written.indexOf(':');
+        if (colon === -1)
+            throw new SourceError(`"${written}" is not a setting — write one as name: value, such as columns: aligned`, line);
+        const name = written.slice(0, colon).trim();
+        const value = written.slice(colon + 1).trim().replace(/\s+/g, ' ');
+        const setting = SETTING_BY_NAME.get(name);
+        if (setting === undefined) {
+            const near = nearMatch(name, SETTINGS.map((one) => one.name));
+            throw new SourceError(`there is no setting "${name}"` + (near ? ` — did you mean ${near}?` : ` — the settings are ${orList(SETTINGS.map((one) => one.name))}`), line);
+        }
+        const before = seen.get(name);
+        if (before !== undefined)
+            throw new SourceError(`${name} is set twice, here and on line ${before} — keep one`, line);
+        seen.set(name, line);
+        if (value === '')
+            throw new SourceError(`${name} has no value — it takes ${orList(setting.values.map(([word]) => word))}`, line);
+        try {
+            settings[name] = setting.read(value);
+        }
+        catch (reason) {
+            if (typeof reason === 'string')
+                throw new SourceError(reason, line);
+            throw reason;
+        }
+    });
+    if (settings['clause-gap'] === 'tab' && settings.columns === 'aligned') {
+        throw new SourceError(`clause-gap: tab can't line columns up, since how wide a tab is depends on the editor — use a number of spaces, or columns: off`, seen.get('clause-gap') ?? seen.get('columns') ?? 1);
+    }
+    return settings;
+}
+/**
+ * The `.reladraw-format` that `reladraw format --init` writes: every setting
+ * at its default, each under a comment saying what it controls and what each
+ * of its values means.
+ */
+function settingsFileText() {
+    const blocks = SETTINGS.map((setting) => {
+        const width = Math.max(...setting.values.map(([word]) => word.length));
+        // A meaning written over two lines carries on under where it started.
+        const values = setting.values.flatMap(([word, meaning], index) => {
+            const [first, ...rest] = meaning.split('\n');
+            return [
+                `//   ${word.padEnd(width)}  ${first}${index === 0 ? ' (default)' : ''}`,
+                ...rest.map((more) => `//   ${' '.repeat(width)}  ${more}`),
+            ];
+        });
+        const about = setting.about.split('\n').map((line) => `// ${line}`);
+        return [...about, ...values, `${setting.name}: ${setting.written}`].join('\n');
+    });
+    const header = [
+        '// .reladraw-format: how `reladraw format` lays out the .reladraw files in this',
+        '// folder and every folder below it, unless a nearer one says otherwise.',
+        '// Every setting is written out at its default; change the ones you want, or',
+        '// delete a line to use the default.',
+    ].join('\n');
+    return `${header}\n\n${blocks.join('\n\n')}\n`;
+}
+function orList(words) {
+    return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} or ${words[words.length - 1]}`;
+}
+
+// ---- format.js ----
+/**
+ * Lay a source file out again: spacing between clauses, columns shared by
+ * statements that belong together, comments and blank lines, as `settings`
+ * say. Only whitespace changes, and the order of clauses when `clause-order`
+ * asks. Every token is copied out of the line it was
+ * written on, so no word is respelled, and the result is parsed again and
+ * compared with the original, so a mistake here can never change what a file
+ * draws: it throws instead.
+ *
+ * Throws the parser's error for a file that does not parse, so a broken file
+ * is never rewritten.
+ */
+function format(source, settings = DEFAULT_FORMAT) {
+    const lines = source.split(/\r?\n/);
+    const endsWithBreak = lines.length > 1 && lines[lines.length - 1] === '';
+    if (endsWithBreak)
+        lines.pop();
+    const { statements, starts } = clausesOf(source);
+    const items = gatherItems(lines, statements, starts, settings);
+    const out = layOutItems(items, settings);
+    // A file keeps the line breaks it came with, so formatting on Windows
+    // doesn't turn every line into a change. The first break decides.
+    const lineBreak = /\r\n/.test(source.match(/\r?\n/)?.[0] ?? '') ? '\r\n' : '\n';
+    const result = out.join(lineBreak) + (endsWithBreak ? lineBreak : '');
+    if (!sameMeaning(source, result)) {
+        throw new Error('the formatter would change what this file draws, so it was left alone — please report this as a bug');
+    }
+    return result;
+}
+/**
+ * Does `a` say the same as `b`? Both parse to the same statements, line
+ * numbers aside. The keys of a parsed object are compared in any order, since
+ * `clause-order` may write `from:` after `via:`; lists keep theirs.
+ */
+function sameMeaning(a, b) {
+    const strip = (source) => JSON.stringify(parse(source), (key, value) => {
+        if (key === 'line')
+            return undefined;
+        if (value === null || typeof value !== 'object' || Array.isArray(value))
+            return value;
+        return Object.fromEntries(Object.entries(value).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+    });
+    return strip(a) === strip(b);
+}
+const OPENING = new Set(['keyword', 'head']);
+/** The kind of clause a run of tokens is. */
+function kindOf(run) {
+    const first = run[0].token;
+    if (first.quoted)
+        return 'text';
+    if (isAttrKey(first))
+        return first.text.slice(0, -1);
+    return 'placement';
+}
+/** Everything after `//` outside quotes on a line, or nothing. */
+function trailingCommentAfter(line, from) {
+    const at = line.indexOf('//', from);
+    return at === -1 ? undefined : line.slice(at).trimEnd();
+}
+function gatherItems(lines, statements, starts, settings) {
+    const byLine = new Map(statements.map((statement) => [statement.line, statement]));
+    const items = [];
+    for (let index = 0; index < lines.length; index++) {
+        const lineNumber = index + 1;
+        const line = lines[index];
+        const statement = byLine.get(lineNumber);
+        if (statement === undefined) {
+            if (line.trim() === '')
+                items.push({ kind: 'blank' });
+            else
+                items.push({ kind: 'comment', text: line.trimEnd() });
+            continue;
+        }
+        // The statement's own lines run to its last line of tokens, and on over any
+        // indented comment lines after it: `parse` reads those as inside it too.
+        const tokenLines = statement.lines;
+        const lastEntry = tokenLines[tokenLines.length - 1];
+        let last = lastEntry.line - 1 + newlinesIn(lastEntry.tokens);
+        while (last + 1 < lines.length && /^[ \t]+\/\//.test(lines[last + 1]))
+            last += 1;
+        const span = lines.slice(index, last + 1);
+        index = last;
+        if (tokenLines.some((entry) => entry.tokens.some((token) => token.triple))) {
+            items.push({ kind: 'verbatim', lines: span });
+            continue;
+        }
+        const all = tokenLines.flatMap((entry) => entry.tokens.map((token) => ({ token, line: lines[entry.line - 1] })));
+        const keywordCount = all[0].token.text === 'default' || all[0].token.text === 'guide' ? 2 : 1;
+        const keyword = all.slice(0, keywordCount).map(({ token, line: text }) => text.slice(token.start, token.end)).join(' ');
+        // Comments among the statement's lines: whole comment lines, and comments
+        // trailing any line but the last.
+        const inside = [];
+        let trailing;
+        for (let at = 0; at < span.length; at++) {
+            const physical = lineNumber + at;
+            const entry = tokenLines.find((one) => one.line === physical);
+            const text = span[at];
+            if (entry === undefined) {
+                if (text.trim() !== '')
+                    inside.push({ line: physical, text: text.trim() });
+                continue;
+            }
+            const comment = trailingCommentAfter(text, entry.tokens[entry.tokens.length - 1].end ?? 0);
+            if (comment === undefined)
+                continue;
+            if (entry === lastEntry)
+                trailing = comment;
+            else
+                inside.push({ line: physical, text: comment });
+        }
+        // A trailing comment on the last line is inside too when whole comment lines follow it.
+        if (trailing !== undefined && inside.some((one) => one.line > lastEntry.line)) {
+            inside.push({ line: lastEntry.line, text: trailing });
+            inside.sort((a, b) => a.line - b.line);
+            trailing = undefined;
+        }
+        const cellsOf = (entries) => statementCells(entries, keywordCount, starts, settings);
+        if (inside.length > 0 && settings['comments-inside'] === 'refuse') {
+            throw new SourceError('a comment among the lines of a statement has nowhere to go when the statement is joined onto one line — ' +
+                'move it above the statement, or set comments-inside: keep-lines', inside[0].line);
+        }
+        if (inside.length > 0 && settings['comments-inside'] === 'keep-lines') {
+            const kept = [];
+            for (let at = 0; at < span.length; at++) {
+                const physical = lineNumber + at;
+                const entry = tokenLines.find((one) => one.line === physical);
+                const text = span[at];
+                if (entry === undefined) {
+                    if (text.trim() !== '')
+                        kept.push({ cells: [], comment: text.trim() });
+                    continue;
+                }
+                const own = all.filter(({ token }) => entry.tokens.includes(token));
+                const comment = trailingCommentAfter(text, entry.tokens[entry.tokens.length - 1].end ?? 0);
+                // The first line keeps its keyword as a cell of its own.
+                const lineCells = at === 0 ? cellsOf(own) : continuedCells(own, starts);
+                kept.push({ cells: lineCells, ...(comment !== undefined ? { comment } : {}) });
+            }
+            items.push({ kind: 'kept', keyword, lines: kept, first: cellsOf(all) });
+            continue;
+        }
+        for (const comment of inside)
+            items.push({ kind: 'comment', text: comment.text });
+        const cells = orderCells(cellsOf(all), settings);
+        items.push({ kind: 'statement', keyword, cells, ...(trailing !== undefined ? { comment: trailing } : {}) });
+    }
+    return items;
+}
+/** How many physical lines a `"""` string on this line runs on past it. */
+function newlinesIn(tokens) {
+    return tokens.reduce((count, token) => count + (token.triple ? token.text.split('\n').length - 1 : 0), 0);
+}
+/**
+ * Split a statement's tokens into its cells: the keyword, what follows it up
+ * to the first clause (a name, or an edge's name and ends), then one cell per
+ * clause. A clause starts where the parser began reading one, outside
+ * brackets; a quoted text starts one too, unless it is a key's value.
+ */
+function statementCells(all, keywordCount, starts, settings) {
+    const result = [];
+    const keyword = all.slice(0, keywordCount);
+    result.push({ text: joinTokens(keyword), kind: 'keyword' });
+    const runs = clauseRuns(all.slice(keywordCount), starts);
+    const head = runs[0] && !isAttrKey(runs[0][0].token) && !starts.has(runs[0][0].token) ? runs.shift() : undefined;
+    if (head) {
+        if (all[0].token.text === 'edge' && settings['edge-name-and-ends'] === 'own-columns')
+            result.push(...edgeHeadCells(head));
+        else
+            result.push({ text: joinTokens(head), kind: 'head' });
+    }
+    for (const run of runs)
+        result.push({ text: joinTokens(run), kind: kindOf(run), ...(run[0].token.quoted ? { quoted: true } : {}) });
+    return result;
+}
+/** The cells of a continued line in a kept statement: no keyword, no head. */
+function continuedCells(own, starts) {
+    return clauseRuns(own, starts).map((run) => ({ text: joinTokens(run), kind: kindOf(run) }));
+}
+/**
+ * A statement's clauses in the order `clause-order` lists their kinds, the
+ * kinds it leaves out after them as written; clauses of one kind keep their
+ * order. Quoted texts never move: the language takes them only straight after
+ * the name. A clause only moves where moving it can't change what the
+ * statement says, so one that would read differently reordered keeps its
+ * written order.
+ */
+function orderCells(cells, settings) {
+    const order = settings['clause-order'];
+    if (order === 'as-written')
+        return cells;
+    const stays = (cell) => OPENING.has(cell.kind) || cell.quoted === true;
+    const opening = cells.filter(stays);
+    const rank = (cell) => (order.includes(cell.kind) ? order.indexOf(cell.kind) : order.length);
+    const rest = cells
+        .filter((cell) => !stays(cell))
+        .map((cell, at) => ({ cell, at }))
+        .sort((a, b) => rank(a.cell) - rank(b.cell) || a.at - b.at)
+        .map(({ cell }) => cell);
+    const ordered = [...opening, ...rest];
+    const line = (some) => some.map((cell) => cell.text).filter((text) => text !== '').join(' ');
+    try {
+        return sameMeaning(line(cells), line(ordered)) ? ordered : cells;
+    }
+    catch {
+        return cells;
+    }
+}
+/** Tokens grouped into clauses, by where clauses start outside brackets. */
+function clauseRuns(tokens, starts) {
+    const runs = [];
+    let depth = 0;
+    let inKey = false;
+    for (const entry of tokens) {
+        const { token } = entry;
+        const opens = depth === 0 &&
+            token.text !== '(' &&
+            (starts.has(token) || (token.quoted && !inKey) || runs.length === 0);
+        if (opens) {
+            runs.push([entry]);
+            inKey = isAttrKey(token);
+        }
+        else {
+            runs[runs.length - 1].push(entry);
+        }
+        if (!token.quoted && token.text === '(')
+            depth += 1;
+        else if (!token.quoted && token.text === ')')
+            depth -= 1;
+    }
+    return runs;
+}
+/**
+ * An edge's name and ends as a cell each: the name if it has one, the first
+ * end, the arrow, the second end. An edge with no name gets an empty name cell,
+ * so its ends still line up with a named one's.
+ */
+function edgeHeadCells(head) {
+    const arrowAt = head.findIndex(({ token }) => token.text !== '(' && looksLikeArrow(token));
+    if (arrowAt === -1)
+        return [{ text: joinTokens(head), kind: 'head' }];
+    const before = head.slice(0, arrowAt);
+    const named = before.length > 1 && !before[0].token.text.endsWith(',') && before[0].token.text !== 'each';
+    return [
+        { text: named ? joinTokens(before.slice(0, 1)) : '', kind: 'head' },
+        { text: joinTokens(named ? before.slice(1) : before), kind: 'head' },
+        { text: joinTokens(head.slice(arrowAt, arrowAt + 1)), kind: 'head' },
+        { text: joinTokens(head.slice(arrowAt + 1)), kind: 'head' },
+    ];
+}
+/**
+ * Tokens written back as one stretch of text, spaced the way the docs spell a
+ * clause however it was written: one space between words and after a key's
+ * colon, none just inside a bracket, and a lone comma against the word before
+ * it. `line:( corners:rounded , path:square )` comes out as
+ * `line: (corners: rounded, path: square)`.
+ */
+function joinTokens(tokens) {
+    let text = '';
+    tokens.forEach(({ token, line }, index) => {
+        const previous = tokens[index - 1];
+        if (previous) {
+            const opens = !previous.token.quoted && previous.token.text === '(';
+            const closes = !token.quoted && (token.text === ')' || token.text === ',');
+            text += opens || closes ? '' : ' ';
+        }
+        const written = line.slice(token.start, token.end);
+        // A comma the lexer joined on from further along the line.
+        text += !token.quoted && token.text.endsWith(',') && !written.endsWith(',') ? `${written},` : written;
+    });
+    return text;
+}
+/** The width of a stretch of text in characters, counting each code point once. */
+function textWidth(text) {
+    return [...text].length;
+}
+/** How wide a tab counts as, where a width has to be known. */
+const TAB_WIDTH = 4;
+/**
+ * Whether a statement goes past `wrap-at` or `clause-per-line-at`, and if so
+ * where its first line ends. Its length is measured on its own, unaligned, so
+ * whether one statement breaks never depends on its neighbors. The first line
+ * holds the keyword and name, and the texts after them if `first-line` says
+ * so, and shares columns with its neighbors like a one-line statement; the
+ * clauses after it are laid out by `continuedLines`.
+ */
+function breakStatement(item, settings, gap) {
+    const texts = item.cells.map((cell) => cell.text);
+    const length = textWidth(texts.filter((text, at) => text !== '' || at === 0).join(gap));
+    const perLine = settings['clause-per-line-at'];
+    const wrap = settings['wrap-at'];
+    const oneEach = perLine === 'always' || (typeof perLine === 'number' && length > perLine);
+    if (!oneEach && !(typeof wrap === 'number' && length > wrap))
+        return item;
+    let firstEnd = item.cells.findIndex((cell) => !OPENING.has(cell.kind));
+    if (firstEnd === -1)
+        return item;
+    if (settings['first-line'] === 'text')
+        while (item.cells[firstEnd]?.quoted)
+            firstEnd += 1;
+    const rest = item.cells.slice(firstEnd).map((cell) => cell.text);
+    if (rest.length === 0)
+        return item;
+    return {
+        kind: 'broken',
+        keyword: item.keyword,
+        first: item.cells.slice(0, firstEnd),
+        rest,
+        oneEach,
+        ...(item.comment !== undefined ? { comment: item.comment } : {}),
+    };
+}
+/**
+ * A broken statement's lines after its first: one clause to a line, or as
+ * many as fit under `wrap-at`. A clause is never split, so one longer than
+ * the width stands alone on its line.
+ */
+function continuedLines(item, indent, settings, gap, gapWidth) {
+    if (item.oneEach)
+        return item.rest.map((text) => indent + text);
+    const wrap = settings['wrap-at'];
+    const indentWidth = indent === '\t' ? TAB_WIDTH : indent.length;
+    const lines = [];
+    let line = '';
+    for (const text of item.rest) {
+        if (line !== '' && indentWidth + textWidth(line) + gapWidth + textWidth(text) > wrap) {
+            lines.push(indent + line);
+            line = '';
+        }
+        line = line === '' ? text : line + gap + text;
+    }
+    lines.push(indent + line);
+    return lines;
+}
+function layOutItems(written, settings) {
+    const gap = settings['clause-gap'] === 'tab' ? '\t' : ' '.repeat(settings['clause-gap']);
+    const gapWidth = settings['clause-gap'] === 'tab' ? 1 : settings['clause-gap'];
+    const items = written.map((item) => (item.kind === 'statement' ? breakStatement(item, settings, gap) : item));
+    // What lines up in columns: a one-line statement whole, a broken one's first line.
+    const aligned = (item) => item.kind === 'statement' ? item.cells : item.kind === 'broken' ? item.first : undefined;
+    // Which statements share columns: each is given a group number. A comment
+    // line is passed over, as if it weren't there: it labels what follows
+    // rather than separating it.
+    const group = new Map();
+    let current = -1;
+    let previous;
+    let lastStatement;
+    items.forEach((item, index) => {
+        if (item.kind === 'comment')
+            return;
+        if (item.kind !== 'statement' && item.kind !== 'broken') {
+            if (item.kind !== 'blank' || settings['columns-shared-by'] !== 'same-keyword') {
+                if (settings['columns-shared-by'] !== 'file')
+                    lastStatement = undefined;
+            }
+            previous = item;
+            return;
+        }
+        const by = settings['columns-shared-by'];
+        const joins = lastStatement !== undefined &&
+            (by === 'file' ||
+                (by === 'neighbors' && previous === lastStatement) ||
+                (by === 'same-keyword-neighbors' && previous === lastStatement && lastStatement.keyword === item.keyword) ||
+                (by === 'same-keyword' && lastStatement.keyword === item.keyword));
+        if (!joins)
+            current += 1;
+        group.set(index, current);
+        lastStatement = item;
+        previous = item;
+    });
+    // Each group's column widths, and the column its trailing comments start at.
+    const widths = new Map();
+    const commentAt = new Map();
+    items.forEach((item, index) => {
+        const cells = aligned(item);
+        if (cells === undefined)
+            return;
+        const id = group.get(index);
+        const own = widths.get(id) ?? [];
+        cells.forEach((cell, at) => (own[at] = Math.max(own[at] ?? 0, textWidth(cell.text))));
+        widths.set(id, own);
+    });
+    // Each cell's text, and where on the line it starts.
+    const placed = (cells, id) => {
+        const own = widths.get(id);
+        const result = [];
+        let at = 0;
+        cells.forEach((cell, index) => {
+            // A column empty in every statement of the set, such as the name column
+            // of unnamed edges, takes no room; with columns off, neither does an
+            // empty cell.
+            if (settings.columns === 'off' ? cell.text === '' && index > 0 : own[index] === 0)
+                return;
+            result.push({ text: cell.text, at });
+            at += (settings.columns === 'off' ? textWidth(cell.text) : own[index]) + gapWidth;
+        });
+        return result;
+    };
+    const lineOf = (cells, id) => {
+        if (settings.columns === 'off')
+            return placed(cells, id).map((one) => one.text).join(gap);
+        let line = '';
+        for (const one of placed(cells, id))
+            line += ' '.repeat(one.at - textWidth(line)) + one.text;
+        return line;
+    };
+    items.forEach((item, index) => {
+        if (item.kind !== 'statement')
+            return;
+        const id = group.get(index);
+        commentAt.set(id, Math.max(commentAt.get(id) ?? 0, textWidth(lineOf(item.cells, id))));
+    });
+    // Where a broken statement's later lines start, measured on its first line
+    // as aligned, so `under-text` sits under the text where it was drawn.
+    const brokenIndent = (item, id) => {
+        const indent = settings['continued-lines-indent'];
+        if (indent === 'tab' || typeof indent === 'number')
+            return continuedIndent(item.first, settings, gapWidth);
+        const cells = placed(item.first, id);
+        const name = cells[1]?.at ?? textWidth(item.first[0].text) + gapWidth;
+        if (indent === 'under-name')
+            return ' '.repeat(name);
+        if (indent === 'under-text') {
+            const at = item.first.findIndex((cell) => cell.quoted);
+            const text = cells.find((one) => one.text === item.first[at]?.text);
+            return ' '.repeat(text?.at ?? name);
+        }
+        return ' '.repeat(name + indent.underName);
+    };
+    const out = [];
+    let blankRun = 0;
+    const flushBlanks = () => {
+        const blanks = settings['blank-lines'];
+        const count = blanks === 'as-written' ? blankRun : 'exactly' in blanks ? (blankRun > 0 ? blanks.exactly : 0) : Math.min(blankRun, blanks.atMost);
+        for (let i = 0; i < count; i++)
+            out.push('');
+        blankRun = 0;
+    };
+    items.forEach((item, index) => {
+        if (item.kind === 'blank') {
+            blankRun += 1;
+            return;
+        }
+        flushBlanks();
+        switch (item.kind) {
+            case 'comment':
+                out.push(item.text);
+                return;
+            case 'verbatim':
+                out.push(...item.lines);
+                return;
+            case 'broken': {
+                const id = group.get(index);
+                const lines = [lineOf(item.first, id), ...continuedLines(item, brokenIndent(item, id), settings, gap, gapWidth)];
+                lines.forEach((line, at) => {
+                    const last = at === lines.length - 1;
+                    out.push(last && item.comment !== undefined ? `${line}${gap}${item.comment}` : line);
+                });
+                return;
+            }
+            case 'kept': {
+                const indent = continuedIndent(item.first, settings, gapWidth);
+                item.lines.forEach((line, at) => {
+                    const text = line.cells.map((cell) => cell.text).join(gap);
+                    const body = line.comment === undefined ? text : text === '' ? line.comment : `${text}${gap}${line.comment}`;
+                    out.push(at === 0 ? body : indent + body);
+                });
+                return;
+            }
+            case 'statement': {
+                const id = group.get(index);
+                const text = lineOf(item.cells, id);
+                if (item.comment === undefined)
+                    out.push(text);
+                else if (settings['trailing-comments'] === 'shared-column') {
+                    out.push(text + ' '.repeat(commentAt.get(id) - textWidth(text) + gapWidth) + item.comment);
+                }
+                else
+                    out.push(text + gap + item.comment);
+            }
+        }
+    });
+    flushBlanks();
+    return out;
+}
+/**
+ * Where a statement's continued lines start, as `continued-lines-indent` says,
+ * measured on its first line's cells. `under-text` falls back to under the
+ * name for a statement with no text.
+ */
+function continuedIndent(first, settings, gapWidth) {
+    const indent = settings['continued-lines-indent'];
+    if (indent === 'tab')
+        return '\t';
+    if (typeof indent === 'number')
+        return ' '.repeat(indent);
+    const name = textWidth(first[0].text) + gapWidth;
+    if (indent === 'under-name')
+        return ' '.repeat(name);
+    if (indent === 'under-text') {
+        const at = first.findIndex((cell) => cell.quoted);
+        if (at === -1)
+            return ' '.repeat(name);
+        const before = first.slice(0, at).filter((cell, index) => cell.text !== '' || index === 0);
+        return ' '.repeat(before.reduce((width, cell) => width + textWidth(cell.text) + gapWidth, 0));
+    }
+    return ' '.repeat(name + indent.underName);
+}
+
 // ---- index.js ----
 /**
  * Source text in, SVG out. The whole pipeline in one call. An error in a
@@ -15397,7 +16306,7 @@ function draw(source, options = {}) {
         throw error instanceof SourceError ? blame(source, error, run) : error;
     }
 }
-globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME_NAMES, DEFAULT_THEME };
+globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME_NAMES, DEFAULT_THEME, format, readFormatSettings, SETTINGS };
 })();
 </script>
 
@@ -15441,6 +16350,9 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
         var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
         var download = document.getElementById('download');
+        var openButton = document.getElementById('open');
+        var saveButton = document.getElementById('save');
+        var file = document.getElementById('file');
         var guides = document.getElementById('guides');
         var checkButton = document.getElementById('check');
         var findings = document.getElementById('findings');
@@ -15641,21 +16553,38 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
 
         function show(message, line) {
           error.textContent = '';
-          error.classList.remove('locatable');
           errorLine = null;
           if (message === null) {
             diagram.classList.remove('stale');
             return;
           }
+          // For pasting into an issue or a chat with an agent.
+          var copyError = document.createElement('button');
+          copyError.type = 'button';
+          copyError.textContent = 'Copy';
+          copyError.title = 'Copy the error';
+          error.appendChild(copyError);
+          var said = message;
           if (line !== undefined && line !== null) {
             errorLine = line;
-            error.classList.add('locatable');
+            said = 'line ' + line + ': ' + message;
             var where = document.createElement('b');
             where.textContent = 'line ' + line;
+            where.title = 'Select the line in the source';
             error.appendChild(where);
             error.appendChild(document.createTextNode(': '));
           }
           error.appendChild(document.createTextNode(message));
+          copyError.addEventListener('click', function () {
+            toClipboard(said).then(
+              function () {
+                flash(copyError, 'Copied');
+              },
+              function () {
+                flash(copyError, 'Blocked');
+              },
+            );
+          });
           // The last good diagram stays up, dimmed. Every half-typed line is a
           // parse error, so blanking the pane would make it flicker on every
           // keystroke and hide the thing being edited against.
@@ -16008,16 +16937,303 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
           }, 0);
         });
 
+        /* ---- the source as a file ---- */
+
+        // The text as last saved or opened, and the file's name, so opening
+        // another file only asks first when there is something to lose, and a
+        // save suggests the name it came from. Both are stored, or a reload
+        // would make every saved diagram look unsaved.
+        var KEPT = 'reladraw.kept';
+        var NAME = 'reladraw.name';
+        var kept = null;
+        var fileName = 'diagram.reladraw';
+        try {
+          kept = localStorage.getItem(KEPT);
+          fileName = localStorage.getItem(NAME) || fileName;
+        } catch (e) {
+          /* as above */
+        }
+
+        function keep(text, name) {
+          kept = text;
+          fileName = name;
+          try {
+            localStorage.setItem(KEPT, text);
+            localStorage.setItem(NAME, name);
+          } catch (e) {
+            /* as above */
+          }
+        }
+
+        // An example opened and left alone is not work: it is one click away.
+        function unsaved() {
+          return source.value !== kept && current === null;
+        }
+
+        openButton.addEventListener('click', function () {
+          if (unsaved() && !confirm('Your edits have not been saved to a file. Open another file in their place?')) return;
+          file.value = '';
+          file.click();
+        });
+
+        file.addEventListener('change', function () {
+          var picked = file.files[0];
+          if (!picked) return;
+          picked.text().then(function (text) {
+            load(text, named(text));
+            keep(text, picked.name);
+            source.focus();
+            source.setSelectionRange(0, 0);
+            source.scrollTop = 0;
+          });
+        });
+
+        // Chrome and Edge ask for the name and the folder; elsewhere the file
+        // goes where the browser puts downloads, under the suggested name.
+        saveButton.addEventListener('click', function () {
+          var text = source.value;
+          if (!window.showSaveFilePicker) {
+            saveAsDownload(text);
+            return;
+          }
+          window
+            .showSaveFilePicker({
+              suggestedName: fileName,
+              types: [{ description: 'reladraw source', accept: { 'text/plain': ['.reladraw'] } }],
+            })
+            .then(function (handle) {
+              return handle.createWritable().then(function (out) {
+                return out
+                  .write(text)
+                  .then(function () {
+                    return out.close();
+                  })
+                  .then(function () {
+                    keep(text, handle.name);
+                    flash(saveButton, 'Saved');
+                  });
+              });
+            })
+            .catch(function (e) {
+              if (e && e.name === 'AbortError') return;
+              // Refused outright, as inside a cross-origin frame.
+              saveAsDownload(text);
+            });
+        });
+
+        function saveAsDownload(text) {
+          var url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = fileName;
+          link.click();
+          setTimeout(function () {
+            URL.revokeObjectURL(url);
+          }, 0);
+          keep(text, fileName);
+        }
+
         zoom.addEventListener('click', function () {
           var actual = diagram.classList.toggle('actual');
           zoom.setAttribute('aria-pressed', String(actual));
           zoom.textContent = actual ? 'Fit' : 'Actual size';
         });
 
-        /* ---- the error names a line, so clicking it goes there ---- */
+        /* ---- the error names a line, so clicking that goes there ---- */
 
-        error.addEventListener('click', function () {
-          if (errorLine !== null) selectLine(errorLine);
+        // Only the line's name, so the rest of the message can be selected:
+        // a drag across it used to end in a click that took the selection
+        // away to the source.
+        error.addEventListener('click', function (event) {
+          if (errorLine !== null && event.target.tagName === 'B') selectLine(errorLine);
+        });
+
+        /* ---- formatting ---- */
+
+        // The settings as `name: value` lines, the way a .reladraw-format holds
+        // them, so the panel, the stored copy and the copied file are one text
+        // and the library's own reader refuses what it would refuse in a file.
+        var FORMAT = 'reladraw.format';
+        var formatButton = document.getElementById('format');
+        var formatPanel = document.getElementById('format-settings');
+        var formatFields = document.getElementById('format-fields');
+        var formatProblem = document.getElementById('format-problem');
+        var formatValues = {};
+        try {
+          (localStorage.getItem(FORMAT) || '').split('\n').forEach(function (line) {
+            var colon = line.indexOf(':');
+            if (colon > 0) formatValues[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+          });
+        } catch (e) {
+          /* as above */
+        }
+
+        function formatText() {
+          return reladraw.SETTINGS.map(function (setting) {
+            var value = formatValues[setting.name];
+            return setting.name + ': ' + (value === undefined || value === '' ? setting.written : value);
+          }).join('\n');
+        }
+
+        // The settings as the formatter takes them, or null with the reason
+        // shown when one doesn't read.
+        function formatSettings() {
+          try {
+            var read = reladraw.readFormatSettings(formatText());
+            formatProblem.textContent = '';
+            return read;
+          } catch (e) {
+            formatProblem.textContent = e.message;
+            return null;
+          }
+        }
+
+        function storeFormat() {
+          try {
+            localStorage.setItem(FORMAT, formatText());
+          } catch (e) {
+            /* as above */
+          }
+        }
+
+        // A setting whose values are all words gets a list; one that takes a
+        // number or a list gets a field, written as it would be in the file.
+        function buildFormatFields() {
+          formatFields.textContent = '';
+          reladraw.SETTINGS.forEach(function (setting) {
+            var label = document.createElement('label');
+            var name = document.createElement('code');
+            name.textContent = setting.name;
+            label.appendChild(name);
+            var current = formatValues[setting.name] || setting.written;
+            var words = setting.values.every(function (value) {
+              return /^[a-z-]+$/.test(value[0]);
+            });
+            var control;
+            if (words) {
+              control = document.createElement('select');
+              setting.values.forEach(function (value) {
+                var option = document.createElement('option');
+                option.value = value[0];
+                option.textContent = value[0];
+                control.appendChild(option);
+              });
+            } else {
+              control = document.createElement('input');
+              control.type = 'text';
+              control.spellcheck = false;
+              control.placeholder = setting.written;
+            }
+            control.value = current;
+            control.addEventListener(words ? 'change' : 'input', function () {
+              formatValues[setting.name] = control.value.trim();
+              formatSettings();
+              storeFormat();
+            });
+            label.appendChild(control);
+            var about = document.createElement('span');
+            about.textContent =
+              setting.about.replace(/\n/g, ' ') +
+              ' ' +
+              setting.values
+                .map(function (value) {
+                  return value[0] + ': ' + value[1].replace(/\n/g, ' ');
+                })
+                .join('; ') +
+              '.';
+            label.appendChild(about);
+            formatFields.appendChild(label);
+          });
+          formatSettings();
+        }
+
+        document.getElementById('format-open').addEventListener('click', function () {
+          buildFormatFields();
+          formatPanel.showModal();
+        });
+
+        formatPanel.querySelector('[data-close]').addEventListener('click', function () {
+          formatPanel.close();
+        });
+
+        formatPanel.addEventListener('click', function (event) {
+          if (event.target !== formatPanel) return;
+          var box = formatPanel.getBoundingClientRect();
+          var inside =
+            event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+          if (!inside) formatPanel.close();
+        });
+
+        document.getElementById('format-reset').addEventListener('click', function () {
+          formatValues = {};
+          storeFormat();
+          buildFormatFields();
+        });
+
+        var formatCopy = document.getElementById('format-copy');
+        formatCopy.addEventListener('click', function () {
+          var text = '// .reladraw-format: how reladraw format lays out the diagrams in this folder and below\n' + formatText() + '\n';
+          toClipboard(text).then(
+            function () {
+              flash(formatCopy, 'Copied');
+            },
+            function () {
+              flash(formatCopy, 'Blocked');
+            },
+          );
+        });
+
+        // The new text replaces the old as one edit the browser can undo, and
+        // the cursor stays on the line it was on.
+        function formatSource() {
+          var settings = formatSettings();
+          if (settings === null) {
+            buildFormatFields();
+            formatPanel.showModal();
+            return;
+          }
+          var before = source.value;
+          var laid;
+          try {
+            laid = reladraw.format(before, settings);
+          } catch (e) {
+            show(e.message, e instanceof reladraw.SourceError ? e.line : undefined);
+            return;
+          }
+          if (laid === before) {
+            flash(formatButton, 'Formatted');
+            return;
+          }
+          var line = before.slice(0, source.selectionStart).split('\n').length;
+          var scroll = source.scrollTop;
+          source.focus();
+          source.setSelectionRange(0, before.length);
+          var undoable = false;
+          try {
+            undoable = document.execCommand('insertText', false, laid);
+          } catch (e) {
+            /* not supported: replaced below, without undo */
+          }
+          if (!undoable || source.value !== laid) {
+            source.value = laid;
+            source.dispatchEvent(new Event('input'));
+          }
+          var lines = laid.split('\n');
+          var at = 0;
+          for (var i = 0; i < line - 1 && i < lines.length; i++) at += lines[i].length + 1;
+          source.setSelectionRange(at, at);
+          source.scrollTop = scroll;
+        }
+
+        formatButton.addEventListener('click', formatSource);
+
+        // Shift+Alt+F, as in VS Code. The key's code rather than its letter:
+        // on a Mac, Alt turns F into another character.
+        document.addEventListener('keydown', function (event) {
+          if (event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyF') {
+            event.preventDefault();
+            formatSource();
+          }
         });
 
         function selectLine(number) {

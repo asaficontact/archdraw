@@ -1,4 +1,4 @@
-# Syntax reference — 0.18.0
+# Syntax reference — 0.19.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -55,7 +55,7 @@ What every statement of a kind has is positional; what is optional is a key. A w
 
 **A value ends when its own shape is complete.** `height: 0.5 group height  right of a` reads a size, then a placement. `to: top, right of z` keeps `right of z` inside `to:`, because it is part of that value. So word order stays free and nothing is ambiguous.
 
-**A bracket modifies the one thing it follows.** A setting that belongs to one part of a statement is written in brackets right after that part: a placement's `(gap: wide)`, a text's `(size: small, wrap: 30)`, a line's `line: (path: square)`, a layout's `layout: column (gap: none)`, a waypoint's `b top (gap: wide)`. The scope is visible instead of inferred. Inside a bracket the comma is optional.
+**A bracket modifies the one thing it follows.** A setting that belongs to one part of a statement is written in brackets right after that part: a placement's `(gap: wide)`, a text's `(size: small, wrap: 30)`, a line's `line: (path: square)`, a layout's `layout: column (gap: none)`, a waypoint's `b top (gap: wide)`. The scope is visible instead of inferred. Inside a bracket the comma is optional, and spaces around it don't matter: `(corners: rounded,path: square)` and `(corners: rounded , path: square)` are both `(corners: rounded, path: square)`.
 
 ### Names and words
 
@@ -1162,6 +1162,59 @@ reladraw check diagram.reladraw
 
 The output is a standalone SVG: every picture is drawn into it as path data, never from a font or a linked file. A web page can draw a diagram in place with `<reladraw-diagram>`; see "In a web page" in the README.
 
+### Formatting
+
+```
+reladraw format diagram.reladraw other.reladraw
+reladraw format --check diagram.reladraw
+reladraw format - < diagram.reladraw
+reladraw format --init
+```
+
+`format` lays each file out again in place. By default every statement is on one line, and neighboring statements with the same keyword line their clauses up in columns, each as wide as its longest clause plus two spaces; a blank line or a new keyword starts a new set of columns, and a comment line between them doesn't. A comment at the end of a line lines up with the others in its set. A statement written over several lines with a comment among them keeps its lines, with the indent tidied. Blank lines stay as written, and so do Windows line endings.
+
+Inside a clause, spacing comes out as these pages write it, whatever was typed: one space after a key's colon and between words, none just inside a bracket, and a comma against the word before it, so `line:( corners:rounded , path:square )` becomes `line: (corners: rounded, path: square)`.
+
+Only whitespace changes, and the order of clauses when `clause-order` asks: every word is copied as it was written, and the result is checked to draw exactly what the original did. A file that doesn't parse is reported and left alone, and the other files still run. `--check` changes nothing, prints each file that would change, and fails if there is one, for a pre-commit hook or CI. A shell expands `*.reladraw` into the files; folders aren't searched.
+
+`-` in place of the files reads the diagram from standard input and prints it formatted, touching no file. That is how an editor formats a buffer, saved or not: Vim's `:%!reladraw format -`, or the command a format-on-save package runs. Its settings come from the nearest `.reladraw-format` to the current folder.
+
+The settings are in the nearest `.reladraw-format`, in the file's folder or a folder above it; with none, the defaults. A project that puts one at its top keeps everyone's formatting the same. `reladraw format --init` writes one in the current folder with every setting at its default and a comment on what each value does, and refuses if one is there already. One setting a line, as in a diagram:
+
+```
+// keep each clause straight after the last
+columns: off
+clause-gap: 2
+```
+
+| setting | values, default first |
+|---|---|
+| `wrap-at` | `off`, or a number of characters: past it, a statement wraps onto as few lines as fit |
+| `clause-per-line-at` | `off`, a number of characters, or `always`: past it, every clause gets its own line |
+| `first-line` | `text` (keyword, name and texts), `name`: where a broken statement's first line ends |
+| `clause-order` | `as-written`, or a list of kinds: `placement`, and keys by name, such as `style, placement, fill` |
+| `columns` | `aligned`, `off` |
+| `columns-shared-by` | `same-keyword-neighbors`, `neighbors`, `same-keyword` (across blank lines), `file` |
+| `clause-gap` | a number of spaces, `2`; or `tab`, with `columns: off` only |
+| `trailing-comments` | `shared-column`, `after-statement` |
+| `comments-inside` | `keep-lines`, `move-above` (joined, comments above it), `refuse` (left alone, comment named) |
+| `continued-lines-indent` | where a broken or kept statement's later lines start: `4` or another number, `tab`, `under-name`, `under-name + 2`, `under-text` (under the name when there's no text) |
+| `blank-lines` | `as-written`, `exactly 2`, `at-most 3` |
+| `edge-name-and-ends` | `one-column`, `own-columns` (name, each end and the arrow a column each) |
+
+An unknown setting, one written twice, or a value it doesn't take is an error naming it.
+
+**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured on its own, before columns, so whether it breaks never depends on its neighbors; its first line still lines up with theirs. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
+
+```
+// wrap-at: 60
+node  confirm  "Confirm"
+    below accept (gap: tight)  left of accept (gap: wide)
+    style: plain
+```
+
+**Ordering clauses.** `clause-order` lists the kinds of clause in the order they are written: `placement` for every relation, and a key by its name (`style`, `fill`, `via`). Kinds it leaves out follow, in the order written, and clauses of one kind keep theirs. A node's or edge's texts never move, since the language takes them only straight after the name; `text` in the list means a style's `text:` key. A clause never moves where moving it would change what the statement says.
+
 ## Attributes
 
 Every attribute, and what takes one. A node's kind is what its body is: a box (`shape:`), a picture (`icon:`) or bare text (`shape: none`).
@@ -1227,6 +1280,15 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.19.0**
+
+- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. No word is respelled, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. `reladraw format -` reads standard input and prints the result, for editors. A long statement can wrap past a width (`wrap-at`) or go one clause to a line (`clause-per-line-at`), and `clause-order` puts placements and keys in a chosen order. The playground has a Format button (Shift+Alt+F, undone with Ctrl+Z) and a panel for its settings, which can copy them as a `.reladraw-format`. Spacing inside a clause is evened out too: `gap:tight` becomes `gap: tight`, `( gap: tight )` becomes `(gap: tight)`. Prompted by #14, where a long statement was hard to read in a plain editor.
+- **A comma may touch the next word or stand apart from both.** `(corners: rounded,path: square)` used to be refused with "`corners` has no value", and `(at: start , above edge)` was refused in a text's bracket; both now read as `rounded, path:` and `start, above` do.
+- **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
+- **The playground's error message can be copied**, with a Copy button beside it or by selecting it. Only the underlined line number jumps to the line now; a click anywhere on the message used to, which took a selection away.
+- **The playground no longer fails on some diagrams with 0.18.0's shapes**, which stopped with "insidePolygon is not defined". The command line was unaffected.
+- **The agent skill checks it matches the installed tool.** It compares its own version with `reladraw --version` and tells the user which of the two to update.
 
 **0.18.0**
 
