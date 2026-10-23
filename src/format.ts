@@ -6,7 +6,8 @@ import { clausesOf, looksLikeArrow, parse, type Gathered } from './parser.js';
 /**
  * Lay a source file out again: spacing between clauses, columns shared by
  * statements that belong together, comments and blank lines, as `settings`
- * say. Only whitespace changes. Every token is copied out of the line it was
+ * say. Only whitespace changes, and the order of clauses when `clause-order`
+ * asks. Every token is copied out of the line it was
  * written on, so no word is respelled, and the result is parsed again and
  * compared with the original, so a mistake here can never change what a file
  * draws: it throws instead.

@@ -22,7 +22,7 @@ const USAGE = `reladraw — draw a diagram from stated placement
   check       lay the diagram out and print only the findings. No SVG is
               written, so a good one is left alone while you iterate.
   format      lay each file out again in place: spacing, columns, comments
-              and blank lines. Only whitespace changes, and a file that
+              and blank lines. No word is respelled, and a file that
               doesn't parse is left alone. The nearest .reladraw-format, in
               the file's folder or one above it, holds the settings.
               --check changes nothing, and fails if a file would change.

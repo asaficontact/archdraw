@@ -10,6 +10,7 @@ export { format } from './format.js';
 export {
   DEFAULT_FORMAT,
   readFormatSettings,
+  SETTINGS,
   SETTINGS_FILE,
   settingsFileText,
   type FormatSettings,

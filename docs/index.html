@@ -606,6 +606,81 @@
         margin-left: auto;
       }
 
+      /* Format settings: one row a setting, its name, its control, and a line
+         on what it does. A list, not the picker's two panes. */
+      #format-settings[open] {
+        display: flex;
+        flex-direction: column;
+        width: min(640px, calc(100vw - 32px));
+        height: auto;
+        max-height: calc(100vh - 32px);
+      }
+
+      #format-settings .note {
+        margin: 0;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--edge);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      #format-fields {
+        overflow-y: auto;
+        padding: 6px 18px;
+      }
+
+      #format-fields label {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 2px 12px;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--edge);
+        font-size: 13px;
+      }
+
+      #format-fields label code {
+        font-family: var(--mono);
+      }
+
+      #format-fields label span {
+        grid-column: 2;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      #format-fields select,
+      #format-fields input {
+        font: 12px var(--mono);
+        color: var(--ink);
+        background: var(--page);
+        border: 1px solid var(--edge);
+        border-radius: 3px;
+        padding: 3px 6px;
+        min-width: 0;
+      }
+
+      #format-problem {
+        margin: 0;
+        padding: 0 18px;
+        color: var(--warn);
+        font-size: 12px;
+      }
+
+      #format-problem:not(:empty) {
+        padding: 8px 18px;
+      }
+
+      @media (max-width: 760px) {
+        #format-fields label {
+          grid-template-columns: 1fr;
+        }
+
+        #format-fields label span {
+          grid-column: 1;
+        }
+      }
+
       kbd {
         font: inherit;
         color: var(--ink);
@@ -671,6 +746,23 @@
       </footer>
     </dialog>
 
+    <dialog id="format-settings" aria-label="Format settings">
+      <div class="bar">
+        <h2>Format settings</h2>
+        <div><button type="button" data-close>Close</button></div>
+      </div>
+      <p class="note">
+        How Format lays the source out. These are remembered in this browser only; for a project, put them in a
+        <code>.reladraw-format</code> file beside its diagrams.
+      </p>
+      <form id="format-fields"></form>
+      <p id="format-problem" role="alert"></p>
+      <footer>
+        <button type="button" id="format-reset">Reset to defaults</button>
+        <button type="button" id="format-copy" title="Copy these settings as the text of a .reladraw-format file">Copy as .reladraw-format</button>
+      </footer>
+    </dialog>
+
     <main>
       <section>
         <div class="bar">
@@ -678,6 +770,8 @@
           <div>
             <button id="open" type="button" title="Open a .reladraw file into the source">Open…</button>
             <button id="save" type="button" title="Save the source as a .reladraw file">Save…</button>
+            <button id="format" type="button" title="Lay the source out again (Shift+Alt+F)">Format</button>
+            <button id="format-open" type="button" aria-haspopup="dialog" title="How Format lays the source out">Format settings…</button>
             <input id="file" type="file" accept=".reladraw,text/plain" hidden />
           </div>
         </div>
@@ -15677,7 +15771,8 @@ function orList(words) {
 /**
  * Lay a source file out again: spacing between clauses, columns shared by
  * statements that belong together, comments and blank lines, as `settings`
- * say. Only whitespace changes. Every token is copied out of the line it was
+ * say. Only whitespace changes, and the order of clauses when `clause-order`
+ * asks. Every token is copied out of the line it was
  * written on, so no word is respelled, and the result is parsed again and
  * compared with the original, so a mistake here can never change what a file
  * draws: it throws instead.
@@ -16165,7 +16260,7 @@ function draw(source, options = {}) {
         throw error instanceof SourceError ? blame(source, error, run) : error;
     }
 }
-globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME_NAMES, DEFAULT_THEME };
+globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME_NAMES, DEFAULT_THEME, format, readFormatSettings, SETTINGS };
 })();
 </script>
 
@@ -16905,6 +17000,194 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
         // away to the source.
         error.addEventListener('click', function (event) {
           if (errorLine !== null && event.target.tagName === 'B') selectLine(errorLine);
+        });
+
+        /* ---- formatting ---- */
+
+        // The settings as `name: value` lines, the way a .reladraw-format holds
+        // them, so the panel, the stored copy and the copied file are one text
+        // and the library's own reader refuses what it would refuse in a file.
+        var FORMAT = 'reladraw.format';
+        var formatButton = document.getElementById('format');
+        var formatPanel = document.getElementById('format-settings');
+        var formatFields = document.getElementById('format-fields');
+        var formatProblem = document.getElementById('format-problem');
+        var formatValues = {};
+        try {
+          (localStorage.getItem(FORMAT) || '').split('\n').forEach(function (line) {
+            var colon = line.indexOf(':');
+            if (colon > 0) formatValues[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+          });
+        } catch (e) {
+          /* as above */
+        }
+
+        function formatText() {
+          return reladraw.SETTINGS.map(function (setting) {
+            var value = formatValues[setting.name];
+            return setting.name + ': ' + (value === undefined || value === '' ? setting.written : value);
+          }).join('\n');
+        }
+
+        // The settings as the formatter takes them, or null with the reason
+        // shown when one doesn't read.
+        function formatSettings() {
+          try {
+            var read = reladraw.readFormatSettings(formatText());
+            formatProblem.textContent = '';
+            return read;
+          } catch (e) {
+            formatProblem.textContent = e.message;
+            return null;
+          }
+        }
+
+        function storeFormat() {
+          try {
+            localStorage.setItem(FORMAT, formatText());
+          } catch (e) {
+            /* as above */
+          }
+        }
+
+        // A setting whose values are all words gets a list; one that takes a
+        // number or a list gets a field, written as it would be in the file.
+        function buildFormatFields() {
+          formatFields.textContent = '';
+          reladraw.SETTINGS.forEach(function (setting) {
+            var label = document.createElement('label');
+            var name = document.createElement('code');
+            name.textContent = setting.name;
+            label.appendChild(name);
+            var current = formatValues[setting.name] || setting.written;
+            var words = setting.values.every(function (value) {
+              return /^[a-z-]+$/.test(value[0]);
+            });
+            var control;
+            if (words) {
+              control = document.createElement('select');
+              setting.values.forEach(function (value) {
+                var option = document.createElement('option');
+                option.value = value[0];
+                option.textContent = value[0];
+                control.appendChild(option);
+              });
+            } else {
+              control = document.createElement('input');
+              control.type = 'text';
+              control.spellcheck = false;
+              control.placeholder = setting.written;
+            }
+            control.value = current;
+            control.addEventListener(words ? 'change' : 'input', function () {
+              formatValues[setting.name] = control.value.trim();
+              formatSettings();
+              storeFormat();
+            });
+            label.appendChild(control);
+            var about = document.createElement('span');
+            about.textContent =
+              setting.about.replace(/\n/g, ' ') +
+              ' ' +
+              setting.values
+                .map(function (value) {
+                  return value[0] + ': ' + value[1].replace(/\n/g, ' ');
+                })
+                .join('; ') +
+              '.';
+            label.appendChild(about);
+            formatFields.appendChild(label);
+          });
+          formatSettings();
+        }
+
+        document.getElementById('format-open').addEventListener('click', function () {
+          buildFormatFields();
+          formatPanel.showModal();
+        });
+
+        formatPanel.querySelector('[data-close]').addEventListener('click', function () {
+          formatPanel.close();
+        });
+
+        formatPanel.addEventListener('click', function (event) {
+          if (event.target !== formatPanel) return;
+          var box = formatPanel.getBoundingClientRect();
+          var inside =
+            event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+          if (!inside) formatPanel.close();
+        });
+
+        document.getElementById('format-reset').addEventListener('click', function () {
+          formatValues = {};
+          storeFormat();
+          buildFormatFields();
+        });
+
+        var formatCopy = document.getElementById('format-copy');
+        formatCopy.addEventListener('click', function () {
+          var text = '// .reladraw-format: how reladraw format lays out the diagrams in this folder and below\n' + formatText() + '\n';
+          toClipboard(text).then(
+            function () {
+              flash(formatCopy, 'Copied');
+            },
+            function () {
+              flash(formatCopy, 'Blocked');
+            },
+          );
+        });
+
+        // The new text replaces the old as one edit the browser can undo, and
+        // the cursor stays on the line it was on.
+        function formatSource() {
+          var settings = formatSettings();
+          if (settings === null) {
+            buildFormatFields();
+            formatPanel.showModal();
+            return;
+          }
+          var before = source.value;
+          var laid;
+          try {
+            laid = reladraw.format(before, settings);
+          } catch (e) {
+            show(e.message, e instanceof reladraw.SourceError ? e.line : undefined);
+            return;
+          }
+          if (laid === before) {
+            flash(formatButton, 'Formatted');
+            return;
+          }
+          var line = before.slice(0, source.selectionStart).split('\n').length;
+          var scroll = source.scrollTop;
+          source.focus();
+          source.setSelectionRange(0, before.length);
+          var undoable = false;
+          try {
+            undoable = document.execCommand('insertText', false, laid);
+          } catch (e) {
+            /* not supported: replaced below, without undo */
+          }
+          if (!undoable || source.value !== laid) {
+            source.value = laid;
+            source.dispatchEvent(new Event('input'));
+          }
+          var lines = laid.split('\n');
+          var at = 0;
+          for (var i = 0; i < line - 1 && i < lines.length; i++) at += lines[i].length + 1;
+          source.setSelectionRange(at, at);
+          source.scrollTop = scroll;
+        }
+
+        formatButton.addEventListener('click', formatSource);
+
+        // Shift+Alt+F, as in VS Code. The key's code rather than its letter:
+        // on a Mac, Alt turns F into another character.
+        document.addEventListener('keydown', function (event) {
+          if (event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyF') {
+            event.preventDefault();
+            formatSource();
+          }
         });
 
         function selectLine(number) {
