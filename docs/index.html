@@ -16363,23 +16363,7 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
         // The example the editor holds unchanged, or null once it is edited.
         var current = null;
 
-        /* ---- the source kept in the browser, and old links read once ---- */
-
-        // Until 2026-10 every edit was written into the URL, so a diagram was a
-        // link. That stopped: the source is short text, better pasted than
-        // hidden in an address, and a changing file:// address made Chrome drop
-        // its zoom. A link made before then still opens, and the address is
-        // cleared once it has, so a reload shows the edits rather than the link.
-        // Drop the reading after the next release.
-
-        function decode(fragment) {
-          var padded = fragment.replace(/-/g, '+').replace(/_/g, '/');
-          while (padded.length % 4) padded += '=';
-          var binary = atob(padded);
-          var bytes = new Uint8Array(binary.length);
-          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          return new TextDecoder().decode(bytes);
-        }
+        /* ---- the source kept in the browser ---- */
 
         function stow() {
           try {
@@ -16389,27 +16373,12 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
           }
         }
 
-        // The source an old link carries, or null, with the address cleared.
-        function linked() {
-          var fragment = location.hash.slice(1);
-          if (!fragment) return null;
-          history.replaceState(null, '', location.pathname + location.search);
-          try {
-            return decode(fragment);
-          } catch (e) {
-            /* a mangled link falls through to what was last edited */
-            return null;
-          }
-        }
-
         function opening() {
-          var text = linked();
-          if (text !== null) return text;
           try {
             var kept = localStorage.getItem(STORE);
             if (kept !== null) return kept;
           } catch (e) {
-            /* as above */
+            /* private browsing, or storage refused */
           }
           return SEED;
         }
@@ -17260,17 +17229,8 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
           pending = setTimeout(stow, 400);
         });
 
-        window.addEventListener('hashchange', function () {
-          var text = linked();
-          if (text !== null && text !== source.value) load(text, named(text));
-        });
-
-        // An old link's source is stored as it opens, so a reload, which no
-        // longer has the link, still shows it.
-        var fromLink = location.hash.length > 1;
         source.value = opening();
         current = named(source.value);
-        if (fromLink) stow();
         draw();
       })();
     </script>
