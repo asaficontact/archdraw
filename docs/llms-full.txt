@@ -1354,6 +1354,39 @@ reladraw check diagram.reladraw
 
 The output is a standalone SVG: every picture is drawn into it as path data, never from a font or a linked file. A web page can draw a diagram in place with `<reladraw-diagram>`; see "In a web page" in the README.
 
+### Formatting
+
+```
+reladraw format diagram.reladraw other.reladraw
+reladraw format --check diagram.reladraw
+reladraw format --init
+```
+
+`format` lays each file out again in place. By default every statement is on one line, and neighboring statements with the same keyword line their clauses up in columns, each as wide as its longest clause plus two spaces; a blank line, a comment or a new keyword starts a new set of columns. A comment at the end of a line lines up with the others in its set. A statement written over several lines with a comment among them keeps its lines, with the indent tidied. Blank lines stay as written.
+
+Only whitespace changes: every word is copied as it was written, and the result is checked to draw exactly what the original did. A file that doesn't parse is reported and left alone, and the other files still run. `--check` changes nothing, prints each file that would change, and fails if there is one, for a pre-commit hook or CI. A shell expands `*.reladraw` into the files; folders aren't searched.
+
+The settings are in the nearest `.reladraw-format`, in the file's folder or a folder above it; with none, the defaults. A project that puts one at its top keeps everyone's formatting the same. `reladraw format --init` writes one in the current folder with every setting at its default and a comment on what each value does, and refuses if one is there already. One setting a line, as in a diagram:
+
+```
+// keep each clause straight after the last
+columns: off
+clause-gap: 2
+```
+
+| setting | values, default first |
+|---|---|
+| `columns` | `aligned`, `off` |
+| `columns-shared-by` | `same-keyword-neighbors`, `neighbors`, `same-keyword` (across blank lines), `file` |
+| `clause-gap` | a number of spaces, `2`; or `tab`, with `columns: off` only |
+| `trailing-comments` | `shared-column`, `after-statement` |
+| `comments-inside` | `keep-lines`, `move-above` (joined, comments above it), `refuse` (left alone, comment named) |
+| `continued-lines-indent` | for a kept statement's lines: `4` or another number, `tab`, `under-name`, `under-name + 2`, `under-text` |
+| `blank-lines` | `as-written`, `exactly 2`, `at-most 3` |
+| `edge-name-and-ends` | `one-column`, `own-columns` (name, each end and the arrow a column each) |
+
+An unknown setting, one written twice, or a value it doesn't take is an error naming it. Four more are accepted only at their defaults until breaking a statement onto several lines is built: `wrap-at: off`, `clause-per-line-at: off`, `first-line: text` and `clause-order: as-written`.
+
 ## Attributes
 
 Every attribute, and what takes one. A node's kind is what its body is: a box (`shape:`), a picture (`icon:`) or bare text (`shape: none`).
@@ -1422,6 +1455,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 
 **Unreleased**
 
+- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. Prompted by #14, where a long statement was hard to read in a plain editor.
 - **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
 - **The playground's error message can be copied**, with a Copy button beside it or by selecting it. Only the underlined line number jumps to the line now; a click anywhere on the message used to, which took a selection away.
 

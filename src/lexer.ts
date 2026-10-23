@@ -12,6 +12,14 @@ export interface Token {
    * about the word can quote what the author typed.
    */
   joined?: string;
+  /**
+   * Where the token was written: from `start` up to `end` in the line given to
+   * `tokenizeLine`, quotes included. The formatter copies each token back out
+   * of its line by these, so nothing it writes is respelled. Absent on a token
+   * made up by the parser rather than read from a line.
+   */
+  start?: number;
+  end?: number;
 }
 
 /**
@@ -67,14 +75,14 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
 
     if (ch === '(') {
       depth += 1;
-      tokens.push({ text: '(', quoted: false });
+      tokens.push({ text: '(', quoted: false, start: i, end: i + 1 });
       i += 1;
       continue;
     }
 
     if (ch === ')' && depth > 0) {
       depth -= 1;
-      tokens.push({ text: ')', quoted: false });
+      tokens.push({ text: ')', quoted: false, start: i, end: i + 1 });
       i += 1;
       continue;
     }
@@ -85,12 +93,13 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
     if (line.startsWith('"""', i)) {
       const end = line.indexOf('"""', i + 3);
       if (end === -1) throw new OpenString('this """ string is never closed — end it with """', lineNumber);
-      tokens.push({ text: line.slice(i + 3, end), quoted: true, triple: true });
+      tokens.push({ text: line.slice(i + 3, end), quoted: true, triple: true, start: i, end: end + 3 });
       i = end + 3;
       continue;
     }
 
     if (ch === '"') {
+      const start = i;
       let text = '';
       i += 1;
       let closed = false;
@@ -116,7 +125,7 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
         i += 1;
       }
       if (!closed) throw new SourceError('unterminated string', lineNumber);
-      tokens.push({ text, quoted: true });
+      tokens.push({ text, quoted: true, start, end: i });
       continue;
     }
 
@@ -138,11 +147,11 @@ export function tokenizeLine(line: string, lineNumber: number, depth = 0): Token
     const previous = tokens[tokens.length - 1];
     const joined = previous && isAttrKey(previous) ? null : JOINED_KEY.exec(text);
     if (joined) {
-      tokens.push({ text: joined[1]!, quoted: false, joined: text });
+      tokens.push({ text: joined[1]!, quoted: false, joined: text, start, end: start + joined[1]!.length });
       i = start + joined[1]!.length;
       continue;
     }
-    tokens.push({ text, quoted: false });
+    tokens.push({ text, quoted: false, start, end: i });
   }
 
   return tokens;

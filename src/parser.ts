@@ -79,6 +79,41 @@ import { readSize, SIZE_KEYS, writeSize } from './size.js';
 import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
 
 /**
+ * One statement as `parse` gathered it, before reading: the line it starts on,
+ * and each of its lines with that line's tokens. A comment-only line inside it
+ * has no tokens and is not listed.
+ */
+export interface Gathered {
+  line: number;
+  lines: { line: number; tokens: Token[] }[];
+}
+
+/**
+ * Set while `clausesOf` runs: the first token of every clause the parser
+ * reads, so the formatter can tell where one clause ends and the next begins
+ * without a second grammar of its own. Clauses inside brackets are recorded
+ * too, and the formatter passes over them.
+ */
+let clauseStarts: Set<Token> | null = null;
+
+/**
+ * Parse a source for the formatter: each statement as gathered, and the first
+ * token of each clause read. Throws as `parse` does, so a file that does not
+ * parse is never rewritten.
+ */
+export function clausesOf(source: string): { statements: Gathered[]; starts: Set<Token> } {
+  const statements: Gathered[] = [];
+  const starts = new Set<Token>();
+  clauseStarts = starts;
+  try {
+    parse(source, (statement) => statements.push(statement));
+  } finally {
+    clauseStarts = null;
+  }
+  return { statements, starts };
+}
+
+/**
  * Parse a whole source file. A statement starts on an unindented line and runs
  * on through any line that starts with whitespace; a blank line or the next
  * unindented one ends it. How much whitespace never matters, only whether
@@ -93,16 +128,19 @@ import { THEME_COLORS, THEME_NAMES, THEMES } from './themes.js';
  * are its own, blank or not, and a line opening with one continues the
  * statement above without being indented.
  */
-export function parse(source: string): Document {
+export function parse(source: string, seen?: (statement: Gathered) => void): Document {
   const statements: Stmt[] = [];
-  /** The statement being gathered, and the line it starts on. */
-  let open: { tokens: Token[]; line: number } | null = null;
+  /** The statement being gathered, the line it starts on, and its lines' tokens. */
+  let open: { tokens: Token[]; line: number; lines: Gathered['lines'] } | null = null;
   // Brackets may close on a later line, and the lexer only reads `)` as a
   // bracket while one is open, so the depth is carried from line to line.
   let depth = 0;
 
   const close = () => {
-    if (open) statements.push(parseStatement(open.tokens, open.line));
+    if (open) {
+      seen?.({ line: open.line, lines: open.lines });
+      statements.push(parseStatement(open.tokens, open.line));
+    }
     open = null;
     depth = 0;
   };
@@ -143,7 +181,7 @@ export function parse(source: string): Document {
     if (tokens.length === 0) continue;
 
     if (!continues) {
-      open = { tokens, line: lineNumber };
+      open = { tokens: [...tokens], line: lineNumber, lines: [{ line: lineNumber, tokens }] };
     } else {
       const first = tokens[0]!;
       if (!open) {
@@ -164,6 +202,7 @@ export function parse(source: string): Document {
         );
       }
       open.tokens.push(...tokens);
+      open.lines.push({ line: lineNumber, tokens });
     }
 
     for (const token of tokens) {
@@ -345,6 +384,7 @@ function parseTail(
 
   while (i < tokens.length) {
     const token = tokens[i]!;
+    clauseStarts?.add(token);
     if (isAttrKey(token)) {
       i = readAttr(tokens, i, attrs, line, subject);
       continue;
@@ -435,6 +475,7 @@ function readAttr(
   subject: string,
 ): number {
   const keyToken = tokens[at]!;
+  clauseStarts?.add(keyToken);
   const key = keyToken.text.slice(0, -1);
   if (key === 'gap') {
     throw new SourceError(
@@ -1707,7 +1748,7 @@ function eachChildAt(head: Token[]): number[] {
 }
 
 /** Whether a token is an arrow, or begins one: a bracketed mark, or a run of dashes with marks at its ends. */
-function looksLikeArrow(token: Token): boolean {
+export function looksLikeArrow(token: Token): boolean {
   if (token.quoted) return false;
   if (token.text === '(' || /^\[[^\]]*\]-*$/.test(token.text)) return true;
   return /^[<|*o]*\|?-{1,}[>|*o]*$/.test(token.text) || /^-+$/.test(token.text);
@@ -1981,6 +2022,7 @@ function parsePoint(head: Token[], line: number): PointStmt {
   if (!head[start] || isAttrKey(head[start])) {
     throw new SourceError(`${subject} says where it is, such as \`point ${name}  between a and b\``, line);
   }
+  clauseStarts?.add(head[start]);
   const read = readOneTarget(head, start, subject, line, true);
   if (read.listed) throw new SourceError(`${subject} is one point, so it takes no list`, line);
   refuseSpan(read.target, subject, line);
@@ -2002,6 +2044,7 @@ function parseRegion(head: Token[], line: number): RegionStmt {
       line,
     );
   }
+  clauseStarts?.add(head[start]);
   const first = readOneTarget(head, start, subject, line, true);
   if (first.listed) throw new SourceError(`${subject}: a region runs from one point to another, written with "to", not a list`, line);
   let corners: RegionStmt['corners'];
@@ -2249,6 +2292,7 @@ function readPlacement(
   subject: string,
 ): { placement: Placement; next: number } {
   const word = tokens[at]!;
+  clauseStarts?.add(word);
   if (word.quoted) {
     throw new SourceError(`${subject}: unexpected text "${word.text}"`, line);
   }

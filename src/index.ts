@@ -6,6 +6,14 @@ export * from './grammar.js';
 export * from './measure.js';
 export * from './model.js';
 export { parse } from './parser.js';
+export { format } from './format.js';
+export {
+  DEFAULT_FORMAT,
+  readFormatSettings,
+  SETTINGS_FILE,
+  settingsFileText,
+  type FormatSettings,
+} from './format-settings.js';
 export { resolve, type ResolveOptions } from './resolve.js';
 export { render, type RenderOptions } from './render.js';
 export { DARK_THEME, DEFAULT_THEME, THEMES, THEME_NAMES, type Theme } from './themes.js';
