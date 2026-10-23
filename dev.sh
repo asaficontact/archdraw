@@ -84,6 +84,13 @@ Commands:
                                  language model to read at one URL. Re-run after
                                  editing either. docs/llms.txt, the short index
                                  that points at it, is written by hand.
+  format-examples ["setting: value" ...]
+                                 Format a scratch copy of every example under the
+                                 settings given (the defaults when none are), and
+                                 check a second pass changes nothing. format
+                                 itself refuses a result that draws differently,
+                                 so a clean run means no example's picture moved.
+                                 Prints where the copies are, to read them.
   snippets [file.md ...]        Parse every reladraw snippet in the hand-written
                                  docs and name the ones the parser now refuses.
                                  Defaults to README.md, SYNTAX.md, CONTRIBUTING.md,
@@ -627,6 +634,15 @@ case "$cmd" in
     # links to, generated so it cannot drift from the two documents it joins.
     llms_full docs/llms-full.txt
     echo "docs/llms-full.txt regenerated from the skill and SYNTAX.md"
+    ;;
+  format-examples)
+    [ -f dist/cli.js ] || compile
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/reladraw-format.XXXXXX")"
+    cp examples/*.reladraw "$dir/"
+    for setting in "$@"; do echo "$setting" >> "$dir/.reladraw-format"; done
+    out="$(node dist/cli.js format "$dir"/*.reladraw 2>&1)" || { echo "$out" | grep -v '^formatted '; exit 1; }
+    node dist/cli.js format --check "$dir"/*.reladraw || exit 1
+    echo "$(ls "$dir"/*.reladraw | wc -l | tr -d ' ') examples formatted, a second pass changes nothing: $dir"
     ;;
   snippets)
     [ -f dist/index.js ] || compile

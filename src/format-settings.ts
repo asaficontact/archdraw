@@ -1,3 +1,4 @@
+import { ALL_ATTR_KEYS } from './ast.js';
 import { nearMatch } from './checks.js';
 import { SourceError } from './errors.js';
 
@@ -55,35 +56,43 @@ function wordSetting<K extends keyof FormatSettings>(name: K, about: string, val
 }
 
 /**
- * The settings that change where a statement breaks onto more lines. None of
- * them is built yet, so each accepts only its default and refuses the rest by
- * name, rather than accept a value it would silently ignore.
+ * The kinds of clause `clause-order` can list: a statement's texts, its
+ * placements, and each key by its own name. `text` is also a style's `text:`
+ * key, which is a style's way of saying what a text says.
  */
-function unbuiltSetting(name: keyof FormatSettings, about: string, values: [string, string][]): Setting {
-  const written = values[0]![0];
-  return {
-    name,
-    about,
-    values,
-    written,
-    read: (value) => {
-      if (value === written) return written as FormatSettings[keyof FormatSettings];
-      throw `${name}: "${value}" isn't built yet — for now the formatter keeps each statement on one line, so only ${written} works`;
-    },
-  };
-}
+export const CLAUSE_KINDS: readonly string[] = [...new Set(['text', 'placement', ...ALL_ATTR_KEYS])];
 
 export const SETTINGS: Setting[] = [
-  unbuiltSetting('wrap-at', 'Past this many characters, a statement wraps onto more lines, as few as fit.', [
-    ['off', 'never wrap'],
-    ['a number', 'wrap past that many characters, such as 80'],
-  ]),
-  unbuiltSetting('clause-per-line-at', 'Past this many characters, each clause goes on its own line instead.', [
-    ['off', 'never'],
-    ['a number', 'past that many characters, such as 120'],
-    ['always', 'every statement, whatever its length'],
-  ]),
-  unbuiltSetting('first-line', 'When a statement breaks onto more lines, where its first line ends.', [
+  {
+    name: 'wrap-at',
+    about: 'Past this many characters, a statement wraps onto more lines, as few as fit.',
+    values: [
+      ['off', 'never wrap'],
+      ['a number', 'wrap past that many characters, such as 80'],
+    ],
+    written: 'off',
+    read: (value) => {
+      if (value === 'off') return value;
+      if (SETTING_COUNT.test(value)) return Number(value);
+      throw `wrap-at: "${value}" is not one of its values — it takes off, or a number of characters such as 80`;
+    },
+  },
+  {
+    name: 'clause-per-line-at',
+    about: 'Past this many characters, each clause goes on its own line instead.',
+    values: [
+      ['off', 'never'],
+      ['a number', 'past that many characters, such as 120'],
+      ['always', 'every statement, whatever its length'],
+    ],
+    written: 'off',
+    read: (value) => {
+      if (value === 'off' || value === 'always') return value;
+      if (SETTING_COUNT.test(value)) return Number(value);
+      throw `clause-per-line-at: "${value}" is not one of its values — it takes off, always, or a number of characters such as 120`;
+    },
+  },
+  wordSetting('first-line', 'When a statement breaks onto more lines, where its first line ends.', [
     ['text', 'after the text: keyword, name and text stay together'],
     ['name', 'after the name'],
   ]),
@@ -106,10 +115,31 @@ export const SETTINGS: Setting[] = [
       throw `continued-lines-indent: "${value}" is not one of its values — it takes a number of spaces, tab, under-name, under-name + 2 or under-text`;
     },
   },
-  unbuiltSetting('clause-order', 'The order a statement\'s clauses are written in.', [
-    ['as-written', 'the order the writer chose'],
-    ['a list', 'that order, such as: text, placement, style'],
-  ]),
+  {
+    name: 'clause-order',
+    about:
+      'The order a statement\'s clauses are written in after its text, which always\ncomes straight after the name. A list names placement and keys such as style;\nwhat it leaves out follows, in the order written.',
+    values: [
+      ['as-written', 'the order the writer chose'],
+      ['a list', 'that order, such as: placement, style, fill'],
+    ],
+    written: 'as-written',
+    read: (value) => {
+      if (value === 'as-written') return value;
+      const kinds = value.split(',').map((kind) => kind.trim());
+      const seen = new Set<string>();
+      for (const kind of kinds) {
+        if (kind === '') throw `clause-order: "${value}" has an empty place in its list — name a kind of clause between each comma`;
+        if (!CLAUSE_KINDS.includes(kind)) {
+          const near = nearMatch(kind, CLAUSE_KINDS);
+          throw `clause-order: "${kind}" is not a kind of clause${near ? ` — did you mean ${near}?` : ''} — it takes text, placement and keys such as style or fill`;
+        }
+        if (seen.has(kind)) throw `clause-order: ${kind} is listed twice — keep one`;
+        seen.add(kind);
+      }
+      return kinds;
+    },
+  },
   {
     name: 'clause-gap',
     about: 'The least space between two clauses on a line.',

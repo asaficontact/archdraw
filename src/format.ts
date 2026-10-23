@@ -33,16 +33,42 @@ export function format(source: string, settings: FormatSettings = DEFAULT_FORMAT
   return result;
 }
 
-/** Does `a` say the same as `b`? Both parse to the same statements, line numbers aside. */
+/**
+ * Does `a` say the same as `b`? Both parse to the same statements, line
+ * numbers aside. The keys of a parsed object are compared in any order, since
+ * `clause-order` may write `from:` after `via:`; lists keep theirs.
+ */
 function sameMeaning(a: string, b: string): boolean {
-  const strip = (source: string) => JSON.stringify(parse(source), (key, value: unknown) => (key === 'line' ? undefined : value));
+  const strip = (source: string) =>
+    JSON.stringify(parse(source), (key, value: unknown) => {
+      if (key === 'line') return undefined;
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+      return Object.fromEntries(Object.entries(value).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+    });
   return strip(a) === strip(b);
 }
 
-/** One clause: its words as written, and whether it is a `key: value`. */
+/**
+ * One clause: its words as written, and what kind it is. `keyword` and `head`
+ * (a name, or an edge's name and ends) open a statement and never move; the
+ * rest are the kinds `clause-order` lists: `text`, `placement`, or a key's name.
+ * A quoted text and a style's `text:` key are both `text`.
+ */
 interface Cell {
   text: string;
-  key: boolean;
+  kind: string;
+  /** A quoted text, rather than a style's `text:` key, which is the same kind. */
+  quoted?: boolean;
+}
+
+const OPENING = new Set(['keyword', 'head']);
+
+/** The kind of clause a run of tokens is. */
+function kindOf(run: { token: Token }[]): string {
+  const first = run[0]!.token;
+  if (first.quoted) return 'text';
+  if (isAttrKey(first)) return first.text.slice(0, -1);
+  return 'placement';
 }
 
 /** What the file is made of, in order, once statements are gathered. */
@@ -54,7 +80,9 @@ type Item =
   /** A statement kept on its own lines, because a comment sits among them. */
   | { kind: 'kept'; keyword: string; lines: { cells: Cell[]; comment?: string }[]; first: Cell[] }
   /** A statement on one line. */
-  | { kind: 'statement'; keyword: string; cells: Cell[]; comment?: string };
+  | { kind: 'statement'; keyword: string; cells: Cell[]; comment?: string }
+  /** A statement too long for one line, broken by `wrap-at` or `clause-per-line-at`. */
+  | { kind: 'broken'; lines: string[]; comment?: string };
 
 /** Everything after `//` outside quotes on a line, or nothing. */
 function trailingCommentAfter(line: string, from: number): string | undefined {
@@ -148,7 +176,8 @@ function gatherItems(lines: string[], statements: Gathered[], starts: Set<Token>
       continue;
     }
     for (const comment of inside) items.push({ kind: 'comment', text: comment.text });
-    items.push({ kind: 'statement', keyword, cells: cellsOf(all), ...(trailing !== undefined ? { comment: trailing } : {}) });
+    const cells = orderCells(cellsOf(all), settings);
+    items.push({ kind: 'statement', keyword, cells, ...(trailing !== undefined ? { comment: trailing } : {}) });
   }
   return items;
 }
@@ -172,21 +201,49 @@ function statementCells(
 ): Cell[] {
   const result: Cell[] = [];
   const keyword = all.slice(0, keywordCount);
-  result.push({ text: joinTokens(keyword), key: false });
+  result.push({ text: joinTokens(keyword), kind: 'keyword' });
 
   const runs = clauseRuns(all.slice(keywordCount), starts);
   const head = runs[0] && !isAttrKey(runs[0][0]!.token) && !starts.has(runs[0][0]!.token) ? runs.shift()! : undefined;
   if (head) {
     if (all[0]!.token.text === 'edge' && settings['edge-name-and-ends'] === 'own-columns') result.push(...edgeHeadCells(head));
-    else result.push({ text: joinTokens(head), key: false });
+    else result.push({ text: joinTokens(head), kind: 'head' });
   }
-  for (const run of runs) result.push({ text: joinTokens(run), key: isAttrKey(run[0]!.token) });
+  for (const run of runs) result.push({ text: joinTokens(run), kind: kindOf(run), ...(run[0]!.token.quoted ? { quoted: true } : {}) });
   return result;
 }
 
 /** The cells of a continued line in a kept statement: no keyword, no head. */
 function continuedCells(own: { token: Token; line: string }[], starts: Set<Token>): Cell[] {
-  return clauseRuns(own, starts).map((run) => ({ text: joinTokens(run), key: isAttrKey(run[0]!.token) }));
+  return clauseRuns(own, starts).map((run) => ({ text: joinTokens(run), kind: kindOf(run) }));
+}
+
+/**
+ * A statement's clauses in the order `clause-order` lists their kinds, the
+ * kinds it leaves out after them as written; clauses of one kind keep their
+ * order. Quoted texts never move: the language takes them only straight after
+ * the name. A clause only moves where moving it can't change what the
+ * statement says, so one that would read differently reordered keeps its
+ * written order.
+ */
+function orderCells(cells: Cell[], settings: FormatSettings): Cell[] {
+  const order = settings['clause-order'];
+  if (order === 'as-written') return cells;
+  const stays = (cell: Cell) => OPENING.has(cell.kind) || cell.quoted === true;
+  const opening = cells.filter(stays);
+  const rank = (cell: Cell) => (order.includes(cell.kind) ? order.indexOf(cell.kind) : order.length);
+  const rest = cells
+    .filter((cell) => !stays(cell))
+    .map((cell, at) => ({ cell, at }))
+    .sort((a, b) => rank(a.cell) - rank(b.cell) || a.at - b.at)
+    .map(({ cell }) => cell);
+  const ordered = [...opening, ...rest];
+  const line = (some: Cell[]) => some.map((cell) => cell.text).filter((text) => text !== '').join(' ');
+  try {
+    return sameMeaning(line(cells), line(ordered)) ? ordered : cells;
+  } catch {
+    return cells;
+  }
 }
 
 /** Tokens grouped into clauses, by where clauses start outside brackets. */
@@ -219,14 +276,14 @@ function clauseRuns(tokens: { token: Token; line: string }[], starts: Set<Token>
  */
 function edgeHeadCells(head: { token: Token; line: string }[]): Cell[] {
   const arrowAt = head.findIndex(({ token }) => token.text !== '(' && looksLikeArrow(token));
-  if (arrowAt === -1) return [{ text: joinTokens(head), key: false }];
+  if (arrowAt === -1) return [{ text: joinTokens(head), kind: 'head' }];
   const before = head.slice(0, arrowAt);
   const named = before.length > 1 && !before[0]!.token.text.endsWith(',') && before[0]!.token.text !== 'each';
   return [
-    { text: named ? joinTokens(before.slice(0, 1)) : '', key: false },
-    { text: joinTokens(named ? before.slice(1) : before), key: false },
-    { text: joinTokens(head.slice(arrowAt, arrowAt + 1)), key: false },
-    { text: joinTokens(head.slice(arrowAt + 1)), key: false },
+    { text: named ? joinTokens(before.slice(0, 1)) : '', kind: 'head' },
+    { text: joinTokens(named ? before.slice(1) : before), kind: 'head' },
+    { text: joinTokens(head.slice(arrowAt, arrowAt + 1)), kind: 'head' },
+    { text: joinTokens(head.slice(arrowAt + 1)), kind: 'head' },
   ];
 }
 
@@ -258,9 +315,56 @@ function textWidth(text: string): number {
   return [...text].length;
 }
 
-function layOutItems(items: Item[], settings: FormatSettings): string[] {
+/** How wide a tab counts as, where a width has to be known. */
+const TAB_WIDTH = 4;
+
+/**
+ * A statement past `wrap-at` or `clause-per-line-at` on its own lines, or the
+ * statement as it was. Its length is measured on its own, unaligned, so
+ * whether one statement breaks never depends on its neighbors. The first line
+ * holds the keyword and name, and the texts after them if `first-line` says
+ * so; the clauses after it go one to a line, or as many as fit under
+ * `wrap-at`. A clause is never split, so one longer than the width stands
+ * alone on its line.
+ */
+function breakStatement(item: Extract<Item, { kind: 'statement' }>, settings: FormatSettings, gap: string, gapWidth: number): Item {
+  const texts = item.cells.map((cell) => cell.text);
+  const length = textWidth(texts.filter((text, at) => text !== '' || at === 0).join(gap));
+  const perLine = settings['clause-per-line-at'];
+  const wrap = settings['wrap-at'];
+  const oneEach = perLine === 'always' || (typeof perLine === 'number' && length > perLine);
+  if (!oneEach && !(typeof wrap === 'number' && length > wrap)) return item;
+
+  let firstEnd = item.cells.findIndex((cell) => !OPENING.has(cell.kind));
+  if (firstEnd === -1) return item;
+  if (settings['first-line'] === 'text') while (item.cells[firstEnd]?.quoted) firstEnd += 1;
+  const rest = item.cells.slice(firstEnd).map((cell) => cell.text);
+  if (rest.length === 0) return item;
+
+  const first = item.cells.slice(0, firstEnd);
+  const firstLine = first.map((cell) => cell.text).filter((text, at) => text !== '' || at === 0).join(gap);
+  const indent = continuedIndent(first, settings, gapWidth);
+  const indentWidth = indent === '\t' ? TAB_WIDTH : indent.length;
+  const lines = [firstLine];
+  if (oneEach) lines.push(...rest.map((text) => indent + text));
+  else {
+    let line = '';
+    for (const text of rest) {
+      if (line !== '' && indentWidth + textWidth(line) + gapWidth + textWidth(text) > (wrap as number)) {
+        lines.push(indent + line);
+        line = '';
+      }
+      line = line === '' ? text : line + gap + text;
+    }
+    lines.push(indent + line);
+  }
+  return { kind: 'broken', lines, ...(item.comment !== undefined ? { comment: item.comment } : {}) };
+}
+
+function layOutItems(written: Item[], settings: FormatSettings): string[] {
   const gap = settings['clause-gap'] === 'tab' ? '\t' : ' '.repeat(settings['clause-gap']);
   const gapWidth = settings['clause-gap'] === 'tab' ? 1 : settings['clause-gap'];
+  const items = written.map((item) => (item.kind === 'statement' ? breakStatement(item, settings, gap, gapWidth) : item));
 
   // Which one-line statements share columns: each is given a group number. A
   // comment line is passed over, as if it weren't there: it labels what
@@ -340,8 +444,14 @@ function layOutItems(items: Item[], settings: FormatSettings): string[] {
       case 'verbatim':
         out.push(...item.lines);
         return;
+      case 'broken':
+        item.lines.forEach((line, at) => {
+          const last = at === item.lines.length - 1;
+          out.push(last && item.comment !== undefined ? `${line}${gap}${item.comment}` : line);
+        });
+        return;
       case 'kept': {
-        const indent = keptIndent(item.first, settings, gapWidth);
+        const indent = continuedIndent(item.first, settings, gapWidth);
         item.lines.forEach((line, at) => {
           const text = line.cells.map((cell) => cell.text).join(gap);
           const body = line.comment === undefined ? text : text === '' ? line.comment : `${text}${gap}${line.comment}`;
@@ -363,16 +473,22 @@ function layOutItems(items: Item[], settings: FormatSettings): string[] {
   return out;
 }
 
-/** Where a kept statement's continued lines start, as `continued-lines-indent` says. */
-function keptIndent(first: Cell[], settings: FormatSettings, gapWidth: number): string {
+/**
+ * Where a statement's continued lines start, as `continued-lines-indent` says,
+ * measured on its first line's cells. `under-text` falls back to under the
+ * name for a statement with no text.
+ */
+function continuedIndent(first: Cell[], settings: FormatSettings, gapWidth: number): string {
   const indent = settings['continued-lines-indent'];
   if (indent === 'tab') return '\t';
   if (typeof indent === 'number') return ' '.repeat(indent);
   const name = textWidth(first[0]!.text) + gapWidth;
   if (indent === 'under-name') return ' '.repeat(name);
   if (indent === 'under-text') {
-    const text = first.length > 2 ? name + textWidth(first[1]!.text) + gapWidth : name;
-    return ' '.repeat(text);
+    const at = first.findIndex((cell) => cell.quoted);
+    if (at === -1) return ' '.repeat(name);
+    const before = first.slice(0, at).filter((cell, index) => cell.text !== '' || index === 0);
+    return ' '.repeat(before.reduce((width, cell) => width + textWidth(cell.text) + gapWidth, 0));
   }
   return ' '.repeat(name + indent.underName);
 }

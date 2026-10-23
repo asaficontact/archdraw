@@ -1381,16 +1381,31 @@ clause-gap: 2
 
 | setting | values, default first |
 |---|---|
+| `wrap-at` | `off`, or a number of characters: past it, a statement wraps onto as few lines as fit |
+| `clause-per-line-at` | `off`, a number of characters, or `always`: past it, every clause gets its own line |
+| `first-line` | `text` (keyword, name and texts), `name`: where a broken statement's first line ends |
+| `clause-order` | `as-written`, or a list of kinds: `placement`, and keys by name, such as `style, placement, fill` |
 | `columns` | `aligned`, `off` |
 | `columns-shared-by` | `same-keyword-neighbors`, `neighbors`, `same-keyword` (across blank lines), `file` |
 | `clause-gap` | a number of spaces, `2`; or `tab`, with `columns: off` only |
 | `trailing-comments` | `shared-column`, `after-statement` |
 | `comments-inside` | `keep-lines`, `move-above` (joined, comments above it), `refuse` (left alone, comment named) |
-| `continued-lines-indent` | for a kept statement's lines: `4` or another number, `tab`, `under-name`, `under-name + 2`, `under-text` |
+| `continued-lines-indent` | where a broken or kept statement's later lines start: `4` or another number, `tab`, `under-name`, `under-name + 2`, `under-text` (under the name when there's no text) |
 | `blank-lines` | `as-written`, `exactly 2`, `at-most 3` |
 | `edge-name-and-ends` | `one-column`, `own-columns` (name, each end and the arrow a column each) |
 
-An unknown setting, one written twice, or a value it doesn't take is an error naming it. Four more are accepted only at their defaults until breaking a statement onto several lines is built: `wrap-at: off`, `clause-per-line-at: off`, `first-line: text` and `clause-order: as-written`.
+An unknown setting, one written twice, or a value it doesn't take is an error naming it.
+
+**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured on its own, before columns, so whether it breaks never depends on its neighbors, and a broken statement shares no columns. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
+
+```
+// wrap-at: 60
+node  confirm  "Confirm"
+    below accept (gap: tight)  left of accept (gap: wide)
+    style: plain
+```
+
+**Ordering clauses.** `clause-order` lists the kinds of clause in the order they are written: `placement` for every relation, and a key by its name (`style`, `fill`, `via`). Kinds it leaves out follow, in the order written, and clauses of one kind keep theirs. A node's or edge's texts never move, since the language takes them only straight after the name; `text` in the list means a style's `text:` key. A clause never moves where moving it would change what the statement says.
 
 ## Attributes
 
@@ -1460,7 +1475,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 
 **Unreleased**
 
-- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. `reladraw format -` reads standard input and prints the result, for editors. Spacing inside a clause is evened out too: `gap:tight` becomes `gap: tight`, `( gap: tight )` becomes `(gap: tight)`. Prompted by #14, where a long statement was hard to read in a plain editor.
+- **`reladraw format`** lays a file out again: each statement on one line, neighboring statements with the same keyword lined up in columns, comments kept beside what they are about. Only whitespace changes, and the result is checked to draw what the original did. `--check` fails on a file that would change, and `.reladraw-format` holds a project's settings; `reladraw format --init` writes one with every setting explained. `reladraw format -` reads standard input and prints the result, for editors. A long statement can wrap past a width (`wrap-at`) or go one clause to a line (`clause-per-line-at`), and `clause-order` puts placements and keys in a chosen order. Spacing inside a clause is evened out too: `gap:tight` becomes `gap: tight`, `( gap: tight )` becomes `(gap: tight)`. Prompted by #14, where a long statement was hard to read in a plain editor.
 - **A comma may touch the next word or stand apart from both.** `(corners: rounded,path: square)` used to be refused with "`corners` has no value", and `(at: start , above edge)` was refused in a text's bracket; both now read as `rounded, path:` and `start, above` do.
 - **The playground opens and saves `.reladraw` files**, with Open… and Save… above the source. Save suggests the name of the file last opened or saved; Chrome and Edge ask where to put it, other browsers save it with the downloads. Opening a file over edits that haven't been saved to one asks first.
 - **The playground's error message can be copied**, with a Copy button beside it or by selecting it. Only the underlined line number jumps to the line now; a click anywhere on the message used to, which took a selection away.
