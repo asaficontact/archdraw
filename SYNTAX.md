@@ -1,4 +1,4 @@
-# Syntax reference — 0.19.0
+# Syntax reference — 0.19.1
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1281,7 +1281,7 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.19.1**
 
 - **A copy that states its own `step-out:` or `turn:` keeps it.** Lines between the same two sides of the same two boxes fan into lanes, and each used to be drawn as the first one's shape shifted over, so a `step-out:` or `turn:` written on any later line was ignored. A line naming either is now drawn as written and leaves the fan, and so does a line named in its side's `right-edge-order:` list. Where that puts two lines on one run, it is reported as `edge-overlap`. Prompted by #19.
 - **Errors and findings name a named line by its name**, as written: `line e2 b.1 -- b.2 runs on line e1 b.1 -- b.2`. Two lines between the same boxes used to read identically.
