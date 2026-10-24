@@ -1973,6 +1973,7 @@ function lineLook(written: Attrs, appearance: Attrs, what: string, line: number)
     turn,
     turnWritten: written['line.turn'],
     stepOut,
+    stepOutWritten: written['line.step-out'],
   };
   // Said on the edge itself, a property its path doesn't have is refused; from
   // a style or a default it lands on the lines that have it.

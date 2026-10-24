@@ -842,7 +842,7 @@ A line named `req` has parts. `req start` and `req end` are where it was written
 
 ### Copies fan out
 
-Copies are lines with the same two boxes on the same sides, in either direction, with nothing stated about their path. Texts and colors don't count, so a request and its response are copies. Copies are drawn as one shape, each shifted sideways from it by a fixed step like lanes on a road, so they never cross. Straight copies with no side named run parallel, a `tight` gap apart, each end landing where its lane meets the border. A line whose landing is stated, such as `to: top, right of z`, is no longer a copy, which is how to override the fan.
+Copies are lines with the same two boxes on the same sides, in either direction, with nothing stated about their path. Texts and colors don't count, so a request and its response are copies. Copies are drawn as one shape, each shifted sideways from it by a fixed step like lanes on a road, so they never cross. Straight copies with no side named run parallel, a `tight` gap apart, each end landing where its lane meets the border. A line that says anything about where it goes is no longer a copy, and is drawn as written: a stated landing (`to: top, right of z`), a place in a side's `right-edge-order:` list, or a `step-out:` or `turn:` in its own bracket. That is how to override the fan. A `step-out:` or `turn:` from `default edge` or a style says the same for every line, so copies sharing it still fan, each taking it from the first.
 
 ```
 node client
@@ -1280,6 +1280,11 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- **A copy that states its own `step-out:` or `turn:` keeps it.** Lines between the same two sides of the same two boxes fan into lanes, and each used to be drawn as the first one's shape shifted over, so a `step-out:` or `turn:` written on any later line was ignored. A line naming either is now drawn as written and leaves the fan, and so does a line named in its side's `right-edge-order:` list. Where that puts two lines on one run, it is reported as `edge-overlap`. Prompted by #19.
+- **Errors and findings name a named line by its name**, as written: `line e2 b.1 -- b.2 runs on line e1 b.1 -- b.2`. Two lines between the same boxes used to read identically.
 
 **0.19.0**
 
