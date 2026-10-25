@@ -2,7 +2,9 @@
 
 reladraw is a text language for diagrams where you say where things go.
 
-**[Try it in your browser →](https://reladraw.github.io/reladraw/)**
+> The language is changing frequently. The playground always runs the newest syntax, so a diagram that draws there today may need a small edit later. An installed copy from npm changes only when you upgrade it.
+
+**[Try it in your browser in the reladraw playground →](https://reladraw.github.io/reladraw/)**
 
 I wanted to be able to create custom, expressive diagrams where I decided how to arrange the diagram, but without the inefficiency of manually drawing in draw.io. For example, this is a diagram drawn in draw.io:
 
@@ -86,9 +88,7 @@ That gets you a copy of the skill at the time you run it, so you'll need to re-r
 
 ## Status
 
-Version 0.19.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
-
-The language isn't stable yet, so expect the syntax to change.
+Version 0.19.1. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
 
 ## License
 

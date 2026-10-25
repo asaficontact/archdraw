@@ -103,16 +103,14 @@ Commands:
                                  questions only a reader can answer. Run before
                                  committing a change to the language or the
                                  examples; the local pre-commit hook runs it too.
-  page [out.png] [WxH] [fragment]
-                                 Screenshot the built playground page. `page dom
-                                 [fragment]` prints the DOM after its scripts
-                                 have run, which is how you check the page
-                                 assembled itself without opening a browser.
-                                 The optional fragment is a shared link's
-                                 base64url source — the way to load a long file
-                                 into the editor without clicking. Run
+  page [out.png] [WxH]
+                                 Screenshot the built playground page. `page dom`
+                                 prints the DOM after its scripts have run,
+                                 which is how you check the page assembled
+                                 itself without opening a browser. Run
                                  `playground` first — this looks at what is on
-                                 disk, not at the template.
+                                 disk, not at the template. To load a file into
+                                 the editor, use page-run.
   page-run '<js>' [out.png] [WxH]
                                  Screenshot a copy of the playground that runs
                                  <js> once its own scripts have. A headless
@@ -716,22 +714,11 @@ EOF
     # can go wrong in the playground is a script that never ran: the picture
     # looks plausible and the buttons are simply absent.
     if [ "${1:-}" = "dom" ]; then
-      # An optional fragment, so the shared-link path can be exercised too:
-      # ./dev.sh page dom "$(printf '%s' "$src" | base64 -w0 | tr '+/' '-_')"
-      # A file:// URL, not a path: given a bare path Chrome escapes the '#' to
-      # %23 and the fragment is never seen by the page.
-      url="file://$PWD/docs/index.html${2:+#$2}"
       "$(chrome_bin)" --headless --disable-gpu --no-sandbox \
-        --virtual-time-budget=2000 --dump-dom "$url" 2>/dev/null
+        --virtual-time-budget=2000 --dump-dom "file://$PWD/docs/index.html" 2>/dev/null
     else
       out="${1:-$(tmp_path page png)}"
-      # A fragment here too, for the same reason the DOM mode takes one, and for
-      # one more: the editor's syntax coloring is drawn behind the textarea, so
-      # the thing to look at is a long file in a narrow pane, and the fragment is
-      # how you get a long file into the page without clicking anything.
-      # A file:// URL rather than a path, for the reason the DOM mode gives:
-      # given a bare path Chrome escapes the '#' and the fragment never arrives.
-      screenshot "file://$PWD/docs/index.html${3:+#$3}" "$out" "${2:-1600x1000}" "0d0d10"
+      screenshot "file://$PWD/docs/index.html" "$out" "${2:-1600x1000}" "0d0d10"
       echo "$out"
     fi
     ;;

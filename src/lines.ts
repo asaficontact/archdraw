@@ -275,16 +275,20 @@ interface CopySet {
 /**
  * Copies are lines with the same two boxes on the same sides, in either
  * direction, with nothing stated about their path (6.5): no waypoints, no
- * landing point, no place among a side's ends. Found by filing each line under
- * its boxes and sides, in one pass.
+ * landing point, no place among a side's ends, and no `step-out:` or `turn:`
+ * written on the line itself. Found by filing each line under its boxes and
+ * sides, in one pass.
  */
 function copySets(edges: LayoutEdge[], ends: Map<LayoutEdge, [End, End]>): Map<LayoutEdge, CopySet> {
   const filed = new Map<string, CopySet>();
+  const listed = (end: End): boolean =>
+    end.edge.name !== undefined && (end.node.attrs[`${(end.spec as { side: Side }).side}-edge-order`]?.split(', ').includes(end.edge.name) ?? false);
   const plain = (end: End): end is End & { spec: { kind: 'side' } } =>
-    end.spec.kind === 'side' && end.spec.after === undefined && !end.onLine && end.edge.onMark?.[end.which] !== 'point';
+    end.spec.kind === 'side' && end.spec.after === undefined && !listed(end) && !end.onLine && end.edge.onMark?.[end.which] !== 'point';
   const keyOf = (end: End): string => `${end.node.name}\n${(end.spec as { side: Side }).side}`;
   for (const edge of edges) {
     if (edge.via !== undefined || edge.straight !== undefined) continue;
+    if (edge.look.stepOutWritten !== undefined || edge.look.turnWritten !== undefined) continue;
     const [start, end] = ends.get(edge)!;
     if (!plain(start) || !plain(end)) continue;
     const [a, b] = [keyOf(start), keyOf(end)];
@@ -2255,7 +2259,9 @@ function intersect(a: Point, b: Point, c: Point, d: Point): Point | undefined {
   return { x: a.x + r.x * t, y: a.y + r.y * t };
 }
 
+/** An edge as written, its name first where it has one: `e2 b.1 -- b.2`, so two lines between the same boxes can be told apart. */
 export function describeEdge(edge: LayoutEdge): string {
   if (edge.bundle) return `bundle ${edge.name}`;
-  return `${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+  const ends = `${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+  return edge.name === undefined ? ends : `${edge.name} ${ends}`;
 }
