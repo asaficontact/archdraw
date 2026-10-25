@@ -21,6 +21,8 @@ the source file is what matters.
 diagram you wanted is far easier to act on than one framed as a syntax proposal,
 because the syntax is the part I can work out and the need is the part I cannot.
 
+**Syntax suggestions.** The syntax is changing quickly. A suggestion about how something should be written may be taken in if it fits where the language is heading, noted for later and perhaps used in some form once it settles, or declined.
+
 **Questions about the design.** If something in [README.md](README.md) or
 [SYNTAX.md](SYNTAX.md) is unconvincing or unclear, that is worth an issue too.
 

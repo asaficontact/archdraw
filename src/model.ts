@@ -273,6 +273,8 @@ export interface LineLook {
   turnWritten: string | undefined;
   /** The short first and last leg of a square or curved line, in pixels. */
   stepOut: number;
+  /** `step-out:` as written on the edge itself; from a style or a default it is undefined. */
+  stepOutWritten: string | undefined;
 }
 
 export interface Layout {
