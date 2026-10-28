@@ -42,22 +42,23 @@ interface Extent {
 
 /** Turn solved geometry into a standalone SVG document. */
 export function render(layout: Layout, options: RenderOptions = {}): string {
+  return drawing(layout, options)(false);
+}
+
+/**
+ * The SVG as `render` gives it, and the same drawing with each thing wrapped in
+ * a group naming it and its statement's line, for a page that points at things
+ * (`--page`). Drawn once, so the two can't disagree.
+ */
+export function renderTagged(layout: Layout, options: RenderOptions = {}): { svg: string; tagged: string } {
+  const assemble = drawing(layout, options);
+  return { svg: assemble(false), tagged: assemble(true) };
+}
+
+function drawing(layout: Layout, options: RenderOptions): (tagged: boolean) => string {
   const measurer = options.measurer ?? monospaceMeasurer();
   const fontSize = options.fontSize ?? DEFAULT_FONT_SIZE;
-  // A theme passed in — the command line's `--theme` — beats the one the file
-  // names, so one source renders in either. `diagram background:` and `text:`
-  // are the author overruling a color of whichever theme that is, and a color
-  // written by hand wins over any theme, so they are folded in afterwards and
-  // everything downstream sees one theme.
-  const named = layout.diagram['theme'];
-  const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
-  const page = layout.diagram['background'];
-  const words = layout.diagram['text.color'];
-  const theme: Theme = {
-    ...base,
-    ...(page !== undefined && { background: themeColor(page, base) }),
-    ...(words !== undefined && { text: themeColor(words, base) }),
-  };
+  const theme = themeOf(layout, options);
 
   // Guides are shown by the viewer (`--guides`), or by a file that explains
   // its own construction (`diagram guides: show`).
@@ -146,8 +147,8 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
   }
   const lineSvg = new Map(lines.map((line) => [line.key, line.svg]));
   const body = sequence
-    .map((item) => lineSvg.get(item.key) ?? item.svg)
-    .filter((svg) => svg.length > 0);
+    .map((item) => ({ item, svg: lineSvg.get(item.key) ?? item.svg }))
+    .filter(({ svg }) => svg.length > 0);
 
   // An edge's geometry is measured rather than solved for, so the resolver sized
   // the canvas from the boxes alone. A curve out of a `top` side, or a text
@@ -172,8 +173,11 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     }
   }
 
-  const svg = [
+  return (tagged) => ownIds([
     `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
+    // `diagram title:` — what a browser shows on the tab when the SVG is opened
+    // on its own, and what a screen reader announces.
+    ...(layout.diagram['title'] === undefined ? [] : [`  <title>${escapeXml(layout.diagram['title'])}</title>`]),
     '  <defs>',
     ...[...markers.values()].map(([mark, color, free]) => markMarker(mark, color, theme.background, free)),
     // Each mask covers the whole page, in page units: the default region is the
@@ -191,11 +195,50 @@ export function render(layout: Layout, options: RenderOptions = {}): string {
     ),
     '  </defs>',
     `  <rect x="${canvas.x}" y="${canvas.y}" width="${canvas.width}" height="${canvas.height}" fill="${theme.background}"/>`,
-    ...body,
+    ...body.map(({ item, svg }) => (tagged ? tag(layout, item, svg) : svg)),
     '</svg>',
     '',
-  ].join('\n');
-  return ownIds(svg);
+  ].join('\n'));
+}
+
+/**
+ * The colors a drawing is made in. A theme passed in — the command line's
+ * `--theme` — beats the one the file names, so one source renders in either.
+ * `diagram background:` and `text:` are the author overruling a color of
+ * whichever theme that is, and a color written by hand wins over any theme, so
+ * they are folded in afterwards and everything downstream sees one theme.
+ */
+export function themeOf(layout: Layout, options: RenderOptions = {}): Theme {
+  const named = layout.diagram['theme'];
+  const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
+  const page = layout.diagram['background'];
+  const words = layout.diagram['text.color'];
+  return {
+    ...base,
+    ...(page !== undefined && { background: themeColor(page, base) }),
+    ...(words !== undefined && { text: themeColor(words, base) }),
+  };
+}
+
+/**
+ * `<g data-name="api" data-line="12">` round each thing drawn: what a page
+ * shows on hover, and what a finding about that line lights up.
+ */
+function tag(layout: Layout, item: Drawn, svg: string): string {
+  let name: string;
+  let line: number;
+  if (item.node) {
+    ({ name, line } = item.node);
+  } else if (item.key.startsWith('edge ')) {
+    const edge = layout.edges[Number(item.key.slice('edge '.length))]!;
+    name = edge.name ?? `${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+    line = edge.line;
+  } else {
+    const mark = layout.marks.find((one) => one.name === item.key);
+    if (!mark) return svg;
+    ({ name, line } = mark);
+  }
+  return `<g data-name="${escapeXml(name).replace(/"/g, '&quot;')}" data-line="${line}">\n${svg}\n</g>`;
 }
 
 /**

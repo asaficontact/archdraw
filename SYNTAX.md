@@ -1122,9 +1122,12 @@ A default takes the words a style does and may wear a style of its own (`default
 
 ```
 diagram  theme: nord  background: #1e2229  text: (color: #e0e0e0)
+diagram  title: "How a login reaches the database"
 ```
 
-`diagram` holds what covers the whole drawing: `theme`, `background` (the page behind everything), `text: (color: …)` for every text, `guides: show`, and `checks: (…)` ([Findings](#errors-and-findings)). It has no name, since a file holds one diagram, and a second one is an error. `diagram text:` takes a color only; a text size belongs on a default.
+`diagram` holds what covers the whole drawing: `theme`, `background` (the page behind everything), `text: (color: …)` for every text, `guides: show`, `checks: (…)` ([Findings](#errors-and-findings)), and `title`. It has no name, since a file holds one diagram, and a second one is an error. `diagram text:` takes a color only; a text size belongs on a default.
+
+`title:` names the drawing, in quotes. It isn't drawn: the SVG carries it as its own title, which a browser shows on the tab and a screen reader announces, and a page made with `--page` is headed with it.
 
 ### Destinations
 
@@ -1176,6 +1179,7 @@ reladraw check diagram.reladraw
 | option | |
 |---|---|
 | `-o`, `--out` | where `render` writes; defaults to the input with `.svg`; `-` for standard output |
+| `--page` | `render` writes a page for looking at the diagram instead, defaulting to the input with `.html` |
 | `--theme <name>` | render in another theme, whatever the file says |
 | `--guides` | draw the guides |
 | `--checks "<kind>: on, …"` | turn kinds of finding on or off, over the file |
@@ -1183,6 +1187,14 @@ reladraw check diagram.reladraw
 | `-v`, `--version` | print the version |
 
 The output is a standalone SVG: every picture is drawn into it as path data, never from a font or a linked file. A web page can draw a diagram in place with `<reladraw-diagram>`; see "In a web page" in the README.
+
+### A page for looking at a diagram
+
+```
+reladraw render arch.reladraw --page
+```
+
+`--page` writes `arch.html`: one self-contained file, for opening in a browser, attaching or committing, that needs nothing running and fetches nothing. The page is in the diagram's own colors, so a dark diagram doesn't sit on a white page, and it is headed with `diagram title:`, or the file's name when there is none. Drag to pan; scroll, pinch or double-click to zoom; Fit and Actual size reset the view, and there is a full-screen button. Save SVG and Save PNG save the drawing as `render` would. The findings are listed beside it in a panel that folds away, and clicking one lights up what its line drew. A box's or a line's name shows under the pointer. Keys: `+` and `-` zoom, `0` fits, `1` is actual size, `f` is full screen.
 
 ### Formatting
 
@@ -1305,6 +1317,8 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 
 **Unreleased**
 
+- **A diagram can have a title**: `diagram  title: "How a login reaches the database"`. The SVG carries it as its own title, which a browser shows on the tab. See [The diagram](#the-diagram).
+- **`reladraw render --page`** writes a page for looking at a diagram: one self-contained HTML file in the diagram's colors, headed with its title, that pans, zooms, goes full screen, saves the SVG or a PNG, lists the findings and lights up what each one is about. See [A page for looking at a diagram](#a-page-for-looking-at-a-diagram).
 - **A border can be thicker or thinner**: `border: (color: #d2904e, thickness: thick)`, mirroring the line's bracket. A thick border is drawn inside the box, and the box grows to keep its padding, so it may move what is placed beside it. See [A border's bracket](#a-borders-bracket).
 - **A box can be lined up with something inside a box placed against it.** `node a "Node A"  even with b.1` with `node b "Node B" right of a` used to be refused, "nothing anchors the diagram", because `right of a` also centered B on A. That centering now gives way, as it already did to a placement written on B itself, and B goes where B.1 is level with A.
 

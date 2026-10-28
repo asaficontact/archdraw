@@ -45,7 +45,7 @@ npm install -g reladraw
 reladraw render diagram.reladraw -o diagram.svg
 ```
 
-`reladraw check diagram.reladraw` prints the warnings without writing a picture, and `reladraw format diagram.reladraw` lines its statements up in columns.
+`reladraw check diagram.reladraw` prints the warnings without writing a picture, and `reladraw format diagram.reladraw` lines its statements up in columns. `reladraw render diagram.reladraw --page` writes a page for looking at it in a browser, with pan, zoom, full screen and the warnings beside it.
 
 Or from a clone, which also gets you the examples:
 

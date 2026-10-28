@@ -823,9 +823,10 @@ export interface DiagramStmt {
  * `text: (color: …)`, and sets the text color of everything at once — the
  * theme has one text color, shared by nodes and edges, and this is that.
  * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
- * of finding on or off by name.
+ * of finding on or off by name. `title` is quoted, and names the drawing: the
+ * SVG carries it as its own title, and a page made with `--page` heads with it.
  */
-export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides'] as const;
+export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides', 'title'] as const;
 
 /**
  * `default leaf  fill: #2e5d3a` — a style that applies to every thing of one

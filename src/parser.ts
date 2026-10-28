@@ -849,6 +849,16 @@ function readAttr(
     setOnce(attrs, key, value.text, subject, line, { key, value: quoteOf });
     return at + 2;
   }
+  if (key === 'title') {
+    // A title is a text, and every text is quoted. Unquoted, its first word
+    // would be the title and the rest read as stray words.
+    const value = tokens[at + 1];
+    if (!value || !value.quoted) {
+      throw new SourceError(`${subject}: a title is written in quotes — \`title: "How a login reaches the database"\``, line);
+    }
+    setOnce(attrs, key, value.text, subject, line, { key, value: quoteOf });
+    return at + 2;
+  }
   if (key === 'style') {
     // `style: base, critical and alarm` — several bundles, applied in the order
     // written, a later one winning where two set the same key. The list reads

@@ -1365,9 +1365,10 @@ const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'padding-t
  * `text: (color: …)`, and sets the text color of everything at once — the
  * theme has one text color, shared by nodes and edges, and this is that.
  * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
- * of finding on or off by name.
+ * of finding on or off by name. `title` is quoted, and names the drawing: the
+ * SVG carries it as its own title, and a page made with `--page` heads with it.
  */
-const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides'];
+const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides', 'title'];
 const DEFAULT_TARGETS = [
     'node',
     'leaf',
@@ -10203,6 +10204,16 @@ function readAttr(tokens, at, attrs, line, subject) {
         setOnce(attrs, key, value.text, subject, line, { key, value: quoteOf });
         return at + 2;
     }
+    if (key === 'title') {
+        // A title is a text, and every text is quoted. Unquoted, its first word
+        // would be the title and the rest read as stray words.
+        const value = tokens[at + 1];
+        if (!value || !value.quoted) {
+            throw new SourceError(`${subject}: a title is written in quotes — \`title: "How a login reaches the database"\``, line);
+        }
+        setOnce(attrs, key, value.text, subject, line, { key, value: quoteOf });
+        return at + 2;
+    }
     if (key === 'style') {
         // `style: base, critical and alarm` — several bundles, applied in the order
         // written, a later one winning where two set the same key. The list reads
@@ -12921,22 +12932,21 @@ function monospaceMeasurer(fontFamily = DEFAULT_STACK, advanceRatio = DEFAULT_AD
 const CORNER = 8;
 /** Turn solved geometry into a standalone SVG document. */
 function render(layout, options = {}) {
+    return drawing(layout, options)(false);
+}
+/**
+ * The SVG as `render` gives it, and the same drawing with each thing wrapped in
+ * a group naming it and its statement's line, for a page that points at things
+ * (`--page`). Drawn once, so the two can't disagree.
+ */
+function renderTagged(layout, options = {}) {
+    const assemble = drawing(layout, options);
+    return { svg: assemble(false), tagged: assemble(true) };
+}
+function drawing(layout, options) {
     const measurer = options.measurer ?? monospaceMeasurer();
     const fontSize = options.fontSize ?? DEFAULT_FONT_SIZE;
-    // A theme passed in — the command line's `--theme` — beats the one the file
-    // names, so one source renders in either. `diagram background:` and `text:`
-    // are the author overruling a color of whichever theme that is, and a color
-    // written by hand wins over any theme, so they are folded in afterwards and
-    // everything downstream sees one theme.
-    const named = layout.diagram['theme'];
-    const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
-    const page = layout.diagram['background'];
-    const words = layout.diagram['text.color'];
-    const theme = {
-        ...base,
-        ...(page !== undefined && { background: themeColor(page, base) }),
-        ...(words !== undefined && { text: themeColor(words, base) }),
-    };
+    const theme = themeOf(layout, options);
     // Guides are shown by the viewer (`--guides`), or by a file that explains
     // its own construction (`diagram guides: show`).
     const guides = {
@@ -13020,8 +13030,8 @@ function render(layout, options = {}) {
     }
     const lineSvg = new Map(lines.map((line) => [line.key, line.svg]));
     const body = sequence
-        .map((item) => lineSvg.get(item.key) ?? item.svg)
-        .filter((svg) => svg.length > 0);
+        .map((item) => ({ item, svg: lineSvg.get(item.key) ?? item.svg }))
+        .filter(({ svg }) => svg.length > 0);
     // An edge's geometry is measured rather than solved for, so the resolver sized
     // the canvas from the boxes alone. A curve out of a `top` side, or a text
     // riding above one, lands outside that — so the page grows to hold it and the
@@ -13045,8 +13055,11 @@ function render(layout, options = {}) {
                 markers.set(markerId(mark, color, free), [mark, color, free]);
         }
     }
-    const svg = [
+    return (tagged) => ownIds([
         `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
+        // `diagram title:` — what a browser shows on the tab when the SVG is opened
+        // on its own, and what a screen reader announces.
+        ...(layout.diagram['title'] === undefined ? [] : [`  <title>${escapeXml(layout.diagram['title'])}</title>`]),
         '  <defs>',
         ...[...markers.values()].map(([mark, color, free]) => markMarker(mark, color, theme.background, free)),
         // Each mask covers the whole page, in page units: the default region is the
@@ -13060,11 +13073,51 @@ function render(layout, options = {}) {
         ].join('\n')),
         '  </defs>',
         `  <rect x="${canvas.x}" y="${canvas.y}" width="${canvas.width}" height="${canvas.height}" fill="${theme.background}"/>`,
-        ...body,
+        ...body.map(({ item, svg }) => (tagged ? tag(layout, item, svg) : svg)),
         '</svg>',
         '',
-    ].join('\n');
-    return ownIds(svg);
+    ].join('\n'));
+}
+/**
+ * The colors a drawing is made in. A theme passed in — the command line's
+ * `--theme` — beats the one the file names, so one source renders in either.
+ * `diagram background:` and `text:` are the author overruling a color of
+ * whichever theme that is, and a color written by hand wins over any theme, so
+ * they are folded in afterwards and everything downstream sees one theme.
+ */
+function themeOf(layout, options = {}) {
+    const named = layout.diagram['theme'];
+    const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
+    const page = layout.diagram['background'];
+    const words = layout.diagram['text.color'];
+    return {
+        ...base,
+        ...(page !== undefined && { background: themeColor(page, base) }),
+        ...(words !== undefined && { text: themeColor(words, base) }),
+    };
+}
+/**
+ * `<g data-name="api" data-line="12">` round each thing drawn: what a page
+ * shows on hover, and what a finding about that line lights up.
+ */
+function tag(layout, item, svg) {
+    let name;
+    let line;
+    if (item.node) {
+        ({ name, line } = item.node);
+    }
+    else if (item.key.startsWith('edge ')) {
+        const edge = layout.edges[Number(item.key.slice('edge '.length))];
+        name = edge.name ?? `${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+        line = edge.line;
+    }
+    else {
+        const mark = layout.marks.find((one) => one.name === item.key);
+        if (!mark)
+            return svg;
+        ({ name, line } = mark);
+    }
+    return `<g data-name="${escapeXml(name).replace(/"/g, '&quot;')}" data-line="${line}">\n${svg}\n</g>`;
 }
 /**
  * Gives every id in a drawing a prefix of its own, taken from a hash of the
@@ -15315,7 +15368,7 @@ function checkAttrs(kind, name, attrs, line) {
         // Quoted back the way it was written. A bracketed value arrives one dotted
         // key at a time, and `contents: match` is not a line anybody could look for.
         // A deck's cards are stored joined on a line break; quote them back as written.
-        const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+        const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : key === 'title' ? `"${value}"` : value;
         const wrote = written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
         if (!ALL_ATTR_KEYS.includes(key)) {
             // Nothing anywhere in the language answers to this word, so the only

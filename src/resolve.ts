@@ -1287,7 +1287,8 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
     // Quoted back the way it was written. A bracketed value arrives one dotted
     // key at a time, and `contents: match` is not a line anybody could look for.
     // A deck's cards are stored joined on a line break; quote them back as written.
-    const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+    const shown =
+      key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : key === 'title' ? `"${value}"` : value;
     const wrote =
       written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
 
