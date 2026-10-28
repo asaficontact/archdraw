@@ -116,6 +116,8 @@ export const RELATION_WORDS: string[] = [
   // `(inside top)`, `outside router right`, `via: inside p top`.
   'inside',
   'outside',
+  // `stays above laptop.photos`, a limit (design.org 5.6).
+  'stays',
   // Lines (design.org 6): `straight down from z3`, `each child of pool`,
   // `leg climb`, `via: through slot horizontal`.
   'straight',

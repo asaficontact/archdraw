@@ -139,6 +139,8 @@ node count    "3"  on bob top-right  shape: circle
 
 A box's parts are its `text`, its sides `top`, `bottom`, `left`, `right`, and nine points (`top-left`, `top-center`, … `center` … `bottom-right`). `inside` tucks a node within the box against that part, `outside` puts it beyond, `on` centers it on the part.
 
+A child `inside` its own parent's corner is placed against the finished box and never grows it, so it can land on the parent's text or other children. `stays above`, `stays below`, `stays left of` or `stays right of` a sibling (or `parent text`) keeps it clear, and the box makes room: `node laptop.mark  icon: laptop  inside laptop top-right  stays above laptop.photos`. A picture beside a box's only text goes against the text instead: `1 right of drive text`.
+
 ### Styles and colors
 
 ```

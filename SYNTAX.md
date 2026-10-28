@@ -220,7 +220,7 @@ The text keeps its own position words, so `node d1 "Desktop 1 / Linux" (inside t
 
 With an empty text, `node flag "" badge: disk`, the node is exactly the picture and its padding, since an empty text takes no room.
 
-**A picture that is a thing of its own is a child**, placed like any other: `node drive.mark  icon: disk  inside drive top-right` in a corner. Placed against the text without `join-with:`, it is not part of the label: the text stays where it would be without it, and the box grows to hold both.
+**A picture that is a thing of its own is a child**, placed like any other: `node drive.mark  icon: disk  1 right of drive text` beside the text. Placed against the text without `join-with:`, it is not part of the label: the text stays where it would be without it, and the box grows to hold both. In the corner of a box its other children size, `node laptop.mark  icon: laptop  inside laptop top-right  stays above laptop.photos` ([Against its own parent](#against-its-own-parent)). A corner of a box with nothing in it but its text is on the text.
 
 ### Padding
 
@@ -566,7 +566,20 @@ A unit that includes a box's text is placed by the text's position words: on a l
 
 ### Against its own parent
 
-A child placed against its parent's side or corner, `inside server right` or `inside server top-left`, is placed against the finished box and never grows it. If it covers something, that is reported. To make the box hold something, place it relative to the other children. Something the box holds may not be placed against a thing on its own side or corner, since the box would then depend on itself; that is refused.
+A child placed against its parent's side or corner, `inside server right` or `inside server top-left`, is placed against the finished box and never grows it. That holds one axis at a time: `node c.j "j"  right of c.k  inside c top` is beside `c.k` across, so the box holds it across, and against the box's top down. A corner and a sibling saying the same axis, `inside c top-right  right of c.k`, are refused: the error offers `right of c.k  inside c top` and `inside c top-right  stays right of c.k` (below). If it covers something, that is reported. So is a child the box has no room for in that corner, such as a two-line picture in the corner of a box one line tall, as `node-overflow`; the box doesn't grow to fit it, since a box only just tall enough would put it level with the middle, not in the corner. To make the box hold something, place it relative to the other children, or keep it in the corner and clear of them with `stays`. Something the box holds may not be placed against a thing on its own side or corner, since the box would then depend on itself; that is refused.
+
+**`stays` keeps a child clear of the rest of its box.** A picture in the corner of a box its children size can land on one of them. `stays above`, `stays below`, `stays left of` and `stays right of` say which way to keep clear:
+
+```
+node laptop "Laptop" (inside top, align: left)
+node laptop.docs "Documents"
+node laptop.photos "Photos"  right of laptop.docs
+node laptop.mark  icon: laptop  inside laptop top-right  stays above laptop.photos
+```
+
+The laptop is still in the corner; `stays` never says where something goes. It says the laptop is at least the usual gap above Photos, and when it isn't, the box makes room: everything else it holds moves down together, so no gap a placement states changes, and the box grows by just enough. `(gap: wide)` or a number after the target asks for a different distance. Beside the box's own text, `stays right of drive text`, the box widens until the picture clears the text.
+
+A limit relates two things in one box that nothing else ties together: a child placed against the box's side or corner and another child, or the box's text; two children in different corners; something beside the text and the children below it. Between two children placed against each other, or across boxes, every distance is already stated, so a limit there is refused. So is one the box can't meet by growing, such as `inside laptop bottom-right  stays above laptop.photos`, and one a stated size leaves no room for.
 
 A title inside the border counts as content, so the box makes room for it. So does anything placed against the text. A title outside the border hangs off the box and doesn't count.
 
@@ -1126,7 +1139,8 @@ An **error** means the file can't be drawn: an unknown key, two placements on on
 | `edge-node-overlap` | a line across a node that isn't one of its ends, or through its own ends | on |
 | `edge-overlap` | two lines on one run for a stretch, however short; a collapsed bundle's bus, and lines from one statement such as `edge a -> b, c`, shared on purpose, are not reported | on |
 | `crowded-edge-ends` | several line ends bunched on a side too short to space them: two ends' marks would touch, or, where neither has a mark, the lines come within a third of a unit | on |
-| `node-overlap` | two nodes on one spot that no layout, `inside`, `on` or `overlap: allow` accounts for | on |
+| `node-overlap` | two nodes on one spot that no layout, `inside`, `on` or `overlap: allow` accounts for; `inside hub top-right` accounts for covering `hub`, not `hub`'s other children, and a box that draws nothing (no fill, border or text) can't be covered | on |
+| `node-overflow` | a node placed against its container's side or corner that the container has no room for there: less room on the far side than it keeps from the side it names | on |
 | `edge-no-length` | a line between two boxes that touch, drawn as its marks at the seam | on |
 | `edge-crossings` | two lines crossing | off |
 
@@ -1280,6 +1294,14 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- **`stays above`, `stays below`, `stays left of` and `stays right of`** keep a child placed in its box's corner clear of the other children: `node laptop.mark  icon: laptop  inside laptop top-right  stays above laptop.photos`. The laptop stays in the corner, and the box makes room. See [Against its own parent](#against-its-own-parent).
+- **Breaking: a corner and a sibling saying the same axis are refused.** `node c.j "j"  inside c top-right  right of c.k` used to be centered between the two, neither in the corner nor beside `c.k`, straddling the box's edge. The error offers `right of c.k  inside c top` to sit beside `c.k`, and `stays right of c.k` to keep the corner. The same goes for `inside c top-right  above c.k` up and down.
+- **A new finding, `node-overflow`**: a child placed in its box's corner or against its side that the box has no room for there, such as `node drive.mark  icon: disk  inside drive top-right` on a box one line tall. It used to run out of the box with nothing said.
+- **A child in its box's corner that covers one of the box's other children is reported** as `node-overlap`, with the `stays` that would keep it clear. Being placed `inside` a box used to excuse it from covering anything in that box, not only the box.
+- **A child beside a sibling and against its parent's top stays inside the parent.** `node c.j "j"  right of c.k  inside c top` used to be drawn wholly outside `c`, with nothing reported. Being against the parent's top only measures its height from the finished box; across, the box holds it like any other child.
 
 **0.19.1**
 

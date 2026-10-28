@@ -26,6 +26,7 @@ export const CHECK_DEFAULTS = {
   'edge-overlap': true,
   'crowded-edge-ends': true,
   'node-overlap': true,
+  'node-overflow': true,
   'edge-no-length': true,
   'edge-crossings': false,
 } as const;
@@ -107,6 +108,7 @@ export function setCheck(checks: Checks, kind: string, value: string, fail: (mes
 export function findings(layout: Layout, checks: Checks): Finding[] {
   const found: Finding[] = [];
   if (checks['node-overlap']) found.push(...nodeOverlaps(layout));
+  if (checks['node-overflow']) found.push(...nodeOverflows(layout));
   if (checks['text-overflow']) found.push(...textOverflows(layout));
   if (checks['edge-node-overlap'] || checks['edge-overlap'] || checks['edge-no-length'] || checks['crowded-edge-ends'] || checks['edge-crossings'] || checks['text-overlap']) {
     const plan = planSides(layout);
@@ -825,14 +827,22 @@ function nodeOverlaps(layout: Layout): Finding[] {
     // A deck's cards are stacked on each other by the deck, and so is what they hold.
     if (upA.some((one) => one.parent?.appearance['layout'] === 'deck' && upB.some((other) => other !== one && other.parent === one.parent))) return true;
     if (upA.some(saysOverlapAllowed) || upB.some(saysOverlapAllowed)) return true;
-    const placedOn = (over: LayoutNode[], under: LayoutNode[]) =>
-      over.some((node) => under.some((target) => stated.get(node)?.has(target)));
-    return placedOn(upA, upB) || placedOn(upB, upA);
+    // `inside hub top-right` accounts for covering hub, and what it holds
+    // covering hub, but not for covering hub's other children (design.org 5.6).
+    const placedOn = (over: LayoutNode[], under: LayoutNode) => over.some((node) => stated.get(node)?.has(under));
+    return placedOn(upA, b) || placedOn(upB, a);
   };
 
   const pairs: Array<{ earlier: LayoutNode; later: LayoutNode; width: number; height: number }> = [];
-  // A guide box draws nothing, so nothing drawn can cover it or be covered by it.
-  const sorted = layout.nodes.filter((node) => !node.guide).sort((a, b) => a.x - b.x);
+  // A guide box draws nothing, so nothing drawn can cover it or be covered by
+  // it, and neither can a box with no fill, no border, no picture and no
+  // text, such as a spacer holding its container open.
+  const blank = (node: LayoutNode): boolean =>
+    node.lines.every((line) => line.every((run) => run.text.trim() === '')) &&
+    node.body.kind !== 'icon' &&
+    node.appearance['fill'] === 'none' &&
+    node.appearance['border'] === 'none';
+  const sorted = layout.nodes.filter((node) => !node.guide && !blank(node)).sort((a, b) => a.x - b.x);
   let active: LayoutNode[] = [];
   for (const node of sorted) {
     active = active.filter((other) => other.x + other.width > node.x + EPSILON);
@@ -859,10 +869,76 @@ function nodeOverlaps(layout: Layout): Finding[] {
       ({ earlier, later, width, height }) =>
         new Finding(
           'node-overlap',
-          `node ${later.name} covers ${coveredPart(earlier, later)}node ${earlier.name}; ${size(width, height)}`,
+          `node ${later.name} covers ${coveredPart(earlier, later)}node ${earlier.name}; ${size(width, height)}` +
+            keepClear(earlier, later, width, height),
           later.line,
         ),
     );
+}
+
+/**
+ * For a child placed against its container's side or corner over one of its
+ * siblings, the limit that would make the box room for it (design.org 5.6):
+ * toward the side it is against, which is the only way growing the box moves
+ * it, and of a corner's two, the one that clears the shorter overlap.
+ */
+function keepClear(a: LayoutNode, b: LayoutNode, width: number, height: number): string {
+  const sides = framedSides;
+  if (a.parent === undefined || a.parent !== b.parent || (sides(a).length > 0) === (sides(b).length > 0)) return '';
+  const [own, other] = sides(a).length > 0 ? [a, b] : [b, a];
+  const words: Record<string, string> = { top: 'above', bottom: 'below', left: 'left of', right: 'right of' };
+  const ways = sides(own).map((side) => words[side]!);
+  const way = ways.length === 1 ? ways[0]! : height <= width ? ways.find((each) => each === 'above' || each === 'below')! : ways.find((each) => each.endsWith('of'))!;
+  return ` — to keep ${own.name} clear of it, add "stays ${way} ${other.name}" to ${own.name}`;
+}
+
+/** The sides of its container a child is placed against: `inside c top-right` is top and right. */
+function framedSides(node: LayoutNode): Array<'top' | 'bottom' | 'left' | 'right'> {
+  const parent = node.parent;
+  if (parent === undefined) return [];
+  const part = node.placements
+    .flatMap((placement) => placement.targets)
+    .find((target) => target.name === parent.name && target.part !== 'text')?.part;
+  if (part === undefined) return [];
+  return part.split('-').filter((word): word is 'top' | 'bottom' | 'left' | 'right' => ['top', 'bottom', 'left', 'right'].includes(word));
+}
+
+/**
+ * A child placed against its container's side or corner that the box has no
+ * room for there (design.org 5.6): less room on the far side than it keeps
+ * from the side it names, so it runs into the far side's padding or out of
+ * the box. The box never grows for it, so it is drawn as stated.
+ */
+function nodeOverflows(layout: Layout): Finding[] {
+  const found: Finding[] = [];
+  for (const node of layout.nodes) {
+    const parent = node.parent;
+    if (parent === undefined || node.guide) continue;
+    const short: string[] = [];
+    for (const side of framedSides(node)) {
+      const vertical = side === 'top' || side === 'bottom';
+      const start = vertical ? node.y : node.x;
+      const end = start + (vertical ? node.height : node.width);
+      const boxStart = vertical ? parent.y : parent.x;
+      const boxEnd = boxStart + (vertical ? parent.height : parent.width);
+      const kept = side === 'top' || side === 'left' ? start - boxStart : boxEnd - end;
+      const far = side === 'top' || side === 'left' ? boxEnd - end : start - boxStart;
+      if (far >= kept - EPSILON) continue;
+      const room = (vertical ? parent.height : parent.width) - kept * 2;
+      const [measure, against] = vertical ? ['tall', 'height'] : ['wide', 'width'];
+      short.push(`it is ${units(vertical ? node.height : node.width)} ${measure} and ${parent.name}'s ${against} leaves ${room > 0 ? units(room) : 'nothing'} inside its padding`);
+    }
+    if (short.length === 0) continue;
+    found.push(
+      new Finding(
+        'node-overflow',
+        `node ${node.name} has no room in the ${framedSides(node).join('-')} of ${parent.name}: ${short.join(', and ')} — ` +
+          `give ${parent.name} more room, or place ${node.name} against ${parent.name}'s text or its other children`,
+        node.line,
+      ),
+    );
+  }
+  return found;
 }
 
 function namePair(a: LayoutNode, b: LayoutNode): string {

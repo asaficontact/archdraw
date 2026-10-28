@@ -3,6 +3,7 @@ import type {
   Attrs,
   Axis,
   BundleStmt,
+  Limit,
   NodeStmt,
   Side,
   Placement,
@@ -1417,7 +1418,14 @@ function parseNode(head: Token[], line: number): NodeStmt {
     listed: NODE_TEXT_LISTED,
   });
   refuseNodeReads(bracket.values['reads'], subject, line);
-  const tail = parseTail(head, bracket.next, line, subject);
+  const limits: Limit[] = [];
+  const tail = parseTail(head, bracket.next, line, subject, (tokens, index) => {
+    const word = tokens[index]!;
+    if (word.quoted || word.text !== 'stays') return undefined;
+    const read = readLimit(tokens, index, line, subject);
+    limits.push(read.limit);
+    return read.next;
+  });
   refuseTextKey(tail.attrs, subject, 'after the name', line);
   return {
     kind: 'node',
@@ -1427,8 +1435,48 @@ function parseNode(head: Token[], line: number): NodeStmt {
     textAttrs: place === undefined ? bracket.values : { ...bracket.values, place },
     ...(titlePlacements.length > 0 ? { titlePlacements } : {}),
     placements: tail.placements,
+    ...(limits.length > 0 ? { limits } : {}),
     attrs: tail.attrs,
     line,
+  };
+}
+
+/**
+ * `stays above laptop.photos (gap: wide)`: a limit (design.org 5.6). The words
+ * after `stays` are read as a placement would be, then held to one straight
+ * way and one target, since a limit says which side of one thing to keep to.
+ */
+function readLimit(tokens: Token[], at: number, line: number, subject: string): { limit: Limit; next: number } {
+  const way = tokens[at + 1];
+  const straight = ['above', 'below', 'left', 'right'];
+  if (!way || way.quoted || !straight.includes(way.text)) {
+    const diagonal = way !== undefined && !way.quoted && isDirection(way.text);
+    throw new SourceError(
+      diagonal
+        ? `${subject}: "stays ${way.text}" keeps to two sides at once — write one limit for each, such as \`stays above a  stays right of a\``
+        : `${subject}: "stays" is followed by the way it keeps to — stays above, stays below, stays left of or stays right of`,
+      line,
+    );
+  }
+  const read = readPlacement(tokens, at + 1, line, subject, true);
+  const placement = read.placement;
+  if (placement.kind !== 'offset' || placement.own !== undefined || placement.gaps !== undefined) {
+    throw new SourceError(`${subject}: "stays" names a way and one thing, such as \`stays above laptop.photos\``, line);
+  }
+  if (placement.targets.length !== 1) {
+    throw new SourceError(
+      `${subject}: "${describePlacement(placement)}" after "stays" names ${placement.targets.length} things — a limit keeps clear of one; write one for each`,
+      line,
+    );
+  }
+  return {
+    limit: {
+      way: way.text as Limit['way'],
+      target: placement.targets[0]!,
+      ...(placement.gap !== undefined ? { gap: placement.gap } : {}),
+      line,
+    },
+    next: read.next,
   };
 }
 
