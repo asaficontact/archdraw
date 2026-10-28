@@ -338,6 +338,27 @@ export interface OnPlacement {
 export type Placement = OffsetPlacement | AlignPlacement | OnPlacement;
 
 /**
+ * `stays above laptop.photos (gap: wide)` — a limit, not a placement
+ * (design.org 5.6). It never says where the node goes, so no axis counts it;
+ * it rules out pictures where the node is less than a gap that way from its
+ * target, and the box holding both makes room by lengthening the one distance
+ * nobody stated.
+ */
+export interface Limit {
+  way: 'above' | 'below' | 'left' | 'right';
+  target: PlacementTarget;
+  gap?: string;
+  line: number;
+}
+
+/** How a limit reads back in the author's own words. */
+export function describeLimit(limit: Limit): string {
+  const of = limit.way === 'left' || limit.way === 'right' ? ' of' : '';
+  const gap = limit.gap === undefined ? '' : ` (gap: ${limit.gap})`;
+  return `stays ${limit.way}${of} ${nameTarget(limit.target)}${gap}`;
+}
+
+/**
  * The modifiers a placement understands, in brackets after its targets. Refused
  * by name when unrecognized, for the reason `DIAGRAM_KEYS` are: a modifier that
  * silently does nothing looks like a bug in the tool rather than a typo.
@@ -531,6 +552,8 @@ export interface NodeStmt {
   titlePlacements?: Placement[];
   /** Everything the author said about where this goes. Empty for the anchor. */
   placements: Placement[];
+  /** `stays above laptop.photos`: what it keeps clear of (design.org 5.6). */
+  limits?: Limit[];
   attrs: Attrs;
   /** `guide node frame ""`: does everything a node does except draw (design.org 8.1). */
   guide?: boolean;
