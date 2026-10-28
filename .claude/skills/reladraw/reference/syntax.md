@@ -1,4 +1,4 @@
-# Syntax reference — 0.19.1
+# Syntax reference — 0.20.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1295,7 +1295,7 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.20.0**
 
 - **`stays above`, `stays below`, `stays left of` and `stays right of`** keep a child placed in its box's corner clear of the other children: `node laptop.mark  icon: laptop  inside laptop top-right  stays above laptop.photos`. The laptop stays in the corner, and the box makes room. See [Against its own parent](#against-its-own-parent).
 - **Breaking: a corner and a sibling saying the same axis are refused.** `node c.j "j"  inside c top-right  right of c.k` used to be centered between the two, neither in the corner nor beside `c.k`, straddling the box's edge. The error offers `right of c.k  inside c top` to sit beside `c.k`, and `stays right of c.k` to keep the corner. The same goes for `inside c top-right  above c.k` up and down.
