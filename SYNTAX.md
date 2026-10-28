@@ -1,4 +1,4 @@
-# Syntax reference — 0.20.0
+# Syntax reference — 0.21.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1315,7 +1315,7 @@ Designed and absent from the code.
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
 
-**Unreleased**
+**0.21.0**
 
 - **A diagram can have a title**: `diagram  title: "How a login reaches the database"`. The SVG carries it as its own title, which a browser shows on the tab. See [The diagram](#the-diagram).
 - **`reladraw render --page`** writes a page for looking at a diagram: one self-contained HTML file in the diagram's colors, headed with its title, that pans, zooms, goes full screen, saves the SVG or a PNG, lists the findings and lights up what each one is about. See [A page for looking at a diagram](#a-page-for-looking-at-a-diagram).
