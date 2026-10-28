@@ -1033,6 +1033,14 @@ A key means one thing everywhere, so it can be wrong: `border:` on a node with n
 
 **Changing a color never moves anything.** Size is different: a bigger text or a thicker line takes more room.
 
+### A border's bracket
+
+```
+node host "Host"  border: (color: #d2904e, thickness: thick)
+```
+
+`border: red` is short for `border: (color: red)`. `thickness:` takes `thin`, `normal` (the default), `thick`, a multiple of normal such as `3`, or pixels such as `4px`; `border: thick` is refused with the bracket it meant. A thick border is drawn inside the box's outline and the box grows by the extra, so its padding is still measured from the inside of the stroke, a gap to its neighbor from the outside, and a line still ends on its outer edge. A stated `width:` or `height:` is the outside of the box, stroke included. A region's border is drawn inside the edge its points state, and the region doesn't grow.
+
 ### Styles
 
 ```
@@ -1297,6 +1305,7 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 
 **Unreleased**
 
+- **A border can be thicker or thinner**: `border: (color: #d2904e, thickness: thick)`, mirroring the line's bracket. A thick border is drawn inside the box, and the box grows to keep its padding, so it may move what is placed beside it. See [A border's bracket](#a-borders-bracket).
 - **A box can be lined up with something inside a box placed against it.** `node a "Node A"  even with b.1` with `node b "Node B" right of a` used to be refused, "nothing anchors the diagram", because `right of a` also centered B on A. That centering now gives way, as it already did to a placement written on B itself, and B goes where B.1 is level with A.
 
 **0.20.0**

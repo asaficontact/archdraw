@@ -15,7 +15,7 @@ import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type Outline } from './icons.js';
 import { insideOutline,isBoxy, isRound, placePath, shapeOf, SUBPROCESS_INSET, type ShapeLook } from './outline.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
-import { joinedToText, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
+import { joinedToText, outlineStated, type DepthStatement, type Layout, type LayoutEdge, type LayoutMark, type LayoutNode, type LineLook } from './model.js';
 import { DARK_THEME, THEMES, overlapFill, regionTint, textOnFill, themeColor, type Theme } from './themes.js';
 import { crossingPoints, planLines, traceRoute, visibleRuns, type Point, type Route } from './lines.js';
 import { patchPadding, placeLineTexts } from './linetexts.js';
@@ -387,7 +387,7 @@ function drawDeck(
   guides: Guides,
   url: string | undefined,
 ): Drawn[] {
-  const outlined = node.appearance['fill'] !== undefined || node.appearance['border'] !== undefined;
+  const outlined = outlineStated(node.appearance);
   const drawn = outlined ? node : { ...node, appearance: { ...node.appearance, fill: 'none', border: 'none' } };
   const cards = node.children.filter((child) => child !== node.heading && !joinedToText(child));
   // The cards are the same thing, so each looks like the front one unless it says otherwise.
@@ -455,8 +455,29 @@ function drawVenn(
 function borderSvg(node: LayoutNode, theme: Theme): string {
   if (node.body.kind !== 'shape') return '';
   const face = faceOf(node);
+  const d = outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners, node.body.look);
+  const stroke = borderStroke(node.borderWidth, `<path d="${d}"/>`, `rim-${node.name.replace(/[^\w.-]/g, '_')}`);
   const border = borderOf(node.appearance, theme, theme.containerStroke);
-  return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners, node.body.look)}" fill="none" stroke="${border}"/>`;
+  return `${stroke.clip}  <path d="${d}" fill="none" stroke="${border}"${stroke.attr}/>`;
+}
+
+/**
+ * How a border is stroked. A thick border lies wholly inside the outline: the
+ * outline is stroked twice as wide and clipped to itself, so only the inner
+ * half shows, and its outer edge is the outline exactly, along every side and
+ * at every corner and point of every shape, where a line ends and a gap is
+ * measured from (design.org 9.1). A normal border straddles the outline, as
+ * every box's always did, and writes nothing here. `detail` is for the lines
+ * drawn inside a shape, such as a cylinder's rim, which are as wide as the
+ * border and straddle where they run.
+ */
+function borderStroke(width: number | undefined, outline: string, id: string): { clip: string; attr: string; detail: string } {
+  if (width === undefined) return { clip: '', attr: '', detail: '' };
+  return {
+    clip: `  <clipPath id="${id}">${outline}</clipPath>\n`,
+    attr: ` stroke-width="${round(width * 2)}" clip-path="url(#${id})"`,
+    detail: ` stroke-width="${round(width)}" clip-path="url(#${id})"`,
+  };
 }
 
 /** What a node draws of its own, without its children, which are drawn as items of their own. */
@@ -543,6 +564,9 @@ function nodeSvg(
   // and the fill, drawn without a stroke, still shows behind the title's inner
   // half.
   const onBorder = node.lines.length > 0 && node.textAttrs['place']?.startsWith('on ') === true;
+  const d = outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look);
+  const stroke = borderStroke(node.borderWidth, `<path d="${d}"/>`, `border-${node.name.replace(/[^\w.-]/g, '_')}`);
+  if (stroke.clip) parts.push(stroke.clip.trimEnd());
   if (onBorder) {
     const id = `title-${node.name.replace(/[^\w.-]/g, '_')}`;
     const room = PAD / 2;
@@ -553,16 +577,14 @@ function nodeSvg(
       `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`,
       `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`,
       '  </mask>',
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="none"/>`,
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="none" stroke="${border}" mask="url(#${id})"/>`,
+      `  <path d="${d}" fill="${fill}" stroke="none"/>`,
+      `  <path d="${d}" fill="none" stroke="${border}"${stroke.attr} mask="url(#${id})"/>`,
     );
   } else {
-    parts.push(
-      `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="${border}"/>`,
-    );
+    parts.push(`  <path d="${d}" fill="${fill}" stroke="${border}"${stroke.attr}/>`);
   }
   for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height, look)) {
-    parts.push(`  <path d="${extra}" fill="none" stroke="${border}"/>`);
+    parts.push(`  <path d="${extra}" fill="none" stroke="${border}"${stroke.detail}/>`);
   }
 
   // A leaf's text defaults to the middle of its box, a container's to the top
@@ -628,6 +650,11 @@ function markSvg(mark: LayoutMark, theme: Theme, guides: Guides, markup: Record<
     ? `d="M${round(mark.x)} ${round(mark.y)}L${round(mark.x + mark.width)} ${round(mark.y + mark.height)}"`
     : `x="${round(mark.x)}" y="${round(mark.y)}" width="${round(mark.width)}" height="${round(mark.height)}" rx="4"`;
   const shape = flat ? 'path' : 'rect';
+  // A thick border lies inside the region's stated edge, as a box's does; one
+  // drawn as a line has no inside, so it is only wider.
+  const edge = flat
+    ? { clip: '', attr: mark.borderWidth === undefined ? '' : ` stroke-width="${round(mark.borderWidth)}"` }
+    : borderStroke(mark.borderWidth, `<rect ${box}/>`, `edge-${mark.name.replace(/[^\w.-]/g, '_')}`);
   // A text on the border breaks it, as a title on a box's border does.
   const hole = mark.text && mark.text.textAttrs['place']?.startsWith('on ') ? mark.text.box : undefined;
   const id = `region-${mark.name.replace(/[^\w.-]/g, '_')}`;
@@ -641,14 +668,14 @@ function markSvg(mark: LayoutMark, theme: Theme, guides: Guides, markup: Record<
   if (mark.guide) {
     const fill = color(said('fill')) ?? 'none';
     const border = color(said('border')) ?? guides.color;
-    return `${masked}  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
+    return `${edge.clip}${masked}  <${shape} ${box} fill="${fill}" stroke="${border}"${edge.attr} stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
   }
   const fill = regionFill(mark, theme);
   const border = color(said('border'));
   const opacity = fill.color === 'none' || fill.opacity >= 1 ? '' : ` fill-opacity="${round(fill.opacity)}"`;
   return (
-    `${masked}  <${shape} ${box} fill="${fill.color}"${opacity}` +
-    ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"${mask}/>${label}`
+    `${edge.clip}${masked}  <${shape} ${box} fill="${fill.color}"${opacity}` +
+    ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''}${edge.attr || ' stroke-width="1"'}${mask}/>${label}`
   );
 }
 

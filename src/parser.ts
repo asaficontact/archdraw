@@ -52,6 +52,7 @@ import {
   POINT_TEXT_SIDES,
   LINE_KEYS,
   LINE_VALUES,
+  BORDER_KEYS,
   CONTENTS_KEYS,
   EDGE_ORDER_KEYS,
   LAYOUT_KEYS,
@@ -413,6 +414,7 @@ const BRACKET_KEYS: Record<string, readonly string[]> = {
   text: TEXT_KEYS,
   contents: CONTENTS_KEYS,
   line: LINE_KEYS,
+  border: BORDER_KEYS,
   checks: CHECK_KINDS,
 };
 
@@ -421,6 +423,7 @@ const BRACKET_ABOUT: Record<string, { kind: string; example: string }> = {
   text: { kind: 'a text', example: 'color: theme-muted' },
   contents: { kind: 'a `contents:` bracket', example: 'widths: match' },
   line: { kind: 'a line', example: 'path: square' },
+  border: { kind: 'a border', example: 'thickness: thick' },
   checks: { kind: 'a `checks:` bracket', example: 'edge-crossings: on' },
 };
 
@@ -824,7 +827,8 @@ function readAttr(
       // A line's color is stored where `line: red` puts it, so the short form
       // and the bracket are one key: a style's `line: red` merges under an
       // edge's `line: (color: blue)`, and writing both on one line is a repeat.
-      const stored = key === 'line' && inner === 'color' ? 'line' : `${key}.${inner}`;
+      // A border's color the same.
+      const stored = (key === 'line' || key === 'border') && inner === 'color' ? key : `${key}.${inner}`;
       setOnce(attrs, stored, value, subject, line, { key: `${key}: (${inner}: …)`, value: (v) => v });
     }
     return read.next;
@@ -897,7 +901,7 @@ function readAttr(
     });
     return next;
   }
-  if (bracketKeys !== undefined && key !== 'text' && key !== 'line') {
+  if (bracketKeys !== undefined && key !== 'text' && key !== 'line' && key !== 'border') {
     // `contents: match` names the part and then says one of its two properties
     // without saying which. The brackets are what make the level shift visible,
     // so there is no unbracketed spelling to fall back to.
@@ -964,6 +968,14 @@ function readAttr(
         line,
       );
     }
+  }
+  if (key === 'border' && !valueToken.quoted && /^(thin|normal|thick|\d*\.?\d+(px)?)$/.test(valueToken.text)) {
+    // `border: red` is the short form of the color, as `line: red` is.
+    throw new SourceError(
+      `\`border: ${valueToken.text}\` — \`border:\` on its own takes a color. Its thickness goes in its bracket: ` +
+        `\`border: (thickness: ${valueToken.text})\``,
+      line,
+    );
   }
   if (key === 'align' && valueToken.text === 'widths') {
     // Removed in 0.3.0. It was a size operation wearing an alignment's name,

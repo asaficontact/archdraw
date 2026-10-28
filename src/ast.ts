@@ -523,6 +523,13 @@ export const TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'at'] as const;
 export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness', 'curve', 'turn', 'step-out'] as const;
 
 /**
+ * What a box's border takes in its bracket: `border: (color: red, thickness:
+ * thick)`, mirroring the line's. `border: red` is the short form of the color,
+ * and both are stored under the bare `border` key.
+ */
+export const BORDER_KEYS = ['color', 'thickness'] as const;
+
+/**
  * The words each of the line's properties takes, the default first. Thickness
  * takes a multiple of normal (`2`) or pixels (`3px`) as well. `turn:` takes a fraction and
  * `step-out:` a distance, so neither has a list.
