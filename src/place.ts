@@ -18,8 +18,8 @@
  * landed, and the container's box is found around them; a child's place on the
  * page is its container's plus its offset in that frame.
  */
-import type { Axis, Direction, OffsetPlacement, Part, Placement, PlacementTarget, PointExpr, PointStmt, RegionStmt, Side } from './ast.js';
-import { describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES, partWordHint } from './ast.js';
+import type { Axis, Direction, Limit, OffsetPlacement, Part, Placement, PlacementTarget, PointExpr, PointStmt, RegionStmt, Side } from './ast.js';
+import { describeLimit, describePlacement, describePoint, fractionAxis, nameTarget, PART_SIDES, partWordHint } from './ast.js';
 import { DECK_STEP, GAPS, HEADER_GAP, UNIT } from './constants.js';
 import { SourceError } from './errors.js';
 import { isWithin, joinedToText, type LayoutNode } from './model.js';
@@ -206,6 +206,8 @@ export class Placer {
   private readonly sizes = new Map<string, number>();
   private readonly frames = new Map<string, FrameAxis>();
   private readonly outlines = new Map<string, FrameAxis>();
+  /** A container's box while a limit tries it out (`roomFor`), in place of its final one. */
+  private readonly trials = new Map<string, FrameAxis>();
   private readonly working = new Set<string>();
   /** What is being worked out, innermost last, for reporting a circle. */
   private readonly trail: Array<{ node: LayoutNode; axis: Axis; placement?: Placement; size?: string }> = [];
@@ -280,6 +282,7 @@ export class Placer {
   /** Work out everything, and write it onto the nodes. */
   run(): void {
     this.checkAnchors(this.roots, undefined);
+    for (const node of this.byName.values()) this.checkLimitTargets(node);
     for (const node of this.byName.values()) {
       for (const axis of BOTH_AXES) {
         this.size(node, axis);
@@ -293,7 +296,86 @@ export class Placer {
       node.height = this.size(node, 'y');
     }
     for (const node of this.byName.values()) this.checkYielded(node);
+    for (const node of this.byName.values()) this.checkLimitsMet(node);
     for (const node of this.byName.values()) this.finish(node);
+  }
+
+  /**
+   * What a limit may relate (design.org 5.6): two things in one box that
+   * nothing else ties together, since the box's own spacing between them is
+   * the only distance it may lengthen.
+   */
+  private checkLimitTargets(node: LayoutNode): void {
+    for (const limit of node.limits ?? []) {
+      const parent = node.parent;
+      const said = `"${node.name} ${describeLimit(limit)}"`;
+      const named = this.byName.get(limit.target.name);
+      if (!named) {
+        throw new SourceError(`${said}: "${limit.target.name}" does not exist${partWordHint(limit.target.name, this.byName.keys())}`, limit.line);
+      }
+      const ownText = parent !== undefined && named === parent && limit.target.part === 'text';
+      const sibling = parent !== undefined && named.parent === parent && named !== node && limit.target.part === undefined;
+      if (!parent || !(ownText || sibling)) {
+        throw new SourceError(
+          `${said}: a limit keeps clear of something in the same box, a sibling or ` +
+            `${parent ? `"${parent.name} text"` : 'the box\'s own text'}, since that box is what makes room`,
+          limit.line,
+        );
+      }
+      if (ownText && !this.hasTitle(parent)) {
+        throw new SourceError(`${said}: "${parent.name}" has no text`, limit.line);
+      }
+      const axis = limitAxis(limit);
+      const own = this.groupOf(node, parent, axis);
+      if (own !== 'frame' && own === this.groupOf(ownText ? 'text' : named, parent, axis)) {
+        const how = own === 'title' ? `with "${parent.name}"'s text` : 'against each other';
+        throw new SourceError(
+          `${said} could never change anything: "${node.name}" and "${nameTarget(limit.target)}" are placed ${how}, ` +
+            'so the distance between them is already stated — a limit relates two things in one box that nothing else ties together, ' +
+            `such as a child placed against "${parent.name}"'s side and one of its other children`,
+          limit.line,
+        );
+      }
+    }
+  }
+
+  /**
+   * Which of the things a box holds that nothing ties to each other a member
+   * belongs to, on one axis: its title, what is placed against the box's
+   * sides, or the rest, placed against each other.
+   */
+  private groupOf(member: LayoutNode | 'text', parent: LayoutNode, axis: Axis): 'title' | 'frame' | 'content' {
+    const titleTied = this.anchoredOnTitle(parent) || (parent.titlePlacements?.length ?? 0) > 0;
+    if (member === 'text' || member === parent.heading || joinedToText(member)) return titleTied ? 'content' : 'title';
+    return this.framedOn(member, axis) ? 'frame' : 'content';
+  }
+
+  /** A limit the box couldn't make room for: no side helps, or a stated size holds it in. */
+  private checkLimitsMet(node: LayoutNode): void {
+    for (const limit of node.limits ?? []) {
+      const parent = node.parent!;
+      const axis = limitAxis(limit);
+      const frame = this.frame(parent, axis);
+      if (this.shortfall(parent, axis, { subject: node, limit }, frame) <= LIMIT_EPSILON) continue;
+      const said = `"${describeLimit(limit)}"`;
+      if (frame.boxSize !== this.outline(parent, axis).boxSize) {
+        throw new SourceError(
+          `"${node.name} ${describeLimit(limit)}", but "${parent.name}"'s stated ${axis === 'x' ? 'width' : 'height'} leaves no room for it — ` +
+            'make it bigger, or leave the size unstated so the box can make room',
+          limit.line,
+        );
+      }
+      const named = this.byName.get(limit.target.name)!;
+      const framed = [node, named].find((member) => member !== parent && this.framedOn(member, axis));
+      const where = framed
+        ? this.statements(framed, axis).map((statement) => `"${framed.name} ${describePlacement(statement.placement)}"`).join(' and ')
+        : undefined;
+      throw new SourceError(
+        `"${node.name}" can't keep to ${said}${where ? ` with ${where}` : ''}: "${parent.name}" holds both, and growing it ` +
+          'never moves them apart — keep one of the two',
+        limit.line,
+      );
+    }
   }
 
   // --- the quantities ------------------------------------------------------
@@ -461,6 +543,8 @@ export class Placer {
   /** A container's box and title in its own frame, at the size it ends up. */
   private frame(node: LayoutNode, axis: Axis): FrameAxis {
     const key = `${node.name}\n${axis}`;
+    const trial = this.trials.get(key);
+    if (trial) return trial;
     const known = this.frames.get(key);
     if (known) return known;
     const worked = this.guard(`frame\n${key}`, node, axis, undefined, () =>
@@ -475,9 +559,87 @@ export class Placer {
     const key = `${node.name}\n${axis}`;
     const known = this.outlines.get(key);
     if (known) return known;
-    const worked = this.guard(`outline\n${key}`, node, axis, undefined, () => this.workOutFrame(node, axis));
+    const worked = this.guard(`outline\n${key}`, node, axis, undefined, () => this.roomFor(node, axis));
     this.outlines.set(key, worked);
     return worked;
+  }
+
+  /**
+   * A container's outline with room made for its children's limits
+   * (design.org 5.6). The only distance a limit may lengthen is between what
+   * the box holds and its sides, which every placement inside leaves unstated.
+   * Each side's room moves a limit's two ends apart at a fixed rate (all of
+   * it for a corner, half for the middle of a side), so one trial of each
+   * side gives the rate, and the room is the shortfall over the rate. A side
+   * that doesn't help is never used; with both helping, as for two corner
+   * children, the box grows evenly. A limit no side helps is left unmet, and
+   * `checkLimits` refuses it.
+   */
+  private roomFor(node: LayoutNode, axis: Axis): FrameAxis {
+    const limits = this.limitsIn(node, axis);
+    let room: Room = NO_ROOM;
+    let frame = this.workOutFrame(node, axis);
+    for (let round = 0; round < limits.length * 2; round++) {
+      const short = (at: FrameAxis) => Math.max(...limits.map((each) => this.shortfall(node, axis, each, at)));
+      const owed = short(frame);
+      if (owed <= LIMIT_EPSILON) break;
+      const rate = (more: Room) => (owed - short(this.workOutFrame(node, axis, more))) / owed;
+      const low = rate({ low: room.low + owed, high: room.high });
+      const high = rate({ low: room.low, high: room.high + owed });
+      if (low > LIMIT_EPSILON && high > LIMIT_EPSILON) {
+        const both = rate({ low: room.low + owed, high: room.high + owed });
+        room = { low: room.low + owed / both, high: room.high + owed / both };
+      } else if (low > LIMIT_EPSILON) {
+        room = { ...room, low: room.low + owed / low };
+      } else if (high > LIMIT_EPSILON) {
+        room = { ...room, high: room.high + owed / high };
+      } else {
+        break;
+      }
+      frame = this.workOutFrame(node, axis, room);
+    }
+    return frame;
+  }
+
+  /** The limits a container's children state on one axis. */
+  private limitsIn(node: LayoutNode, axis: Axis): { subject: LayoutNode; limit: Limit }[] {
+    return node.children.flatMap((subject) =>
+      (subject.limits ?? []).filter((limit) => limitAxis(limit) === axis).map((limit) => ({ subject, limit })),
+    );
+  }
+
+  /** How much nearer than its gap a limit's two ends are, in a trial frame of their container. */
+  private shortfall(node: LayoutNode, axis: Axis, { subject, limit }: { subject: LayoutNode; limit: Limit }, at: FrameAxis): number {
+    const own = this.memberAt(subject, node, axis, at);
+    const other = limit.target.name === node.name ? { start: at.textStart, size: at.textSize } : this.memberAt(this.byName.get(limit.target.name)!, node, axis, at);
+    const gap = this.limitGap(subject, limit);
+    const toward = limit.way === 'above' || limit.way === 'left';
+    return toward ? own.start + own.size + gap - other.start : other.start + other.size + gap - own.start;
+  }
+
+  /** The distance a limit keeps: its gap, or the usual one; beside a text, as beside any text. */
+  private limitGap(subject: LayoutNode, limit: Limit): number {
+    if (limit.gap !== undefined) return gapPixels(limit.gap, `"${subject.name}"`, limit.line);
+    const parent = subject.parent!;
+    if (limit.target.name === parent.name) return this.hasTitle(parent) ? UNIT : 0;
+    return GAPS['normal']!;
+  }
+
+  /** Where a child of `node` is on one axis, in a trial frame of `node`. */
+  private memberAt(member: LayoutNode, node: LayoutNode, axis: Axis, at: FrameAxis): Extent {
+    const size = this.size(member, axis);
+    if (member === node.heading) return { start: at.titleStart, size };
+    if (joinedToText(member)) return { start: at.textStart + this.unitStart(member, axis), size };
+    if (!this.framedOn(member, axis)) return { start: this.start(member, axis), size };
+    // Placed against the box: where the trial box puts it, worked out
+    // without remembering, since the box isn't final.
+    const key = `${node.name}\n${axis}`;
+    this.trials.set(key, at);
+    try {
+      return { start: this.placed(member, axis), size };
+    } finally {
+      this.trials.delete(key);
+    }
   }
 
   private remember(memo: Map<string, number>, node: LayoutNode, axis: Axis, work: () => number): number {
@@ -596,6 +758,7 @@ export class Placer {
     }
     const [first, second] = statements as [Statement, Statement];
     if (first.kind !== 'align' && second.kind !== 'align' && first.kind !== second.kind) {
+      this.refuseBoxAndSibling(node, axis, first.placement, second.placement);
       // Opposite placements: centered between the two at its own size. Each
       // target stays where its own statement put it.
       const after = first.kind === 'after' ? first : second;
@@ -608,6 +771,38 @@ export class Placer {
     const pins = this.pins(node, axis);
     if (pins) return pins.start;
     throw this.overStated(node, axis, statements);
+  }
+
+  /**
+   * Opposite placements center a box between two others, but not when one of
+   * them is its own container's box: `inside c top-right  right of c.k` would
+   * be neither in the corner nor a gap from `c.k` (design.org 5.3). Refused,
+   * naming the two ways out: the corner's other half beside the sibling, or
+   * the corner kept and the sibling held off with `stays`.
+   */
+  private refuseBoxAndSibling(node: LayoutNode, axis: Axis, first: Placement, second: Placement): void {
+    const parent = node.parent;
+    if (!parent || this.againstBox(first, parent) === this.againstBox(second, parent)) return;
+    const [box, other] = this.againstBox(first, parent) ? [first, second] : [second, first];
+    if (other.kind !== 'offset') return;
+    const ways: string[] = [];
+    const corner = box.targets[0]?.part;
+    if (box.kind === 'offset' && box.written !== undefined && corner !== undefined && corner.includes('-')) {
+      const [down, across] = corner.split('-') as [string, string];
+      const kept = axis === 'x' ? down : across;
+      ways.push(`to sit ${describePlacement(other)} at the ${kept} of ${parent.name}, write "${describePlacement(other)}  ${box.written} ${parent.name} ${kept}"`);
+    }
+    const way = component(other.direction, axis);
+    const straight = axis === 'x' ? (way === 'after' ? 'right' : 'left') : way === 'after' ? 'below' : 'above';
+    const of = axis === 'x' ? ' of' : '';
+    if (other.targets.length === 1) {
+      ways.push(`to stay ${describePlacement(box)} and clear of ${nameTarget(other.targets[0]!)}, write "stays ${straight}${of} ${nameTarget(other.targets[0]!)}"`);
+    }
+    throw new SourceError(
+      `"${node.name}" says twice where it goes ${AXIS_SAID[axis]}, with "${describePlacement(box)}" and "${describePlacement(other)}"` +
+        (ways.length > 0 ? `; ${ways.join('; ')}` : ' — keep one'),
+      other.line,
+    );
   }
 
   private edgeOf(node: LayoutNode, axis: Axis, statement: Statement): number {
@@ -1136,7 +1331,7 @@ export class Placer {
       whole = { start: frame.boxStart, size: frame.boxSize };
       if (target.part === 'text') text = { start: frame.textStart, size: frame.textSize };
     } else if (named.parent === parent) {
-      if (this.framed(named) && !this.framed(node)) {
+      if (this.framedOn(named, axis) && !this.framedOn(node, axis)) {
         throw new SourceError(
           `"${node.name}" is placed against "${named.name}", which is placed against "${parent.name}" itself. ` +
             `Nothing may be placed against a thing placed against its container's side or corner — place ` +
@@ -1194,9 +1389,30 @@ export class Placer {
   framed(node: LayoutNode): boolean {
     const parent = node.parent;
     if (!parent || this.facts.get(parent)!.layout || this.facts.get(parent)!.venn) return false;
-    return node.placements.some((placement) =>
-      placement.targets.some((target) => target.name === parent.name && target.part !== 'text'),
+    return node.placements.some((placement) => this.againstBox(placement, parent));
+  }
+
+  /**
+   * Framed on one axis: what says where it goes on that axis is against its
+   * container's box. `right of c.k  inside c top` is framed down, so its height
+   * is measured from the finished box, and is content across, so the box holds
+   * it there (design.org 5.6).
+   */
+  framedOn(node: LayoutNode, axis: Axis): boolean {
+    if (!this.framed(node)) return false;
+    const parent = node.parent!;
+    const statements = this.statements(node, axis);
+    if (statements.length > 0) return statements.some((statement) => this.againstBox(statement.placement, parent));
+    // Nothing states this axis, so a lone direction on the other one centers it on its target.
+    return node.placements.some(
+      (placement) =>
+        placement.kind === 'offset' && component(placement.direction, axis) === undefined && this.againstBox(placement, parent),
     );
+  }
+
+  /** Whether a placement names its container's box, any part but the text. */
+  private againstBox(placement: Placement, parent: LayoutNode): boolean {
+    return placement.targets.some((target) => target.name === parent.name && target.part !== 'text');
   }
 
   /**
@@ -1261,10 +1477,16 @@ export class Placer {
   /**
    * The children a container's box is the outline of, besides its title: not
    * its heading, not what is joined to its text, and not those placed against
-   * the box.
+   * the box. Given an axis, a child placed against the box only on the other
+   * axis is content on this one.
    */
-  private contentOf(node: LayoutNode): LayoutNode[] {
-    return node.children.filter((child) => child !== node.heading && !joinedToText(child) && !this.framed(child));
+  private contentOf(node: LayoutNode, axis?: Axis): LayoutNode[] {
+    return node.children.filter(
+      (child) =>
+        child !== node.heading &&
+        !joinedToText(child) &&
+        !(axis === undefined ? this.framed(child) : this.framedOn(child, axis)),
+    );
   }
 
   /** Whether a node has a title: its text, what is joined to it, or a heading. */
@@ -1477,12 +1699,12 @@ export class Placer {
    * not placed against the box itself, and the title when it sits inside the
    * border or on it.
    */
-  private workOutFrame(node: LayoutNode, axis: Axis): FrameAxis {
+  private workOutFrame(node: LayoutNode, axis: Axis, room: Room = NO_ROOM): FrameAxis {
     const facts = this.facts.get(node)!;
     const title = this.titleOf(node);
     const hasTitle = this.hasTitle(node);
     const titleSize = this.titleSize(node, axis);
-    const content = this.contentOf(node);
+    const content = this.contentOf(node, axis);
     const anchoredOnTitle = this.anchoredOnTitle(node);
 
     let low = Infinity;
@@ -1514,6 +1736,12 @@ export class Placer {
         high = Math.max(high, band);
       }
     }
+    // Room a child's limit asks for (design.org 5.6), between what the box
+    // holds and its sides, so a title against a side moves out with it.
+    if (!empty) {
+      low -= room.low;
+      high += room.high;
+    }
 
     // Where the title sits in the frame. When something is placed against it,
     // it is the frame's anchor and sits at the origin; otherwise it is placed
@@ -1529,6 +1757,10 @@ export class Placer {
       if (empty && !anchoredOnTitle && hasTitle) {
         low = titleStart;
         high = titleStart + titleSize;
+      }
+      if (empty) {
+        low -= room.low;
+        high += room.high;
       }
     } else if (title.how === 'center' || title.side === 'center') {
       titleStart = (low + high) / 2 - titleSize / 2;
@@ -1774,7 +2006,7 @@ export class Placer {
   private innerOther(node: LayoutNode, axis: Axis): number {
     const key = `inner\n${node.name}\n${axis}`;
     return this.guard(key, node, axis, undefined, () => {
-      const content = this.contentOf(node);
+      const content = this.contentOf(node, axis);
       let low = Infinity;
       let high = -Infinity;
       for (const child of content) {
@@ -2387,6 +2619,22 @@ export class Placer {
     }
     return { low, high };
   }
+}
+
+/** Room a container makes for its children's limits, beyond what it holds, on each side of one axis. */
+interface Room {
+  low: number;
+  high: number;
+}
+
+const NO_ROOM: Room = { low: 0, high: 0 };
+
+/** Less than this is no distance at all, for a limit worked out in floating point. */
+const LIMIT_EPSILON = 0.01;
+
+/** The axis a limit keeps to: up and down for above and below. */
+function limitAxis(limit: Limit): Axis {
+  return limit.way === 'above' || limit.way === 'below' ? 'y' : 'x';
 }
 
 interface FrameAxis {

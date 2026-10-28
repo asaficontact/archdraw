@@ -914,6 +914,7 @@ function buildTree(
       attrs: stmt.attrs,
       appearance,
       placements: stmt.placements,
+      ...(stmt.limits ? { limits: stmt.limits } : {}),
       ...(stmt.guide ? { guide: true } : {}),
       line: stmt.line,
     };

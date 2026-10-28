@@ -1,4 +1,4 @@
-import type { Attrs, EdgeTextPlace, Kind, Mark, NodeCorners, Placement, PlacementTarget, ViaEntry, Way } from './ast.js';
+import type { Attrs, EdgeTextPlace, Kind, Limit, Mark, NodeCorners, Placement, PlacementTarget, ViaEntry, Way } from './ast.js';
 
 /** A rectangle on the page; a side or a point has no size on one axis or both. */
 export interface Rect {
@@ -58,6 +58,8 @@ export interface LayoutNode {
    * (design.org 7.2).
    */
   titlePlacements?: Placement[];
+  /** `stays above laptop.photos`: what it keeps clear of (design.org 5.6). */
+  limits?: Limit[];
 
   x: number;
   y: number;
