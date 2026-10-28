@@ -1224,7 +1224,7 @@ The default order: a container before its own children, boxes before lines, an e
 | `(color: …)` after a text | the text | any node, an edge; `text: (color: …)` in a style or default |
 | `line` | the line and its end marks | an edge |
 
-A key means one thing everywhere, so it can be wrong: `border:` on a node with no outline is refused, and the error lists what that kind has. A color is written as the viewer receives it: a hex value, any CSS color, or a theme color. There is no list of color words: `green` works because it is a CSS color. A quoted color is refused. `none` means the part isn't painted: `fill: none`.
+A key means one thing everywhere, so it can be wrong: `border:` on a node with no outline is refused, and the error lists what that kind has. A color is written as the viewer receives it: a hex value, any CSS color, or a theme color. There is no list of color words: `green` works because it is a CSS color. A quoted color is refused, and so is a hex value without its `#`. `none` means the part isn't painted: `fill: none`.
 
 **Changing a color never moves anything.** Size is different: a bigger text or a thicker line takes more room.
 
@@ -1497,6 +1497,8 @@ Pre-1.0, so the minor number is where a breaking change goes. Every removal is r
 - **A new finding, `node-overflow`**: a child placed in its box's corner or against its side that the box has no room for there, such as `node drive.mark  icon: disk  inside drive top-right` on a box one line tall. It used to run out of the box with nothing said.
 - **A child in its box's corner that covers one of the box's other children is reported** as `node-overlap`, with the `stays` that would keep it clear. Being placed `inside` a box used to excuse it from covering anything in that box, not only the box.
 - **A child beside a sibling and against its parent's top stays inside the parent.** `node c.j "j"  right of c.k  inside c top` used to be drawn wholly outside `c`, with nothing reported. Being against the parent's top only measures its height from the finished box; across, the box holds it like any other child.
+- **Breaking: a hex color without its `#` is refused.** `fill: 444444` used to be passed to the viewer as is, which drew nothing. The error says to write `#444444`.
+- **The playground saves a PNG** with Save PNG, at twice the picture's size, in the fonts the page shows it in. Download is now Save SVG beside it.
 
 **0.19.1**
 

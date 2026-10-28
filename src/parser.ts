@@ -2814,6 +2814,12 @@ function checkColorWord(value: string, subject: string, line: number): void {
       line,
     );
   }
+  // Hex digits without their `#` are no CSS color, so the viewer would draw nothing.
+  if (/^([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value)) {
+    // `bad` and `face` are spelled in hex digits too, so without a digit it is only a guess.
+    const fix = /\d/.test(value) ? 'a hex color is written' : 'if it is a hex color, write';
+    throw new SourceError(`${subject}: \`${value}\` is not a color — ${fix} \`#${value}\``, line);
+  }
 }
 
 function follows(tokens: Token[], at: number, word: string): boolean {
