@@ -241,7 +241,7 @@ above-left of X   above-right of X  below-left of X   below-right of X
 
 **A gap is exactly what was said.** `right of a` puts the box a `normal` gap from `a`'s right side. The gap goes in the placement's bracket, `right of a (gap: tight)`, or as a distance in front, `2 right of a`; writing both is refused as said twice. A diagonal distance is per axis: `2 below-right of a` is 2 across and 2 down.
 
-**A lone direction also centers on its target.** `right of a` alone puts the box level with `a`'s center, because walking right from something keeps you on its center line. That half gives way as soon as another placement says how high.
+**A lone direction also centers on its target.** `right of a` alone puts the box level with `a`'s center, because walking right from something keeps you on its center line. That half gives way as soon as another placement says how high, whichever box it is written on: with `node b right of a` and `node a even with b.1`, B goes where B.1 is level with A, rather than centered on it.
 
 ```
 node parser
@@ -316,7 +316,7 @@ A target need not be written first, but there must be an order in which each box
 
 ### One anchor
 
-Exactly one box in the file places itself, and every other is placed relative to it, directly or through others. Two unplaced boxes are refused by name. Chaining, `b right of a` then `c right of b`, is the plain way to write a few in a row; `layout:` ([Containers](#containers)) is for "these, in a line, in written order". Place against neighbors rather than hanging many boxes off one small one: a gap from a small box says nothing about the large ones also hanging off it.
+Exactly one box in the file places itself, and every other is placed relative to it, directly or through others. Two unplaced boxes are refused by name. The anchor may be split between two boxes, one saying nothing across and the other nothing up and down: with `node a "A"  even with b.1` and `node b "B" right of a`, A says nothing across, and B, once its centering on A gives way, nothing up and down. Chaining, `b right of a` then `c right of b`, is the plain way to write a few in a row; `layout:` ([Containers](#containers)) is for "these, in a line, in written order". Place against neighbors rather than hanging many boxes off one small one: a gap from a small box says nothing about the large ones also hanging off it.
 
 ### A box goes where it is placed
 
@@ -1294,6 +1294,10 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**Unreleased**
+
+- **A box can be lined up with something inside a box placed against it.** `node a "Node A"  even with b.1` with `node b "Node B" right of a` used to be refused, "nothing anchors the diagram", because `right of a` also centered B on A. That centering now gives way, as it already did to a placement written on B itself, and B goes where B.1 is level with A.
 
 **0.20.0**
 
