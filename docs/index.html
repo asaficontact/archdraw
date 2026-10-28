@@ -964,7 +964,8 @@
             <select id="theme" aria-label="Theme" title="Writes a diagram theme: line into the source"></select>
             <button id="zoom" type="button" aria-pressed="false">Actual size</button>
             <button id="copy" type="button">Copy SVG</button>
-            <button id="download" type="button">Download</button>
+            <button id="download" type="button" title="Save the picture as an SVG file">Save SVG</button>
+            <button id="download-png" type="button" title="Save the picture as a PNG, at twice its size">Save PNG</button>
           </div>
         </div>
         <div id="diagram"></div>
@@ -11834,6 +11835,12 @@ function checkColorWord(value, subject, line) {
     if (value.startsWith('theme-') && !THEME_COLORS.includes(value)) {
         throw new SourceError(`${subject}: there is no theme color "${value}" — the theme colors are ${THEME_COLORS.join(', ')}`, line);
     }
+    // Hex digits without their `#` are no CSS color, so the viewer would draw nothing.
+    if (/^([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value)) {
+        // `bad` and `face` are spelled in hex digits too, so without a digit it is only a guess.
+        const fix = /\d/.test(value) ? 'a hex color is written' : 'if it is a hex color, write';
+        throw new SourceError(`${subject}: \`${value}\` is not a color — ${fix} \`#${value}\``, line);
+    }
 }
 function follows(tokens, at, word) {
     const token = tokens[at];
@@ -16734,6 +16741,7 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
         var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
         var download = document.getElementById('download');
+        var downloadPng = document.getElementById('download-png');
         var openButton = document.getElementById('open');
         var saveButton = document.getElementById('save');
         var file = document.getElementById('file');
@@ -17277,17 +17285,44 @@ globalThis.reladraw = { compile, draw, SourceError, highlightLine, THEMES, THEME
           );
         });
 
-        download.addEventListener('click', function () {
-          if (!drawn) return;
-          var url = URL.createObjectURL(new Blob([drawn], { type: 'image/svg+xml' }));
+        function saveBlob(blob, name) {
+          var url = URL.createObjectURL(blob);
           var link = document.createElement('a');
           link.href = url;
-          link.download = 'diagram.svg';
+          link.download = name;
           link.click();
           // A tick, so the navigation has the URL before it is taken back.
           setTimeout(function () {
             URL.revokeObjectURL(url);
           }, 0);
+        }
+
+        download.addEventListener('click', function () {
+          if (!drawn) return;
+          saveBlob(new Blob([drawn], { type: 'image/svg+xml' }), 'diagram.svg');
+        });
+
+        // The browser draws the SVG onto a canvas with the fonts the page
+        // already shows it in, so the PNG is the picture on screen. Twice the
+        // size, so it stays sharp on a high-density screen. A data URL rather
+        // than a blob one, which some browsers count as foreign and refuse to
+        // let the canvas be read back.
+        downloadPng.addEventListener('click', function () {
+          if (!drawn) return;
+          var image = new Image();
+          image.onload = function () {
+            var canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth * 2;
+            canvas.height = image.naturalHeight * 2;
+            canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(function (blob) {
+              blob ? saveBlob(blob, 'diagram.png') : flash(downloadPng, 'Failed');
+            }, 'image/png');
+          };
+          image.onerror = function () {
+            flash(downloadPng, 'Failed');
+          };
+          image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(drawn);
         });
 
         /* ---- the source as a file ---- */
