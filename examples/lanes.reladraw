@@ -1,52 +1,52 @@
-// Several edges between the same two sides nest instead of crossing. The lanes
-// are as wide as the texts riding in them.
+// Several lines between the same two sides are copies of one line, and fan out
+// side by side instead of lying on top of each other. Copies never cross.
 
 style plain  fill: theme-fill  border: theme-border
 
-// A reciprocal pair around a corner. Further left along Gateway's bottom is
-// further down Queue's left, so the order reverses between the two ends.
+// A reciprocal pair around a corner. Each copy is shifted to the left of the
+// way it travels, so the order reverses between the two ends: further left
+// along Gateway's bottom is further down Queue's left.
 node gateway "Gateway"  style: plain
-node queue   "Queue"    below gateway  right of gateway (gap: wide)  style: plain
-edge gateway -> queue  "publishes messages"  from: bottom  to: left
-edge queue -> gateway  "receives messages"   from: left    to: bottom
+node queue   "Queue"    5 below gateway  22 right of gateway  style: plain
+edge gateway -> queue  "publishes" (at: 2/3)  from: bottom  to: left  line: (path: square, corners: rounded)
+edge queue -> gateway  "receives" (at: 2/3)   from: left    to: bottom  line: (path: square, corners: rounded)
 
-// Two edges facing each other, where the order runs the same way at both ends.
-node client "Client"  below queue (gap: wide)  left of queue  style: plain
-node server "Server"  right of client (gap: wide)  level with client  style: plain
-edge client -> server  "request"   from: right  to: left
-edge server -> client  "response"  from: left   to: right
+// Two lines facing each other, where the order runs the same way at both ends.
+node client "Client"  below queue (gap: wide)  left even with gateway  style: plain
+node server "Server"  10 right of client  style: plain
+edge client -> server  "request" (below edge)   from: right  to: left
+edge server -> client  "response" (above edge)  from: left   to: right
 
-// Five lanes down a vertical run. The texts all sit at the same height, so the
-// only way they clear each other is sideways and a lane has to be a whole text
-// wide. These two nodes are wide enough for five of them.
-node fan  "Fan of five, spread wide"  below client (gap: wide)  left of client  style: plain
+// Five copies down a vertical run, spread evenly along the two sides. The
+// texts read along their lines, since level they would be wider than a lane.
+node fan  "Fan of five, spread wide"  below client (gap: wide)  left even with gateway  style: plain
 node hub  "Hub of the same five"     below fan (gap: wide)  style: plain
-edge fan -> hub  "one"    from: bottom  to: top
-edge fan -> hub  "two"    from: bottom  to: top
-edge fan -> hub  "three"  from: bottom  to: top
-edge fan -> hub  "four"   from: bottom  to: top
-edge fan -> hub  "five"   from: bottom  to: top
+edge fan -> hub  "one" (reads: along)    from: bottom  to: top
+edge fan -> hub  "two" (reads: along)    from: bottom  to: top
+edge fan -> hub  "three" (reads: along)  from: bottom  to: top
+edge fan -> hub  "four" (reads: along)   from: bottom  to: top
+edge fan -> hub  "five" (reads: along)   from: bottom  to: top
 
-// Two edges pointing the same way. Nothing tells them apart, so the order they
+// Two lines pointing the same way. Nothing tells them apart, so the order they
 // are written in decides. Swap these two lines and the texts swap lanes.
-node left_wall  "Producer"  below hub (gap: wide)  left of hub  style: plain
-node right_wall "Consumer"  right of left_wall (gap: wide)  level with left_wall  style: plain
-edge left_wall -> right_wall  "bulk"     from: right  to: left
-edge left_wall -> right_wall  "control"  from: right  to: left
+node left_wall  "Producer"  below hub (gap: wide)  left even with gateway  style: plain
+node right_wall "Consumer"  9 right of left_wall  style: plain
+edge left_wall -> right_wall  "bulk" (below edge)     from: right  to: left
+edge left_wall -> right_wall  "control" (above edge)  from: right  to: left
 
-// Sharing one side only is not a bundle. The far ends differ, and that is
-// enough to order them.
-node spoke "Spoke"  below right_wall (gap: wide)  style: plain
+// Sharing one side only doesn't make copies. The far ends differ, and their
+// order along the side decides which end is which.
+node spoke "Spoke"  below left_wall (gap: 16)  left even with gateway  style: plain
 node up    "Up"     above spoke  right of spoke (gap: wide)  style: plain
 node down  "Down"   below spoke  right of spoke (gap: wide)  style: plain
 edge spoke -> up    from: right  to: left
 edge spoke -> down  from: right  to: left
 
-// More edges than the two sides can hold. The arrowheads squeeze together
-// because there is nowhere further along an edge to go, and each line makes up
-// the shortfall by bowing out in the middle, where the texts ride.
-node narrow "Narrow"  below spoke (gap: wide)  left of spoke  style: plain
-node also   "Also"    right of narrow (gap: wide)  level with narrow  style: plain
+// Five copies need sides long enough to hold them. Nothing grows a box to
+// make room, so these two are given the height; at their own height the ends
+// would crowd together, drawn and reported.
+node narrow "Narrow"  below down (gap: wide)  left even with gateway  height: 10  style: plain
+node also   "Also"    9 right of narrow  height: 10  style: plain
 edge narrow -> also  "first"   from: right  to: left
 edge narrow -> also  "second"  from: right  to: left
 edge narrow -> also  "third"   from: right  to: left

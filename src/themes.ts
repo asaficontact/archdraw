@@ -54,6 +54,32 @@ function accent(color: string, page: string, on: string, subtle = mix(color, pag
   return { color, subtle, on };
 }
 
+/**
+ * A venn's overlap when it states no fill: the theme's secondary at its subtle
+ * strength laid over the left set's fill, so the shared part reads as both
+ * sets at once. A left fill that can't be measured is taken as the theme's
+ * primary-subtle, the left set's default.
+ */
+export function overlapFill(under: string, theme: Theme): string {
+  const base = /^#[0-9a-f]{6}$/i.test(under) ? under : theme.primary.subtle;
+  return mix(theme.secondary.color, base, SUBTLE);
+}
+
+/**
+ * A region's fill when it states none (design.org 8.3): the theme's primary
+ * mixed toward the page, so that drawn at a region's half opacity it reads as
+ * the primary at 12% did, the tint regions have always had. A page color that
+ * can't be measured keeps the primary itself, at a quarter of the opacity.
+ */
+export function regionTint(theme: Theme, opacity: number): { color: string; opacity: number } {
+  const hex = /^#[0-9a-f]{6}$/i;
+  if (!hex.test(theme.primary.color) || !hex.test(theme.background)) return { color: theme.primary.color, opacity: opacity * REGION_TINT };
+  return { color: mix(theme.primary.color, theme.background, REGION_TINT), opacity };
+}
+
+/** How much of the primary a region's own tint keeps, so that at half opacity it is 12% of it. */
+const REGION_TINT = 0.24;
+
 /** `amount` of `color` over `page`, both `#rrggbb`. */
 function mix(color: string, page: string, amount: number): string {
   const channel = (hex: string, at: number) => parseInt(hex.slice(at, at + 2), 16);
@@ -114,7 +140,7 @@ export function textOnFill(fill: string, theme: Theme): string | undefined {
   return apart(theme.text) >= apart(theme.background) ? theme.text : theme.background;
 }
 
-function luminance(hex: string): number {
+export function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((at) => {
     const c = parseInt(hex.slice(at, at + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -145,10 +171,11 @@ export const DARK_THEME: Theme = {
   iconInk: '#8d8d8e',
   iconShade: '#3e3d58',
   // The reference's two colored boxes: `synced` is the green, `dump` the red.
-  // Their fills are sampled rather than mixed, so the benchmark written in
-  // theme colors renders exactly as it did in hex.
+  // The green's fill is sampled rather than mixed, so the benchmark written in
+  // theme colors renders as it did in hex. The red's is mixed, as every other
+  // theme's is: the sampled #460000 glared across a venn's whole set.
   primary: accent('#486544', '#111111', '#d9d9d9', '#142814'),
-  secondary: accent('#8f3a3a', '#111111', '#d9d9d9', '#460000'),
+  secondary: accent('#8f3a3a', '#111111', '#d9d9d9'),
 };
 
 /** The dark theme's counterpart: the same roles, on a white page. */

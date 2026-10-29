@@ -1,7 +1,8 @@
-// A node sits as close to what it names as its placements allow.
+// A node sits exactly where its placements say: a gap is the distance asked
+// for, not a minimum.
 
 node anchor "anchor"
 node far    "far"   right of anchor
 node near   "near"  right of far
 
-node trailing "one tight gap from near"  left of near  below anchor  gap: tight  overlap: allow  shape: none
+node trailing "one tight gap from near"  left of near (gap: tight)  below anchor (gap: tight)  overlap: allow  shape: none

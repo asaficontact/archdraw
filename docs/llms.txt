@@ -1,12 +1,13 @@
 # reladraw
 
-> reladraw is a text language for diagrams where you say where things go. A file states the arrangement in relative terms — `right of api`, `below worker`, `between web and db` — and the tool works out only the distances, producing a standalone SVG. There are no coordinates and no auto-layout.
+> reladraw is a text language for diagrams where you say where things go. A file states the arrangement in relative terms (`right of api`, `below worker (gap: tight)`, `even with db`) and the tool draws exactly that, producing a standalone SVG. There are no coordinates and no auto-layout: nothing is moved to make room and no line finds its own way.
 
 Most models have not seen reladraw in training, and its syntax is not Mermaid's, Graphviz's or D2's. Read the full documentation below before writing a file rather than guessing at syntax. Things to know first:
 
-- A statement starts at the beginning of a line and may continue onto indented lines below it. The statements are `node`, `edge`, `style`, `diagram` and `default`. `//` starts a comment; `#` opens a hex color.
+- A statement starts at the beginning of a line and may continue onto indented lines below it. The statements are `node`, `edge`, `point`, `region`, `bundle`, `guide`, `style`, `default`, `diagram` and `icon`. `//` starts a comment; `#` opens a hex color.
 - Anything the file leaves ambiguous is refused with an error naming the statement, never guessed. Read the error, fix the file, render again.
-- Render with `reladraw diagram.reladraw -o diagram.svg`, or `npx reladraw` without installing.
+- What may not read as meant, such as two boxes on one spot or a line through a box, is drawn as written and reported as a one-line warning saying where and how much. Fix the source until there are none.
+- Render with `reladraw render diagram.reladraw -o diagram.svg`, or `npx reladraw render …` without installing. `reladraw check diagram.reladraw` prints only the warnings, and `reladraw format diagram.reladraw` lays the file out again, changing only spacing; run it on a file before handing it over. To show someone the picture, `reladraw render diagram.reladraw --page` writes a self-contained HTML page with pan, zoom and full screen; open that rather than building a page around the SVG.
 - These pages describe the main branch, which can run ahead of the release on npm. If the installed tool refuses a construct documented here, check the changelog at the end of the syntax reference.
 
 A small file:
@@ -14,11 +15,11 @@ A small file:
 ```
 node app "Web app"
 node app.ui  "Interface"
-node app.api "API"  below app.ui
+node app.api "API"  below app.ui (gap: tight)
 
-node store "Database"  right of app  level with app
+node store "Database"  right of app (gap: 12)  even with app.api
 
-edge app.api -> store  "queries"  from: right  to: left
+edge app.api -> store  "queries"
 ```
 
 ## Docs

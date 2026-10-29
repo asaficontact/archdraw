@@ -1,10 +1,12 @@
-// Edges that leave the area the nodes cover. The page grows to hold them: the
-// nodes here cover 421x230 and the page comes out 465x328.
+// Lines that leave the area the nodes cover. The page grows to hold them, on
+// every side a line goes past.
+
+default edge  line: (path: square, corners: rounded)
 
 style plain  fill: theme-fill  border: theme-border
 
 node a "A"                            style: plain
-node b "B"  right of a  (gap: wide)   style: plain
+node b "B"  right of a  (gap: wide)  width: 5  style: plain
 node c "C"  right of b                style: plain
 
 node d "D"  below a and c             style: plain
@@ -15,8 +17,8 @@ edge a -> b  "over the top"  from: top  to: top
 // The same shape across a narrow gap.
 edge b -> c  from: top  to: top
 
-// Out the left and back into the bottom, so the loop hangs off the left edge.
-edge d -> a  "round the side"  from: left  to: left
+// Out the left and back into the left, so the loop hangs off the left edge.
+edge d -> a  "round the side" (at: 1/4)  from: left  to: left
 
-// And one under the bottom row.
-edge a -> d  from: bottom  to: bottom
+// Out the right and round into the bottom, under the bottom row.
+edge c -> d  "under" (at: 2/3)  from: right  to: bottom

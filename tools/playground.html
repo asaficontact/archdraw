@@ -9,11 +9,38 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>reladraw playground</title>
+    <title>reladraw playground: write diagrams in the browser</title>
     <meta
       name="description"
-      content="Write a diagram as stated relationships and watch it solve, in the browser."
+      content="The official reladraw playground. Write a diagram in reladraw, the text language where you say where things go, and see the picture as you type. Free, runs in the browser, nothing to install."
     />
+    <!-- One address for search engines and link previews, whichever way the
+         page was reached. -->
+    <link rel="canonical" href="https://reladraw.github.io/reladraw/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="reladraw" />
+    <meta property="og:title" content="reladraw playground" />
+    <meta
+      property="og:description"
+      content="Write a diagram in reladraw, the text language where you say where things go, and see the picture as you type."
+    />
+    <meta property="og:url" content="https://reladraw.github.io/reladraw/" />
+    <meta property="og:image" content="https://reladraw.github.io/reladraw/arch-render.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "reladraw playground",
+        "url": "https://reladraw.github.io/reladraw/",
+        "description": "The official browser playground for reladraw, a text diagram language where you say where things go.",
+        "applicationCategory": "DesignApplication",
+        "operatingSystem": "Any",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "sameAs": ["https://github.com/reladraw/reladraw", "https://www.npmjs.com/package/reladraw"]
+      }
+    </script>
     <style>
       :root {
         --page: #0d0d10;
@@ -22,6 +49,7 @@
         --ink: #d9d9d9;
         --muted: #8b8b8b;
         --warn: #d2904e;
+        --finding: #d8c26a;
         --diagram: #111111;
         /* Syntax colors. Keywords and the placement vocabulary are the two
            things worth picking out of a line: what kind of statement this is,
@@ -420,14 +448,87 @@
         display: none;
       }
 
-      #error.locatable {
-        cursor: pointer;
-      }
-
       #error b {
         font-weight: 600;
         color: var(--warn);
         border-bottom: 1px solid currentColor;
+        cursor: pointer;
+      }
+
+      #error button {
+        float: right;
+        margin: -3px 0 0 12px;
+      }
+
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      /* Findings are kept apart from errors: an error stops the drawing, a
+         finding only says where the drawing, made as written, may not read as
+         meant. So they sit under the diagram, not the source, in the ink
+         rather than the error color, and only after Check is pressed: the
+         writer here is looking at the picture. */
+      #findings {
+        max-height: 30%;
+        overflow: auto;
+        padding: 8px 18px;
+        border-top: 1px solid var(--edge);
+        background: var(--panel);
+        font-size: 13px;
+        transition: opacity 120ms ease;
+      }
+
+      #findings:empty {
+        display: none;
+      }
+
+      #findings.stale {
+        opacity: 0.45;
+      }
+
+      #findings p {
+        margin: 2px 0;
+        white-space: pre-wrap;
+      }
+
+      #findings .note {
+        color: var(--muted);
+      }
+
+      #findings .again {
+        display: none;
+      }
+
+      #findings.stale .again {
+        display: block;
+      }
+
+      #findings button {
+        all: unset;
+        display: block;
+        margin: 2px 0;
+        white-space: pre-wrap;
+        cursor: pointer;
+      }
+
+      #findings button:focus-visible {
+        outline: 1px solid var(--muted);
+      }
+
+      #findings b {
+        font-weight: 600;
+        border-bottom: 1px solid currentColor;
+      }
+
+      #findings i {
+        font-style: normal;
+        color: var(--finding);
       }
 
       /* The examples picker. A list of names beside one diagram drawn large:
@@ -532,6 +633,81 @@
         margin-left: auto;
       }
 
+      /* Format settings: one row a setting, its name, its control, and a line
+         on what it does. A list, not the picker's two panes. */
+      #format-settings[open] {
+        display: flex;
+        flex-direction: column;
+        width: min(640px, calc(100vw - 32px));
+        height: auto;
+        max-height: calc(100vh - 32px);
+      }
+
+      #format-settings .note {
+        margin: 0;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--edge);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      #format-fields {
+        overflow-y: auto;
+        padding: 6px 18px;
+      }
+
+      #format-fields label {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 2px 12px;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--edge);
+        font-size: 13px;
+      }
+
+      #format-fields label code {
+        font-family: var(--mono);
+      }
+
+      #format-fields label span {
+        grid-column: 2;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      #format-fields select,
+      #format-fields input {
+        font: 12px var(--mono);
+        color: var(--ink);
+        background: var(--page);
+        border: 1px solid var(--edge);
+        border-radius: 3px;
+        padding: 3px 6px;
+        min-width: 0;
+      }
+
+      #format-problem {
+        margin: 0;
+        padding: 0 18px;
+        color: var(--warn);
+        font-size: 12px;
+      }
+
+      #format-problem:not(:empty) {
+        padding: 8px 18px;
+      }
+
+      @media (max-width: 760px) {
+        #format-fields label {
+          grid-template-columns: 1fr;
+        }
+
+        #format-fields label span {
+          grid-column: 1;
+        }
+      }
+
       kbd {
         font: inherit;
         color: var(--ink);
@@ -597,9 +773,35 @@
       </footer>
     </dialog>
 
+    <dialog id="format-settings" aria-label="Format settings">
+      <div class="bar">
+        <h2>Format settings</h2>
+        <div><button type="button" data-close>Close</button></div>
+      </div>
+      <p class="note">
+        How Format lays the source out. These are remembered in this browser only; for a project, put them in a
+        <code>.reladraw-format</code> file beside its diagrams.
+      </p>
+      <form id="format-fields"></form>
+      <p id="format-problem" role="alert"></p>
+      <footer>
+        <button type="button" id="format-reset">Reset to defaults</button>
+        <button type="button" id="format-copy" title="Copy these settings as the text of a .reladraw-format file">Copy as .reladraw-format</button>
+      </footer>
+    </dialog>
+
     <main>
       <section>
-        <div class="bar"><h2>Source</h2></div>
+        <div class="bar">
+          <h2>Source</h2>
+          <div>
+            <button id="open" type="button" title="Open a .reladraw file into the source">Open…</button>
+            <button id="save" type="button" title="Save the source as a .reladraw file">Save…</button>
+            <button id="format" type="button" title="Lay the source out again (Shift+Alt+F)">Format</button>
+            <button id="format-open" type="button" aria-haspopup="dialog" title="How Format lays the source out">Format settings…</button>
+            <input id="file" type="file" accept=".reladraw,text/plain" hidden />
+          </div>
+        </div>
         <div class="editor">
           <pre id="highlight" aria-hidden="true"></pre>
           <textarea id="source" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
@@ -612,10 +814,15 @@
               <code>node <i>name</i> <i>["text"]</i> <i>[placements]</i> <i>[key: value …]</i></code><br />
               <code>edge <i>a</i> -&gt; <i>b</i> <i>["text"]</i> <i>[key: value …]</i></code>
               &nbsp;<i>(<code>&lt;-</code> to write the target first, <code>&lt;-&gt;</code> for both ends)</i><br />
+              <code>point <i>name</i> <i>where</i></code> &nbsp;<code>region <i>name</i> <i>a</i> top-left to <i>b</i> bottom-right</code><br />
+              <code>bundle <i>name</i> via: <i>…</i></code> &nbsp;<i>(a path lines share)</i>
+              &nbsp;<code><b>guide</b> node|edge|point|region …</code> <i>(reference only; tick Guides to see them)</i><br />
               <code>style <i>name</i> <i>key: value …</i></code><br />
               <code>diagram theme: nord  background: #1e2229  text: (color: #e0e0e0)</code><br />
               <code>default node|leaf|container|edge <i>key: value …</i></code>
-              &nbsp;<i>(a style every one of that kind wears; the more specific wins)</i>
+              &nbsp;<i>(a style every one of that kind wears; the more specific wins)</i><br />
+              <i>The picture is drawn exactly as written: nothing is moved to make room, and lines go only
+              where they are told. Anything that overlaps is drawn as written; Check, above the diagram, reports it, as <code>reladraw check</code> does.</i>
             </dd>
 
             <dt>Labels</dt>
@@ -626,30 +833,46 @@
             </dd>
 
             <dt>Containment</dt>
-            <dd><code>node server.docker "Docker"</code> — a dotted name is a child. Declare the parent first. With no text of its own, it reads "docker".</dd>
+            <dd>
+              <code>node server.docker "Docker"</code> — a dotted name is a child. Declare the parent first. With no text of its own, it reads "docker".<br />
+              <code>layout: column</code> or <code>row</code> — the children in written order, with
+              <code>(gap: tight, widths: match, align-children: left)</code>.
+              Without a layout, one child is unplaced and the rest are placed against it.<br />
+              <code>layout: deck</code> — a stack of cards, the first child in front.<br />
+              <code>gather-children: left</code> — where the children sit in spare room.
+              <code>shape: none</code> on a container draws no box.
+            </dd>
 
             <dt>Placement</dt>
             <dd>
               <code><b>above</b> X</code> <code><b>below</b> X</code>
               <code><b>left of</b> X</code> <code><b>right of</b> X</code>
               <code><b>above-left of</b> X</code> … <code><b>below-right of</b> X</code><br />
-              <code><b>level with</b> X</code> — share a center line;
-              <code><b>top</b>|<b>bottom</b>|<b>left</b>|<b>right</b> <b>level with</b> X</code> shares that edge.<br />
+              <code><b>even with</b> X</code> — share a center line;
+              <code><b>top</b>|<b>bottom</b>|<b>left</b>|<b>right</b> <b>even with</b> X</code> shares that edge.<br />
               <code>right of A <b>and</b> B</code> — against the box that just bounds them both.<br />
-              <code><b>on</b> X <b>at</b> top-right</code> — stamped on X's box, overlapping it.
-              The nine positions are
-              <code>top-left</code> <code>top-center</code> <code>top-right</code>
+              <code><b>inside</b> X top-right</code> <code><b>outside</b> X right</code>
+              <code><b>on</b> X bottom-left</code> — against a part of X. The parts are
+              <code>text</code>, the sides <code>top</code> <code>bottom</code> <code>left</code> <code>right</code>,
+              and <code>top-left</code> <code>top-center</code> <code>top-right</code>
               <code>left-center</code> <code>center</code> <code>right-center</code>
               <code>bottom-left</code> <code>bottom-center</code> <code>bottom-right</code>.<br />
-              <i>A node takes as many placements as it needs. One on its own binds both axes.</i>
+              <code><b>on</b> between A and B</code> <code>below down from A and left from B</code> — at a point.<br />
+              <i>One node is unplaced; every other is placed against something. One direction on its own
+              also centers on its target. Each axis is said once.</i>
             </dd>
 
             <dt>Gaps</dt>
             <dd>
-              <code>right of X <b>(gap: wide)</b></code> on the placement, or
-              <code>gap: tight</code> on the node as its default.
-              One of <code>none</code> <code>tight</code> <code>normal</code> <code>wide</code>,
-              and every one is a <i>minimum</i>.
+              <code>right of X <b>(gap: wide)</b></code> or <code><b>2</b> right of X</code>, on the placement.
+              One of <code>none</code> <code>tight</code> <code>normal</code> <code>wide</code> (0, 2, 4, 8 units),
+              or a number of units; a box is about 4 units tall. A gap is <i>exact</i>.
+            </dd>
+
+            <dt>Sizes</dt>
+            <dd>
+              <code>width: 30</code> <code>height: menu</code> <code>height: 0.5 menu height</code>
+              <code>height: a top to c bottom</code> <code>min-width: 10</code>
             </dd>
 
             <dt>Appearance</dt>
@@ -657,6 +880,7 @@
               <code>style: <i>name</i></code>
               <code>fill: #191728</code>
               <code>border: none</code>
+              <code>corners: sharp</code> <i>(a box; rounded unless told)</i>
               <code>line: #d2904e</code> <i>(an edge)</i>
               <code>overlap: allow</code>
               <code>url: "https://example.com"</code>
@@ -665,21 +889,13 @@
             <dt>Lines</dt>
             <dd>
               <code>line: (path: square, corners: rounded)</code> — everything about an edge's line.
-              <code>path:</code> takes <code>curved</code> <code>square</code> <code>straight</code>;
+              <code>path:</code> takes <code>straight</code> (the default) <code>square</code> <code>curved</code>;
               <code>corners:</code> <code>sharp</code> <code>rounded</code>;
-              <code>crossing:</code> <code>none</code> <code>arc</code> <code>gap</code> <code>square</code>;
+              <code>crossing:</code> <code>gap</code> <code>arc</code> <code>square</code> <code>none</code>;
               <code>pattern:</code> <code>solid</code> <code>dashed</code> <code>dotted</code> <code>dash-dot</code>;
-              <code>thickness:</code> <code>thin</code> <code>normal</code> <code>thick</code> or a number.
+              <code>thickness:</code> <code>thin</code> <code>normal</code> <code>thick</code>, a multiple, or <code>3px</code>;
+              <code>turn: 1/3</code> <code>step-out: tight</code> <code>curve: subtle</code>.
               <i><code>default edge  line: (path: square)</code> sets every edge.</i>
-            </dd>
-
-            <dt>Contents</dt>
-            <dd>
-              <code>contents: (widths: match, align: center)</code> — how a container's
-              children sit when its title is wider than they are.
-              <code>widths:</code> takes <code>natural</code> <code>match</code>
-              <code>fill</code>; <code>align:</code> takes
-              <code>left</code> <code>center</code> <code>right</code>.
             </dd>
 
             <dt>Body</dt>
@@ -687,8 +903,8 @@
               <code>shape: rectangle|document|circle|none</code> — the outline the node is drawn with;
               <code>none</code> is text with no box, which is what an annotation is.<br />
               <code>icon: <i>name</i></code> — the node <i>is</i> that picture, with no box.<br />
-              <code>badge: <i>name</i></code> — the picture sits <i>beside</i> the text and the node keeps its box.<br />
-              <code>deck: "text" <i>["text" …]</i></code> — offset copies behind the box, one per text.<br />
+              <code>badge: <i>name</i></code> — the picture is part of the label, beside the text, and the node keeps its box.<br />
+              <code>layout: deck  cards: "text" <i>["text" …]</i></code> — a stack of cards, front first, one per text.<br />
               Pictures: <code>disk</code> <code>desktop</code> <code>laptop</code>
               <code>package</code> <code>cubes</code> <code>cube</code> <code>database</code>.<br />
               Your own: <code>icon <i>name</i> """&lt;svg …&gt;…&lt;/svg&gt;"""</code> declares one,
@@ -698,12 +914,12 @@
             <dt>Text</dt>
             <dd>
               Everything a text says about itself goes in brackets after it:
-              <code>"Docker" (at: bottom-center, align: center)</code>
               <code>(color: theme-muted)</code>
               <code>(size: small|normal|large)</code>
               <code>(wrap: 24)</code> <i>(characters, folds the text)</i>.
-              <code>at:</code> takes the nine positions above. In a style, which has no
-              text of its own, the bracket hangs off the key:
+              A title says which side it sits against: <code>"Server" (inside top, align: left)</code>,
+              <code>(on top)</code>, <code>(outside top)</code>, <code>(center)</code>.
+              In a style, which has no text of its own, the bracket hangs off the key:
               <code>text: (color: theme-muted)</code>.<br />
               <code>" / "</code> in any text is a line break; <code>\/</code> is a literal slash.<br />
               <code>"name / <b>[dim]</b>quieter<b>[/dim]</b>"</code> draws those words in the
@@ -712,11 +928,13 @@
 
             <dt>Links</dt>
             <dd>
-              <code>from: right</code> <code>to: left</code> name a side and curve the line.<br />
-              <code><b>between</b> a <b>and</b> b</code> sends it down the gap between two nodes,
-              with <code>vertically</code> or <code>horizontally</code> if they sit diagonally.<br />
-              <code><b>below</b> c</code> — or above, left of, right of — says which side of a node
-              the line passes, where it goes by that node.
+              A line is straight between its two boxes, through anything in between, unless told otherwise.<br />
+              <code>from: right</code> <code>to: left</code> name a side;
+              <code>to: bottom-center</code> or <code>to: left 3/4 down</code> a point on it.<br />
+              <code>via: c top, between a and b</code> — the places the line passes, in order:
+              just outside a side, a point, a box's center, <code>through <i>region</i> horizontal</code>.<br />
+              <code>"text" (at: start)</code> <code>(at: 1/4)</code> <code>(above edge)</code>
+              <code>(on: longest level)</code> — where a line's text sits; the middle by default.
             </dd>
 
             <dt>Comments</dt>
@@ -737,13 +955,21 @@
         <div class="bar">
           <h2>Diagram</h2>
           <div>
+            <label class="toggle" title="Draw what is written with guide in front, as --guides does">
+              <input id="guides" type="checkbox" /> Guides
+            </label>
+            <button id="check" type="button" title="Look for overlaps and other places the picture may not read as meant">
+              Check
+            </button>
             <select id="theme" aria-label="Theme" title="Writes a diagram theme: line into the source"></select>
             <button id="zoom" type="button" aria-pressed="false">Actual size</button>
             <button id="copy" type="button">Copy SVG</button>
-            <button id="download" type="button">Download</button>
+            <button id="download" type="button" title="Save the picture as an SVG file">Save SVG</button>
+            <button id="download-png" type="button" title="Save the picture as a PNG, at twice its size">Save PNG</button>
           </div>
         </div>
         <div id="diagram"></div>
+        <div id="findings" role="status" aria-live="polite"></div>
       </section>
     </main>
 
@@ -759,11 +985,11 @@
         // explaining that in advance only gets in the way.
         var SEED = [
           'node parser "Parser"',
-          'node renderer "Renderer"  right of parser',
-          'node resolver "Resolver"  right of parser  left of renderer  level with parser',
+          'node resolver "Resolver"  right of parser (gap: 12)',
+          'node renderer "Renderer"  right of resolver (gap: 12)',
           '',
-          'edge parser -> resolver    "statements"  from: right  to: left',
-          'edge resolver -> renderer  "layout"      from: right  to: left',
+          'edge parser -> resolver    "statements"',
+          'edge resolver -> renderer  "layout"',
           '',
         ].join('\n');
 
@@ -773,7 +999,7 @@
         // examples/. The template on its own has neither the library nor the
         // examples, so it is never opened directly.
         var EXAMPLES = [
-          { name: 'start', about: 'Three boxes, and the middle one holds the other two apart.', source: SEED },
+          { name: 'start', about: 'Three boxes in a row, each a stated distance from the last.', source: SEED },
         ].concat(globalThis.reladrawExamples || []);
 
         var source = document.getElementById('source');
@@ -790,38 +1016,23 @@
         var theme = document.getElementById('theme');
         var copy = document.getElementById('copy');
         var download = document.getElementById('download');
+        var downloadPng = document.getElementById('download-png');
+        var openButton = document.getElementById('open');
+        var saveButton = document.getElementById('save');
+        var file = document.getElementById('file');
+        var guides = document.getElementById('guides');
+        var checkButton = document.getElementById('check');
+        var findings = document.getElementById('findings');
+        var GUIDES = 'reladraw.guides';
 
         var drawn = '';
         var errorLine = null;
         // The example the editor holds unchanged, or null once it is edited.
         var current = null;
 
-        /* ---- the source in the URL, so a diagram is a link ---- */
-
-        function encode(text) {
-          var bytes = new TextEncoder().encode(text);
-          var binary = '';
-          for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-        }
-
-        function decode(fragment) {
-          var padded = fragment.replace(/-/g, '+').replace(/_/g, '/');
-          while (padded.length % 4) padded += '=';
-          var binary = atob(padded);
-          var bytes = new Uint8Array(binary.length);
-          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          return new TextDecoder().decode(bytes);
-        }
+        /* ---- the source kept in the browser ---- */
 
         function stow() {
-          // replaceState rather than location.hash: one entry per keystroke
-          // would make the back button useless.
-          try {
-            history.replaceState(null, '', '#' + encode(source.value));
-          } catch (e) {
-            /* an over-long URL is not worth failing the page for */
-          }
           try {
             localStorage.setItem(STORE, source.value);
           } catch (e) {
@@ -830,19 +1041,11 @@
         }
 
         function opening() {
-          var fragment = location.hash.slice(1);
-          if (fragment) {
-            try {
-              return decode(fragment);
-            } catch (e) {
-              /* a mangled link falls through to what was last edited */
-            }
-          }
           try {
             var kept = localStorage.getItem(STORE);
             if (kept !== null) return kept;
           } catch (e) {
-            /* as above */
+            /* private browsing, or storage refused */
           }
           return SEED;
         }
@@ -986,21 +1189,38 @@
 
         function show(message, line) {
           error.textContent = '';
-          error.classList.remove('locatable');
           errorLine = null;
           if (message === null) {
             diagram.classList.remove('stale');
             return;
           }
+          // For pasting into an issue or a chat with an agent.
+          var copyError = document.createElement('button');
+          copyError.type = 'button';
+          copyError.textContent = 'Copy';
+          copyError.title = 'Copy the error';
+          error.appendChild(copyError);
+          var said = message;
           if (line !== undefined && line !== null) {
             errorLine = line;
-            error.classList.add('locatable');
+            said = 'line ' + line + ': ' + message;
             var where = document.createElement('b');
             where.textContent = 'line ' + line;
+            where.title = 'Select the line in the source';
             error.appendChild(where);
             error.appendChild(document.createTextNode(': '));
           }
           error.appendChild(document.createTextNode(message));
+          copyError.addEventListener('click', function () {
+            toClipboard(said).then(
+              function () {
+                flash(copyError, 'Copied');
+              },
+              function () {
+                flash(copyError, 'Blocked');
+              },
+            );
+          });
           // The last good diagram stays up, dimmed. Every half-typed line is a
           // parse error, so blanking the pane would make it flicker on every
           // keystroke and hide the thing being edited against.
@@ -1019,19 +1239,122 @@
           // Before the compile, not after: a half-typed line is a parse error
           // and its coloring still has to follow the cursor.
           paint();
+          // Findings describe the source they were made from. Once it changes
+          // they are dimmed, not cleared, and undoing back to it lights them up
+          // again.
+          findings.classList.toggle('stale', checked !== null && source.value !== checked);
+          if (waiting) clearTimeout(waiting);
+          waiting = null;
+          render();
+        }
+
+        // A diagram that takes long to draw is drawn once typing pauses, so
+        // the keystrokes aren't held up behind it (issue #6). A quick one is
+        // drawn on every keystroke, as before.
+        var waiting = null;
+        var cost = 0;
+        function drawSoon() {
+          if (cost < 50) return draw();
+          paint();
+          findings.classList.toggle('stale', checked !== null && source.value !== checked);
+          if (waiting) clearTimeout(waiting);
+          waiting = setTimeout(function () {
+            waiting = null;
+            render();
+          }, 150);
+        }
+
+        function render() {
           var svg;
+          var started = performance.now();
           try {
-            svg = reladraw.compile(source.value);
+            svg = reladraw.compile(source.value, viewing());
           } catch (e) {
+            cost = performance.now() - started;
             show(e.message, e instanceof reladraw.SourceError ? e.line : undefined);
             return;
           }
+          cost = performance.now() - started;
           drawn = svg;
           diagram.innerHTML = svg;
           diagram.style.background = pageColor(svg);
           theme.value = themeOf(source.value) || reladraw.DEFAULT_THEME;
           show(null);
         }
+
+        // What the viewer chose, as opposed to what the file says. Unchecked
+        // is not "hide": it leaves it to the file's diagram guides: line.
+        function viewing() {
+          return guides.checked ? { guides: true } : {};
+        }
+
+        guides.addEventListener('change', function () {
+          try {
+            localStorage.setItem(GUIDES, guides.checked ? 'show' : '');
+          } catch (e) {
+            /* not remembered, and nothing else is lost */
+          }
+          draw();
+        });
+
+        try {
+          guides.checked = localStorage.getItem(GUIDES) === 'show';
+        } catch (e) {
+          /* off, then */
+        }
+
+        /* ---- findings, made when Check is pressed ---- */
+
+        // The source the findings on show were made from, or null when none are.
+        var checked = null;
+
+        function note(text, extra) {
+          var p = document.createElement('p');
+          p.className = 'note' + (extra ? ' ' + extra : '');
+          p.textContent = text;
+          return p;
+        }
+
+        // Checks are a button here, where the command line runs them on every
+        // render, because the writer here is looking at the picture. The file's
+        // own diagram checks: line still says which kinds are looked for.
+        function check() {
+          findings.textContent = '';
+          findings.classList.remove('stale');
+          var result;
+          try {
+            result = reladraw.draw(source.value, viewing());
+          } catch (e) {
+            checked = null;
+            findings.appendChild(note('Nothing was checked: the diagram has an error, shown under the source.'));
+            return;
+          }
+          checked = source.value;
+          findings.appendChild(note('Edited since this check. Press Check again.', 'again'));
+          if (result.findings.length === 0) {
+            findings.appendChild(note('No findings.'));
+            return;
+          }
+          result.findings.forEach(function (finding) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.title = 'Select line ' + finding.line + ' in the source';
+            var where = document.createElement('b');
+            where.textContent = 'line ' + finding.line;
+            var kind = document.createElement('i');
+            kind.textContent = finding.kind;
+            item.appendChild(where);
+            item.appendChild(document.createTextNode(': '));
+            item.appendChild(kind);
+            item.appendChild(document.createTextNode(': ' + finding.message));
+            item.addEventListener('click', function () {
+              selectLine(finding.line);
+            });
+            findings.appendChild(item);
+          });
+        }
+
+        checkButton.addEventListener('click', check);
 
         /* ---- the theme picker writes the source, so the text says what is shown ---- */
 
@@ -1237,18 +1560,141 @@
           );
         });
 
-        download.addEventListener('click', function () {
-          if (!drawn) return;
-          var url = URL.createObjectURL(new Blob([drawn], { type: 'image/svg+xml' }));
+        function saveBlob(blob, name) {
+          var url = URL.createObjectURL(blob);
           var link = document.createElement('a');
           link.href = url;
-          link.download = 'diagram.svg';
+          link.download = name;
           link.click();
           // A tick, so the navigation has the URL before it is taken back.
           setTimeout(function () {
             URL.revokeObjectURL(url);
           }, 0);
+        }
+
+        download.addEventListener('click', function () {
+          if (!drawn) return;
+          saveBlob(new Blob([drawn], { type: 'image/svg+xml' }), 'diagram.svg');
         });
+
+        // The browser draws the SVG onto a canvas with the fonts the page
+        // already shows it in, so the PNG is the picture on screen. Twice the
+        // size, so it stays sharp on a high-density screen. A data URL rather
+        // than a blob one, which some browsers count as foreign and refuse to
+        // let the canvas be read back.
+        downloadPng.addEventListener('click', function () {
+          if (!drawn) return;
+          var image = new Image();
+          image.onload = function () {
+            var canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth * 2;
+            canvas.height = image.naturalHeight * 2;
+            canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(function (blob) {
+              blob ? saveBlob(blob, 'diagram.png') : flash(downloadPng, 'Failed');
+            }, 'image/png');
+          };
+          image.onerror = function () {
+            flash(downloadPng, 'Failed');
+          };
+          image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(drawn);
+        });
+
+        /* ---- the source as a file ---- */
+
+        // The text as last saved or opened, and the file's name, so opening
+        // another file only asks first when there is something to lose, and a
+        // save suggests the name it came from. Both are stored, or a reload
+        // would make every saved diagram look unsaved.
+        var KEPT = 'reladraw.kept';
+        var NAME = 'reladraw.name';
+        var kept = null;
+        var fileName = 'diagram.reladraw';
+        try {
+          kept = localStorage.getItem(KEPT);
+          fileName = localStorage.getItem(NAME) || fileName;
+        } catch (e) {
+          /* as above */
+        }
+
+        function keep(text, name) {
+          kept = text;
+          fileName = name;
+          try {
+            localStorage.setItem(KEPT, text);
+            localStorage.setItem(NAME, name);
+          } catch (e) {
+            /* as above */
+          }
+        }
+
+        // An example opened and left alone is not work: it is one click away.
+        function unsaved() {
+          return source.value !== kept && current === null;
+        }
+
+        openButton.addEventListener('click', function () {
+          if (unsaved() && !confirm('Your edits have not been saved to a file. Open another file in their place?')) return;
+          file.value = '';
+          file.click();
+        });
+
+        file.addEventListener('change', function () {
+          var picked = file.files[0];
+          if (!picked) return;
+          picked.text().then(function (text) {
+            load(text, named(text));
+            keep(text, picked.name);
+            source.focus();
+            source.setSelectionRange(0, 0);
+            source.scrollTop = 0;
+          });
+        });
+
+        // Chrome and Edge ask for the name and the folder; elsewhere the file
+        // goes where the browser puts downloads, under the suggested name.
+        saveButton.addEventListener('click', function () {
+          var text = source.value;
+          if (!window.showSaveFilePicker) {
+            saveAsDownload(text);
+            return;
+          }
+          window
+            .showSaveFilePicker({
+              suggestedName: fileName,
+              types: [{ description: 'reladraw source', accept: { 'text/plain': ['.reladraw'] } }],
+            })
+            .then(function (handle) {
+              return handle.createWritable().then(function (out) {
+                return out
+                  .write(text)
+                  .then(function () {
+                    return out.close();
+                  })
+                  .then(function () {
+                    keep(text, handle.name);
+                    flash(saveButton, 'Saved');
+                  });
+              });
+            })
+            .catch(function (e) {
+              if (e && e.name === 'AbortError') return;
+              // Refused outright, as inside a cross-origin frame.
+              saveAsDownload(text);
+            });
+        });
+
+        function saveAsDownload(text) {
+          var url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = fileName;
+          link.click();
+          setTimeout(function () {
+            URL.revokeObjectURL(url);
+          }, 0);
+          keep(text, fileName);
+        }
 
         zoom.addEventListener('click', function () {
           var actual = diagram.classList.toggle('actual');
@@ -1256,14 +1702,208 @@
           zoom.textContent = actual ? 'Fit' : 'Actual size';
         });
 
-        /* ---- the error names a line, so clicking it goes there ---- */
+        /* ---- the error names a line, so clicking that goes there ---- */
 
-        error.addEventListener('click', function () {
-          if (errorLine === null) return;
+        // Only the line's name, so the rest of the message can be selected:
+        // a drag across it used to end in a click that took the selection
+        // away to the source.
+        error.addEventListener('click', function (event) {
+          if (errorLine !== null && event.target.tagName === 'B') selectLine(errorLine);
+        });
+
+        /* ---- formatting ---- */
+
+        // The settings as `name: value` lines, the way a .reladraw-format holds
+        // them, so the panel, the stored copy and the copied file are one text
+        // and the library's own reader refuses what it would refuse in a file.
+        var FORMAT = 'reladraw.format';
+        var formatButton = document.getElementById('format');
+        var formatPanel = document.getElementById('format-settings');
+        var formatFields = document.getElementById('format-fields');
+        var formatProblem = document.getElementById('format-problem');
+        var formatValues = {};
+        try {
+          (localStorage.getItem(FORMAT) || '').split('\n').forEach(function (line) {
+            var colon = line.indexOf(':');
+            if (colon > 0) formatValues[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+          });
+        } catch (e) {
+          /* as above */
+        }
+
+        function formatText() {
+          return reladraw.SETTINGS.map(function (setting) {
+            var value = formatValues[setting.name];
+            return setting.name + ': ' + (value === undefined || value === '' ? setting.written : value);
+          }).join('\n');
+        }
+
+        // The settings as the formatter takes them, or null with the reason
+        // shown when one doesn't read.
+        function formatSettings() {
+          try {
+            var read = reladraw.readFormatSettings(formatText());
+            formatProblem.textContent = '';
+            return read;
+          } catch (e) {
+            formatProblem.textContent = e.message;
+            return null;
+          }
+        }
+
+        function storeFormat() {
+          try {
+            localStorage.setItem(FORMAT, formatText());
+          } catch (e) {
+            /* as above */
+          }
+        }
+
+        // A setting whose values are all words gets a list; one that takes a
+        // number or a list gets a field, written as it would be in the file.
+        function buildFormatFields() {
+          formatFields.textContent = '';
+          reladraw.SETTINGS.forEach(function (setting) {
+            var label = document.createElement('label');
+            var name = document.createElement('code');
+            name.textContent = setting.name;
+            label.appendChild(name);
+            var current = formatValues[setting.name] || setting.written;
+            var words = setting.values.every(function (value) {
+              return /^[a-z-]+$/.test(value[0]);
+            });
+            var control;
+            if (words) {
+              control = document.createElement('select');
+              setting.values.forEach(function (value) {
+                var option = document.createElement('option');
+                option.value = value[0];
+                option.textContent = value[0];
+                control.appendChild(option);
+              });
+            } else {
+              control = document.createElement('input');
+              control.type = 'text';
+              control.spellcheck = false;
+              control.placeholder = setting.written;
+            }
+            control.value = current;
+            control.addEventListener(words ? 'change' : 'input', function () {
+              formatValues[setting.name] = control.value.trim();
+              formatSettings();
+              storeFormat();
+            });
+            label.appendChild(control);
+            var about = document.createElement('span');
+            about.textContent =
+              setting.about.replace(/\n/g, ' ') +
+              ' ' +
+              setting.values
+                .map(function (value) {
+                  return value[0] + ': ' + value[1].replace(/\n/g, ' ');
+                })
+                .join('; ') +
+              '.';
+            label.appendChild(about);
+            formatFields.appendChild(label);
+          });
+          formatSettings();
+        }
+
+        document.getElementById('format-open').addEventListener('click', function () {
+          buildFormatFields();
+          formatPanel.showModal();
+        });
+
+        formatPanel.querySelector('[data-close]').addEventListener('click', function () {
+          formatPanel.close();
+        });
+
+        formatPanel.addEventListener('click', function (event) {
+          if (event.target !== formatPanel) return;
+          var box = formatPanel.getBoundingClientRect();
+          var inside =
+            event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+          if (!inside) formatPanel.close();
+        });
+
+        document.getElementById('format-reset').addEventListener('click', function () {
+          formatValues = {};
+          storeFormat();
+          buildFormatFields();
+        });
+
+        var formatCopy = document.getElementById('format-copy');
+        formatCopy.addEventListener('click', function () {
+          var text = '// .reladraw-format: how reladraw format lays out the diagrams in this folder and below\n' + formatText() + '\n';
+          toClipboard(text).then(
+            function () {
+              flash(formatCopy, 'Copied');
+            },
+            function () {
+              flash(formatCopy, 'Blocked');
+            },
+          );
+        });
+
+        // The new text replaces the old as one edit the browser can undo, and
+        // the cursor stays on the line it was on.
+        function formatSource() {
+          var settings = formatSettings();
+          if (settings === null) {
+            buildFormatFields();
+            formatPanel.showModal();
+            return;
+          }
+          var before = source.value;
+          var laid;
+          try {
+            laid = reladraw.format(before, settings);
+          } catch (e) {
+            show(e.message, e instanceof reladraw.SourceError ? e.line : undefined);
+            return;
+          }
+          if (laid === before) {
+            flash(formatButton, 'Formatted');
+            return;
+          }
+          var line = before.slice(0, source.selectionStart).split('\n').length;
+          var scroll = source.scrollTop;
+          source.focus();
+          source.setSelectionRange(0, before.length);
+          var undoable = false;
+          try {
+            undoable = document.execCommand('insertText', false, laid);
+          } catch (e) {
+            /* not supported: replaced below, without undo */
+          }
+          if (!undoable || source.value !== laid) {
+            source.value = laid;
+            source.dispatchEvent(new Event('input'));
+          }
+          var lines = laid.split('\n');
+          var at = 0;
+          for (var i = 0; i < line - 1 && i < lines.length; i++) at += lines[i].length + 1;
+          source.setSelectionRange(at, at);
+          source.scrollTop = scroll;
+        }
+
+        formatButton.addEventListener('click', formatSource);
+
+        // Shift+Alt+F, as in VS Code. The key's code rather than its letter:
+        // on a Mac, Alt turns F into another character.
+        document.addEventListener('keydown', function (event) {
+          if (event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyF') {
+            event.preventDefault();
+            formatSource();
+          }
+        });
+
+        function selectLine(number) {
           var lines = source.value.split('\n');
           var start = 0;
-          for (var i = 0; i < errorLine - 1 && i < lines.length; i++) start += lines[i].length + 1;
-          var end = start + (lines[errorLine - 1] || '').length;
+          for (var i = 0; i < number - 1 && i < lines.length; i++) start += lines[i].length + 1;
+          var end = start + (lines[number - 1] || '').length;
           source.focus();
           source.setSelectionRange(start, end);
           // Chrome does not scroll a selection made from outside the field into
@@ -1271,31 +1911,18 @@
           // and re-entering is what makes it scroll.
           source.blur();
           source.focus();
-        });
+        }
 
         var pending = null;
         source.addEventListener('input', function () {
-          draw();
+          drawSoon();
           current = named(source.value);
-          // The URL and the stored copy trail the typing rather than following
-          // every keystroke: neither is looked at until the page is left.
+          // The stored copy trails the typing rather than following every
+          // keystroke: it isn't looked at until the page is left.
           if (pending) clearTimeout(pending);
           pending = setTimeout(stow, 400);
         });
 
-        window.addEventListener('hashchange', function () {
-          var fragment = location.hash.slice(1);
-          if (!fragment) return;
-          try {
-            var text = decode(fragment);
-            if (text !== source.value) load(text, named(text));
-          } catch (e) {
-            /* not ours */
-          }
-        });
-
-        // No stow() on the way in: an untouched visit keeps a clean URL, and the
-        // page only starts writing one once there is an edit worth sharing.
         source.value = opening();
         current = named(source.value);
         draw();

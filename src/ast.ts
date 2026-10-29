@@ -81,6 +81,22 @@ export function isPosition(word: string): word is Position {
 }
 
 /**
+ * For a missing name like `bin.left`, whose last part is a side or a point:
+ * the hint that the part is a separate word after the box's full name,
+ * `host.bin left`. `names` is every box's name; empty when there is no such box.
+ */
+export function partWordHint(name: string, names: Iterable<string>): string {
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return '';
+  const part = name.slice(dot + 1);
+  if (!isPosition(part) && !(PART_SIDES as readonly string[]).includes(part) && part !== 'text') return '';
+  const base = name.slice(0, dot);
+  const all = [...names];
+  const found = all.includes(base) ? [base] : all.filter((each) => each.endsWith(`.${base}`));
+  return found.length === 1 ? ` — a side or point is a separate word after the box's full name: ${found[0]} ${part}` : '';
+}
+
+/**
  * A part of a node that a placement may name: its text, one of its four sides,
  * or one of its nine points. Written as a separate word after the node's name
  * — `hub text`, `server right`, `board top-right`.
@@ -160,6 +176,83 @@ export const BOUNDARY_PARTS: readonly string[] = Object.keys(INWARD);
 export interface PlacementTarget {
   name: string;
   part?: Part;
+  /**
+   * How far along a side, or across the whole box: `server 3/4 down`,
+   * `3/4 down server` (design.org 4.7, 5.2). With a side, it is one point on
+   * that side; without, a line through the box on the fraction's axis.
+   */
+  fraction?: Fraction;
+  /** A point written out rather than named: `between a and b`, `down from a and left from b`, `2 below c bottom`. */
+  point?: PointExpr;
+}
+
+/**
+ * A fraction of the way along: `3/4 down` and `1/4 up` run along a left or
+ * right side, `1/3 across` along a top or bottom one, counted from the left
+ * unless it says `from right`.
+ */
+export interface Fraction {
+  value: number;
+  along: 'down' | 'up' | 'across';
+  from?: 'left' | 'right';
+  /** As written, to quote back: `3/4 down`, `1/3 across from right`. */
+  written: string;
+  /** Written before the name (`3/4 down x`) rather than after it (`x 3/4 down`). */
+  first?: boolean;
+}
+
+/** The axis a fraction measures along. */
+export function fractionAxis(fraction: Fraction): Axis {
+  return fraction.along === 'across' ? 'x' : 'y';
+}
+
+/** The words that start a line from a thing, in `down from a and left from b`. */
+export const WAYS = ['up', 'down', 'left', 'right'] as const;
+export type Way = (typeof WAYS)[number];
+
+/**
+ * A point said in words (design.org 4.2–4.4). Every one is worked out from
+ * named things, so moving them moves it.
+ */
+export type PointExpr =
+  | {
+      kind: 'between';
+      a: PlacementTarget;
+      b: PlacementTarget;
+      /** `at 1/3`: that far across the gap, measured from `a`. Absent is halfway. */
+      at?: number;
+      atWritten?: string;
+      /** `(span: both)`: as a region, the gap stretched over both boxes on the other axis. */
+      span?: 'both';
+    }
+  | {
+      kind: 'from';
+      /**
+       * The line giving the point its place across or up and down, in the
+       * order written. `even` is `even with x`: the level line through x,
+       * which says no way the point lies from it.
+       */
+      lines: [{ way: Way | 'even'; target: PlacementTarget }, { way: Way | 'even'; target: PlacementTarget }];
+    }
+  | {
+      kind: 'moved';
+      distance: string;
+      direction: Direction;
+      from: PlacementTarget;
+    };
+
+/** A point written out, as the author would write it. */
+export function describePoint(point: PointExpr): string {
+  if (point.kind === 'between') {
+    const at = point.atWritten === undefined ? '' : ` at ${point.atWritten}`;
+    const span = point.span ? ' (span: both)' : '';
+    return `between ${nameTarget(point.a)} and ${nameTarget(point.b)}${at}${span}`;
+  }
+  if (point.kind === 'from') {
+    return point.lines.map((line) => `${line.way === 'even' ? 'even with' : `${line.way} from`} ${nameTarget(line.target)}`).join(' and ');
+  }
+  const of = /left|right/.test(point.direction) ? ' of' : '';
+  return `${point.distance} ${point.direction}${of} ${nameTarget(point.from)}`;
 }
 
 /**
@@ -195,6 +288,16 @@ export interface OffsetPlacement {
    * that does not say. Absent means take the node's.
    */
   gap?: string;
+  /**
+   * `3 below and 2 right of a`: a different distance on each axis, which
+   * stands in for `gap` (design.org 5.2).
+   */
+  gaps?: Partial<Record<Axis, string>>;
+  /**
+   * `center 12 right of a center`: the part of this box the distance is
+   * measured from, rather than its facing side (design.org 5.2).
+   */
+  own?: Part;
   line: number;
 }
 
@@ -235,6 +338,27 @@ export interface OnPlacement {
 export type Placement = OffsetPlacement | AlignPlacement | OnPlacement;
 
 /**
+ * `stays above laptop.photos (gap: wide)` — a limit, not a placement
+ * (design.org 5.6). It never says where the node goes, so no axis counts it;
+ * it rules out pictures where the node is less than a gap that way from its
+ * target, and the box holding both makes room by lengthening the one distance
+ * nobody stated.
+ */
+export interface Limit {
+  way: 'above' | 'below' | 'left' | 'right';
+  target: PlacementTarget;
+  gap?: string;
+  line: number;
+}
+
+/** How a limit reads back in the author's own words. */
+export function describeLimit(limit: Limit): string {
+  const of = limit.way === 'left' || limit.way === 'right' ? ' of' : '';
+  const gap = limit.gap === undefined ? '' : ` (gap: ${limit.gap})`;
+  return `stays ${limit.way}${of} ${nameTarget(limit.target)}${gap}`;
+}
+
+/**
  * The modifiers a placement understands, in brackets after its targets. Refused
  * by name when unrecognized, for the reason `DIAGRAM_KEYS` are: a modifier that
  * silently does nothing looks like a bug in the tool rather than a typo.
@@ -262,6 +386,19 @@ export const PLACEMENT_KEYS = ['gap'] as const;
 export const CONTENTS_KEYS = ['widths', 'align'] as const;
 
 /**
+ * What `layout: column (…)` and `layout: row (…)` take in their bracket.
+ * `align` is read only to be refused by name: it now means where along a side,
+ * and lining the children up is `align-children`.
+ */
+export const LAYOUT_KEYS = ['gap', 'widths', 'align-children', 'align', 'centers', 'heights'] as const;
+
+/**
+ * Where `gather-children:` puts a container's children in its spare room: a
+ * side, a corner, or the middle.
+ */
+export const GATHER_PLACES = ['center', 'left', 'right', 'top', 'bottom', 'top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
+
+/**
  * What `widths:` may say. `natural` is the default and is today's behavior.
  * `match` is what `align: widths` did — every child as wide as the widest.
  * `fill` is the whole content band, which is `match` wherever the contents set
@@ -270,12 +407,11 @@ export const CONTENTS_KEYS = ['widths', 'align'] as const;
 export const CONTENT_WIDTHS = ['natural', 'match', 'fill'] as const;
 
 /**
- * Where the block of contents sits when it is narrower than the band. `right`
- * is accepted although no diagram has yet wanted it: refusing it would give
- * `align:` a different value set depending on which bracket it is in, which is
- * the divergence this scheme exists to remove.
+ * How `align-children:` lines laid-out children up with each other: in a
+ * column their left edges, middles or right edges; in a row their tops,
+ * middles or bottoms.
  */
-export const CONTENT_ALIGNMENTS = ['left', 'center', 'right'] as const;
+export const CHILD_ALIGNMENTS = { column: ['left', 'center', 'right'], row: ['top', 'center', 'bottom'] } as const;
 
 /** How a placement reads back in the author's own words, for error messages. */
 export function describePlacement(placement: Placement): string {
@@ -284,16 +420,29 @@ export function describePlacement(placement: Placement): string {
     return `on ${targets}`;
   }
   if (placement.kind === 'align') {
-    const side = placement.side === 'center' ? '' : `${placement.side} `;
-    return `${side}level with ${targets}`;
+    const side = placement.side !== 'center' ? `${placement.side} ` : placement.axis === 'x' ? 'x ' : '';
+    return `${side}even with ${targets}`;
   }
-  const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
   // `inside` and `outside` take no `of`, and are quoted back as the author
   // wrote them — the derived direction is what they *mean*, not what they say.
-  if (placement.written) return `${placement.written} ${targets}${gap}`;
+  if (placement.written) {
+    const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
+    return `${placement.written} ${targets}${gap}`;
+  }
   // "left of X" and "above X" are both good English; "above of X" is not.
   const joiner =
     placement.direction === 'above' || placement.direction === 'below' ? '' : 'of ';
+  const own = placement.own === undefined ? '' : `${placement.own} `;
+  if (placement.gaps) {
+    const y = placement.direction.startsWith('above') ? 'above' : 'below';
+    const x = placement.direction.endsWith('left') ? 'left' : 'right';
+    return `${own}${placement.gaps.y} ${y} and ${placement.gaps.x} ${x} of ${targets}`;
+  }
+  // A distance in front, and one in brackets, are the same thing; quoted in front when the part form needs it.
+  if (placement.own !== undefined && placement.gap !== undefined) {
+    return `${own}${placement.gap} ${placement.direction} ${joiner}${targets}`;
+  }
+  const gap = placement.gap === undefined ? '' : ` (gap: ${placement.gap})`;
   return `${placement.direction} ${joiner}${targets}${gap}`;
 }
 
@@ -306,7 +455,10 @@ export function listTargets(targets: Targets): string {
 
 /** One target in the author's words: the node's name, and its part if it named one. */
 export function nameTarget(target: PlacementTarget): string {
-  return target.part === undefined ? target.name : `${target.name} ${target.part}`;
+  if (target.point) return describePoint(target.point);
+  if (target.fraction?.first) return `${target.fraction.written} ${target.name}`;
+  const named = target.part === undefined ? target.name : `${target.name} ${target.part}`;
+  return target.fraction ? `${named} ${target.fraction.written}` : named;
 }
 
 /**
@@ -368,14 +520,23 @@ export const TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'at'] as const;
  * it goes in one bracket, as the text's do. `line: red` stays as the short form
  * of `line: (color: red)`, and both are stored under the bare `line` key.
  */
-export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness'] as const;
+export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness', 'curve', 'turn', 'step-out'] as const;
+
+/**
+ * What a box's border takes in its bracket: `border: (color: red, thickness:
+ * thick)`, mirroring the line's. `border: red` is the short form of the color,
+ * and both are stored under the bare `border` key.
+ */
+export const BORDER_KEYS = ['color', 'thickness'] as const;
 
 /**
  * The words each of the line's properties takes, the default first. Thickness
- * takes a plain number of pixels as well.
+ * takes a multiple of normal (`2`) or pixels (`3px`) as well. `turn:` takes a fraction and
+ * `step-out:` a distance, so neither has a list.
  */
 export const LINE_VALUES = {
-  path: ['curved', 'square', 'straight'],
+  path: ['straight', 'square', 'curved'],
+  curve: ['normal', 'strong', 'subtle'],
   corners: ['sharp', 'rounded'],
   crossing: ['gap', 'none', 'arc', 'square'],
   pattern: ['solid', 'dashed', 'dotted', 'dash-dot'],
@@ -394,9 +555,15 @@ export interface NodeStmt {
   statedText: boolean;
   /** The text's bracketed modifiers, as written. Usually empty. */
   textAttrs: Attrs;
+  /** Placements in the text's bracket, against the box's own children (design.org 7.2). */
+  titlePlacements?: Placement[];
   /** Everything the author said about where this goes. Empty for the anchor. */
   placements: Placement[];
+  /** `stays above laptop.photos`: what it keeps clear of (design.org 5.6). */
+  limits?: Limit[];
   attrs: Attrs;
+  /** `guide node frame ""`: does everything a node does except draw (design.org 8.1). */
+  guide?: boolean;
   line: number;
 }
 
@@ -420,6 +587,53 @@ export const MARK_GLYPHS: Record<'from' | 'to', Record<string, Mark>> = {
   to: { '>': 'arrow', '|>': 'oarrow', '*': 'dot', o: 'odot', '|': 'bar' },
 };
 
+/** A side of something, as a text's bracket names it: `above s1`, `right of edge`. */
+export type TextSide = 'above' | 'below' | 'left of' | 'right of';
+
+/**
+ * Where one text on a line sits, as its bracket says (design.org 7.3). Every
+ * field is optional: with nothing said the text shares the line with the
+ * other unplaced texts, spread evenly.
+ */
+export interface EdgeTextPlace {
+  /** `at: 1/4`, `at: 0.25`, `at: start`, `at: end`: a spot along the line, or along the leg `on` names. */
+  at?: number | 'start' | 'end';
+  /** `on: rise`: the named leg the text sits on. */
+  on?: string;
+  /** `on: longest level`: the line's longest piece running left to right, the first of two the same length. */
+  longestLevel?: boolean;
+  /** `straight right from c`: where a line that way from c's middle first meets this one. */
+  straight?: { way: Way; target: PlacementTarget; written: string };
+  /**
+   * `above s1`, `2 above s1`: a gap from the box, centered on it the other way, as a box
+   * placed so would be; with `onLine`, where the line first reaches that height or position across.
+   */
+  by?: { side: TextSide; target: PlacementTarget; written: string };
+  /** `on the line`: a text placed by a box stays on its line (design.org 7.3). */
+  onLine?: boolean;
+  /** `right of edge`: moved clear of the part of the line it landed on. */
+  beside?: TextSide;
+  /**
+   * `left even with x right`: one axis set by a box, at most one per axis; the
+   * other stays where the text would otherwise sit (design.org 7.3).
+   */
+  even?: { placement: AlignPlacement; written: string }[];
+  /** `gap:` — from the node, for `at: start`/`end` and a text placed by a box. */
+  gap?: string;
+  /** `edge-gap:` — off the line, for a text beside it. */
+  edgeGap?: string;
+  /** `reads: up`, `down` or `along`. */
+  reads?: 'up' | 'down' | 'along';
+}
+
+/** One text on a line: what it says, how it looks, where it sits. */
+export interface EdgeTextStmt {
+  text: string;
+  /** `color:`, `size:`, `wrap:` from its bracket. */
+  textAttrs: Attrs;
+  place: EdgeTextPlace;
+}
+
 /** The marks written in an edge's arrow, by end. An end with none written is absent. */
 export interface EdgeMarks {
   from?: Mark;
@@ -435,9 +649,8 @@ export interface EdgeStmt {
   arrow: string;
   /** The marks the arrow writes at each end: `->` is an arrow at `to`, `<-` one at `from`. */
   marks: EdgeMarks;
-  text?: string;
-  /** The text's bracketed modifiers, as written. Usually empty. */
-  textAttrs: Attrs;
+  /** `"1" (at: start) "places" "many" (at: end)`: each text in written order, with its own bracket (design.org 7.3). */
+  texts: EdgeTextStmt[];
   /** `between desktop1 and laptop1` — the gap the line passes through. */
   between?: Passage;
   /**
@@ -447,9 +660,152 @@ export interface EdgeStmt {
    * line is passing, as `between` does. Always `kind: 'offset'` with no gap.
    */
   passes?: OffsetPlacement[];
+  /** `edge req client -> api`: the line's own name. */
+  name?: string;
+  /** `straight down`: the line leaves its start that way and stops at what it meets (design.org 6.2). */
+  straight?: Way;
+  /** `to: left, even with cat1`: what each end is even with, on the side its `from:`/`to:` names (6.2). */
+  evenWith?: { from?: PlacementTarget[]; to?: PlacementTarget[] };
+  /** `via: b top, between c and d, leg climb`: the places the line passes, in order (design.org 6.4). */
+  via?: ViaEntry[];
+  /** `edge each child of a -> b`: the end whose name is a container, one line per direct child of it (design.org 6.6). */
+  each?: 'from' | 'to';
+  /** `edge a -> b, c, d`: the end written as a list, and every name in it, one line to each (design.org 6.6). */
+  several?: { side: 'from' | 'to'; names: string[] };
+  attrs: Attrs;
+  /** `guide edge a -> b`: shapes nothing differently, and is drawn only when guides are shown. */
+  guide?: boolean;
+  line: number;
+}
+
+/** One place a line passes (design.org 6.4). */
+export type ViaStop =
+  | {
+      /**
+       * `b top`, `server right 3/4 down`, `proxy`, `between c and d`, a named
+       * point or region: anything section 4 names. A part of a box is just
+       * outside it unless `on` or `inside` says otherwise.
+       */
+      kind: 'place';
+      target: PlacementTarget;
+      mode: 'outside' | 'on' | 'inside';
+      gap?: string;
+      /** `via: trunk (after: z)`: this line's place in a bundle's order, which only a bundle has. */
+      order?: { way: 'after' | 'before'; name: string };
+      written: string;
+    }
+  | {
+      /** `via: trunk`: the whole length of a bundle, in this line's lane (6.6). Read from a place naming a bundle. */
+      kind: 'bundle';
+      bundle: string;
+      order?: { way: 'after' | 'before'; name: string };
+      written: string;
+    }
+  | { kind: 'through'; region: string; axis: 'horizontal' | 'vertical'; written: string }
+  | { kind: 'alongside'; way: 'above' | 'below' | 'left of' | 'right of'; leg: string; gap?: string; written: string }
+  | {
+      /** `req at 1/3`, `req start`, `req end`, or a bare `req`, its middle: a point on a named line or leg. */
+      kind: 'online';
+      line: string;
+      at: number | 'start' | 'end';
+      /** `req b top`: the middle of where req runs along one of its own stops, written as that stop. */
+      along?: string;
+      written: string;
+    };
+
+/** An entry in a `via:` list: a stop, a leg's name, or a leg's name and the run it names. */
+export interface ViaEntry {
+  leg?: { name: string; attrs: Attrs };
+  stop?: ViaStop;
+}
+
+/** A stop written as the author would write it. */
+export function describeStop(stop: ViaStop): string {
+  return stop.written;
+}
+
+/**
+ * `point funnel  between c2 and api at 2/3` — a point with a name, so several
+ * things can use it and moving it is one edit (design.org 4.5). Drawn as a dot.
+ */
+/**
+ * A point's or a region's text and its bracket (design.org 7.4). `place` holds
+ * the position words: a direction from the dot (`above-right`), or a side as a
+ * title says it (`outside top`).
+ */
+export interface MarkText {
+  text: string;
+  textAttrs: Record<string, string>;
+}
+
+export interface PointStmt {
+  kind: 'point';
+  name: string;
+  point: PlacementTarget;
+  text?: MarkText;
+  attrs: Attrs;
+  guide?: boolean;
+  line: number;
+}
+
+/**
+ * `region r  c bottom-left to d top-right`, or `region r  between a and b` —
+ * a rectangle with a name and every part a box has (design.org 4.5). It
+ * bounds things without owning them, and is drawn as a tint (8.3).
+ */
+export interface RegionStmt {
+  kind: 'region';
+  name: string;
+  /** The two corners, in either order; or one `between`, which is a region of its own. */
+  corners: [PlacementTarget, PlacementTarget] | [PlacementTarget];
+  text?: MarkText;
+  attrs: Attrs;
+  guide?: boolean;
+  line: number;
+}
+
+/**
+ * `bundle trunk  via: through slot horizontal`: a shared path several lines
+ * travel together, built like a line with no ends (design.org 6.6). A line
+ * joins it with `via: trunk` and runs its whole length.
+ */
+export interface BundleStmt {
+  kind: 'bundle';
+  name: string;
+  /** A path out in space. A bundle has this or `between`, never both. */
+  via?: ViaEntry[];
+  /**
+   * `bundle calls  a -> b`: between two boxes, the direct way unless its
+   * `from:`, `to:` or `line: (path: …)` route it as one line would go.
+   */
+  between?: [string, string];
+  /**
+   * `layout: parallel (gap: tight)`, the default; `layout: collapsed`, a bus;
+   * or, between two boxes only, `layout: fan`, lanes widest apart at the middle.
+   */
+  arrangement: 'parallel' | 'collapsed' | 'fan';
+  /** The gap between neighboring members of a parallel bundle, as written. */
+  gap?: string;
+  /** `order: y, z, x`: every member, in reading order across where the bundle starts. */
+  order?: string[];
+  /**
+   * `line:`, `from-mark:`, `to-mark:`: how a collapsed bundle's shared stretch
+   * is drawn; between two boxes, `from:`, `to:` and `line: (path: …)` route it.
+   */
   attrs: Attrs;
   line: number;
 }
+
+/** What a bundle may say besides `via:`, `layout:` and `order:`. */
+export const BUNDLE_KEYS = ['via', 'layout', 'order', 'line', 'from-mark', 'to-mark', 'from', 'to'] as const;
+
+/** What a point and a region may say. A region's padding pushes every edge out. */
+export const POINT_KEYS = ['style', 'fill', 'depth'] as const;
+/** Which way from its dot a point's text sits (design.org 7.4); the first is the default. */
+export const POINT_TEXT_SIDES = ['above', 'below', 'left', 'right', 'above-right', 'above-left', 'below-right', 'below-left'] as const;
+/** What a point's or a region's text takes in its bracket besides its position words. */
+export const MARK_TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'reads', 'gap'] as const;
+export const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'depth'] as const;
 
 /**
  * `diagram background: #111111` — settings that belong to the drawing as a
@@ -466,8 +822,11 @@ export interface DiagramStmt {
  * The attributes a `diagram` statement understands. `text` takes a bracket,
  * `text: (color: …)`, and sets the text color of everything at once — the
  * theme has one text color, shared by nodes and edges, and this is that.
+ * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
+ * of finding on or off by name. `title` is quoted, and names the drawing: the
+ * SVG carries it as its own title, and a page made with `--page` heads with it.
  */
-export const DIAGRAM_KEYS = ['theme', 'background', 'text'] as const;
+export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides', 'title'] as const;
 
 /**
  * `default leaf  fill: #2e5d3a` — a style that applies to every thing of one
@@ -482,7 +841,16 @@ export interface DefaultStmt {
   line: number;
 }
 
-export const DEFAULT_TARGETS = ['node', 'leaf', 'container', 'edge'] as const;
+export const DEFAULT_TARGETS = [
+  'node',
+  'leaf',
+  'container',
+  'edge',
+  'guide node',
+  'guide edge',
+  'guide point',
+  'guide region',
+] as const;
 export type DefaultTarget = (typeof DEFAULT_TARGETS)[number];
 
 /**
@@ -491,16 +859,23 @@ export type DefaultTarget = (typeof DEFAULT_TARGETS)[number];
  *
  * - A default names its kind, so it is strict where a style is permissive —
  *   `default edge  fill:` can only be a mistake.
- * - `badge:` gives a box a child, which makes it a container, so every leaf
- *   given one by `default leaf` or `default node` would stop being a leaf.
  * - `icon:` draws a picture, and a picture cannot hold children, so it is a
  *   leaf's word and not a container's or every node's.
+ * - `heading:` names one node's own child, so it belongs to that node alone.
+ *
+ * `badge:` is every kind's: it makes the picture part of the label, a heading,
+ * and a heading doesn't make a leaf a container.
  */
 export const DEFAULT_KEYS: Record<DefaultTarget, readonly string[]> = {
-  node: ['style', 'shape', 'fill', 'border', 'text'],
-  leaf: ['style', 'shape', 'icon', 'fill', 'border', 'text'],
-  container: ['style', 'shape', 'badge', 'fill', 'border', 'text'],
+  node: ['style', 'shape', 'badge', 'fill', 'border', 'corners', 'text'],
+  leaf: ['style', 'shape', 'icon', 'badge', 'fill', 'border', 'corners', 'text'],
+  container: ['style', 'shape', 'badge', 'fill', 'border', 'corners', 'text'],
   edge: ['style', 'line', 'text'],
+  // A shown guide's look, one line per kind (design.org 8.2).
+  'guide node': ['style', 'fill', 'border', 'corners', 'text'],
+  'guide edge': ['style', 'line', 'text'],
+  'guide point': ['style', 'fill'],
+  'guide region': ['style', 'fill', 'border'],
 };
 
 /**
@@ -569,8 +944,8 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
  * The exclusions are the whole of what this table decides, and each is a place
  * the old silence hid something:
  *
- * - A node drawn as a picture, or with no body at all, takes no `fill:` or
- *   `border:`. There is no outline for either to reach.
+ * - A node drawn as a picture, or with no body at all, takes no `fill:`,
+ *   `border:` or `corners:`. There is no outline for any of them to reach.
  * - Neither of those takes `contents:` either, which says how a node's children
  *   sit, and neither may have any.
  * - `shape:` and `icon:` each name the body, so each appears only on the kind it
@@ -579,12 +954,32 @@ export type Kind = 'shape' | 'icon' | 'none' | 'edge';
  * - An edge takes no `gap:` or `overlap:`. Those are about where a box sits, and
  *   an edge is not placed — it joins two things that are.
  */
+/** The keys that state a size; `size.ts` reads their values. */
+export const SIZE_KEY_NAMES = ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height'] as const;
+
+/** `padding-right: 4`: one side's padding, over `padding:` on that side. */
+export const PADDING_SIDES = ['top', 'right', 'bottom', 'left'] as const;
+export const PADDING_SIDE_KEYS = PADDING_SIDES.map((side) => `padding-${side}`);
+
+/** `right-edge-order: ae, ad, ac`: the lines on one side of a box, in reading order. */
+export const EDGE_ORDER_KEYS = ['top-edge-order', 'bottom-edge-order', 'left-edge-order', 'right-edge-order'] as const;
+
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'gap', 'overlap', 'contents', 'badge', 'deck', 'shape', 'fill', 'border', 'text', 'url'],
-  icon: ['style', 'gap', 'overlap', 'icon', 'text', 'url'],
-  none: ['style', 'gap', 'overlap', 'shape', 'text', 'url'],
-  edge: ['style', 'from', 'to', 'from-mark', 'to-mark', 'line', 'text', 'url'],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...PADDING_SIDE_KEYS, ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
+  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
+  none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
+  edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
 };
+
+/**
+ * What a node's `corners:` takes, the default first: a box is drawn rounded
+ * unless it says otherwise. The same word and values as a line's `corners:`,
+ * whose default is the other one. It applies to every outline with corners — a
+ * rectangle and a document, whose fold stays as it is — and changes only the
+ * drawing, never where anything sits.
+ */
+export const NODE_CORNERS = ['rounded', 'sharp'] as const;
+export type NodeCorners = (typeof NODE_CORNERS)[number];
 
 /**
  * Every word that is an attribute *somewhere*, which is what separates a
@@ -597,7 +992,7 @@ export const ATTR_KEYS: Record<Kind, readonly string[]> = {
  * not told the word does not exist.
  */
 export const ALL_ATTR_KEYS: readonly string[] = [
-  ...new Set([...Object.values(ATTR_KEYS).flat(), ...DIAGRAM_KEYS]),
+  ...new Set([...Object.values(ATTR_KEYS).flat(), ...DIAGRAM_KEYS, ...REGION_KEYS]),
 ];
 
 export interface StyleStmt {
@@ -624,7 +1019,7 @@ export interface IconStmt {
   line: number;
 }
 
-export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt;
+export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt | PointStmt | RegionStmt | BundleStmt;
 
 export interface Document {
   statements: Stmt[];
