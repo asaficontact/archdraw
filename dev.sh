@@ -120,6 +120,11 @@ Commands:
                                  untouched. Chrome will not lay a window out
                                  much narrower than 500 pixels, so a narrower
                                  WxH is cropped rather than reflowed.
+  viewer <file> [out.png] [WxH] ['<js>']
+                                 Render one file with --page and screenshot the
+                                 page, after running <js> if given, as page-run
+                                 does for the playground. The page is written
+                                 to a temp file beside the PNG, path printed.
   page-examples [out.png] [WxH] [n]
                                  page-run with the Examples picker open and the
                                  nth example (default 1, counting from 0)
@@ -736,6 +741,22 @@ EOF
     # runs, once the page is as heavy as the redesign's (2026-10-17).
     screenshot "file://$copy" "$out" "${3:-1400x900}" "0d0d10" 2000
     rm -f "$copy"
+    echo "$out"
+    ;;
+  viewer)
+    file="${1:?.reladraw file required}"
+    out="${2:-$(tmp_path viewer png)}"
+    html="${out%.png}.html"
+    node dist/cli.js render "$file" --page -o "$html" >/dev/null
+    shot="$html"
+    if [ -n "${4:-}" ]; then
+      # The script runs once the page's own has, and a moment after the window
+      # reaches WxH, for the reason page-run gives.
+      shot="$(tmp_path viewer html)"
+      { sed '/<\/body>/,$d' "$html"; printf '<script>setTimeout(function () { %s }, 300);</script>\n</body>\n</html>\n' "$4"; } >"$shot"
+    fi
+    screenshot "file://$shot" "$out" "${3:-1400x900}" "0d0d10" 2000
+    [ "$shot" != "$html" ] && rm -f "$shot"
     echo "$out"
     ;;
   page-examples)

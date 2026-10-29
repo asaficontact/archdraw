@@ -981,6 +981,13 @@ globalThis.reladrawExamples = [{"name":"architecture","about":"A home network's 
 'use strict';
 // ---- model.js ----
 /**
+ * Whether a deck, which draws no outline of its own, was given one: a fill, or
+ * something about its border.
+ */
+function outlineStated(appearance) {
+    return appearance['fill'] !== undefined || appearance['border'] !== undefined || appearance['border.thickness'] !== undefined;
+}
+/**
  * Whether a node is joined to its container's text, directly or through
  * siblings joined to it: one unit with the text, placed by the text's position
  * words (design.org 5.6).
@@ -1306,6 +1313,12 @@ const TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'at'];
  */
 const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness', 'curve', 'turn', 'step-out'];
 /**
+ * What a box's border takes in its bracket: `border: (color: red, thickness:
+ * thick)`, mirroring the line's. `border: red` is the short form of the color,
+ * and both are stored under the bare `border` key.
+ */
+const BORDER_KEYS = ['color', 'thickness'];
+/**
  * The words each of the line's properties takes, the default first. Thickness
  * takes a multiple of normal (`2`) or pixels (`3px`) as well. `turn:` takes a fraction and
  * `step-out:` a distance, so neither has a list.
@@ -1352,9 +1365,10 @@ const REGION_KEYS = ['style', 'fill', 'opacity', 'border', 'padding', 'padding-t
  * `text: (color: …)`, and sets the text color of everything at once — the
  * theme has one text color, shared by nodes and edges, and this is that.
  * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
- * of finding on or off by name.
+ * of finding on or off by name. `title` is quoted, and names the drawing: the
+ * SVG carries it as its own title, and a page made with `--page` heads with it.
  */
-const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides'];
+const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides', 'title'];
 const DEFAULT_TARGETS = [
     'node',
     'leaf',
@@ -1767,6 +1781,14 @@ const THICKNESS = {
     thin: 1,
     normal: LINE_WIDTH,
     thick: LINE_WIDTH * 2,
+};
+/** A box's border as it always was, in pixels: `border: (thickness: normal)`. */
+const BORDER_WIDTH = 1;
+/** What a border's `thickness: thin | normal | thick` draw, in pixels. */
+const BORDER_THICKNESS = {
+    thin: BORDER_WIDTH / 2,
+    normal: BORDER_WIDTH,
+    thick: BORDER_WIDTH * 2,
 };
 /**
  * How much of a line of this thickness its arrowhead covers. The marker scales
@@ -2964,6 +2986,8 @@ class Placer {
     origins = new Map();
     /** Containers whose anchor is being placed on the page, so a box outside them is measured on the page rather than in their frame. */
     onPage = new Set();
+    /** Boxes that anchor their frame on one axis only, when no box in it says nothing at all (`splitAnchors`). */
+    axisAnchors = new Set();
     /** Named points and regions being worked out, innermost last, to refuse one defined through itself. */
     expanding = [];
     constructor(roots, byName, facts, 
@@ -3120,7 +3144,7 @@ class Placer {
             if (this.frameAnchor(node, axis))
                 return this.anchorOnPage(node, axis);
             const above = node.parent ? this.origin(node.parent, axis) : 0;
-            if (this.floats(node))
+            if (this.floats(node, axis))
                 return above;
             this.refusePlacedTwice(node, axis);
             return above + this.start(node, axis) - this.frame(node, axis).boxStart;
@@ -3180,9 +3204,11 @@ class Placer {
      * goes, and nothing inside it is placed against a box outside it in its
      * stead. Its frame's origin is its own container's.
      */
-    floats(node) {
+    floats(node, axis) {
         const parent = node.parent;
-        if (node.placements.length > 0 || node.children.length === 0)
+        if (node.children.length === 0)
+            return false;
+        if (node.placements.length > 0 && !this.axisAnchors.has(`${node.name}\n${axis}`))
             return false;
         if (parent && (parent.heading === node || joinedToText(node) || this.facts.get(parent).layout || this.vennPart(node) !== undefined)) {
             return false;
@@ -3443,7 +3469,7 @@ class Placer {
         }
         // A container that anchors its frame shares its container's origin, so
         // its box starts where its outline does.
-        if (this.floats(node))
+        if (this.floats(node, axis))
             return this.frame(node, axis).boxStart;
         if (node.placements.length === 0 || this.acrossParts(node)) {
             // The anchor of its frame. One placed against a box in another part of
@@ -3462,7 +3488,7 @@ class Placer {
     placed(node, axis) {
         const statements = this.statements(node, axis);
         if (statements.length === 0)
-            return this.lone(node, axis);
+            return this.axisAnchors.has(`${node.name}\n${axis}`) ? 0 : this.lone(node, axis);
         if (statements.length === 1) {
             const [only] = statements;
             return this.apply(node, axis, only);
@@ -5068,9 +5094,8 @@ class Placer {
             const content = members.filter((member) => !this.framed(member));
             const unplaced = content.filter((member) => this.unplaced(member));
             const onTitle = content.find((member) => this.onTitle(member));
-            if (!parent && unplaced.length === 0) {
-                throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
-            }
+            if (unplaced.length === 0 && !(parent && this.anchoredOnTitle(parent)))
+                this.splitAnchors(content, parent);
             if (unplaced.length > 1) {
                 const names = unplaced.map((node) => `"${node.name}"`).join(', ');
                 throw new SourceError(parent
@@ -5086,6 +5111,62 @@ class Placer {
         }
         for (const member of all)
             this.checkAnchors(member.children, member);
+    }
+    /**
+     * Every box in a frame says something about where it goes, so the frame is
+     * anchored one axis at a time (design.org 5.3): across by the one box that
+     * says nothing across, up and down by the one that says nothing up and
+     * down. A lone direction's centering counts as saying nothing when its
+     * target's place on that axis is worked out from the box itself, as with
+     * `b right of a` and `a even with b.1`: the centering gives way to what was
+     * written. An axis nobody leaves free is a circle, reported when placing,
+     * and an axis a container is placed on by what it holds needs no anchor.
+     */
+    splitAnchors(members, parent) {
+        const free = BOTH_AXES.map((axis) => parent && this.frameAnchor(parent, axis)
+            ? []
+            : members.filter((member) => this.statements(member, axis).length === 0 && this.loneGivesWay(member, axis)));
+        if (!parent && free.every((on) => on.length === 0)) {
+            throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
+        }
+        BOTH_AXES.forEach((axis, index) => {
+            const on = free[index];
+            // With the other axis bound all round there is a circle, which placing reports better.
+            if (on.length > 1 && free.every((other) => other.length > 0)) {
+                const names = on.map((node) => `"${node.name}"`).join(', ');
+                throw new SourceError(`exactly one node may say nothing about where it goes ${AXIS_SAID[axis]}, but ${on.length} do: ${names}`, on[1].line);
+            }
+            if (on.length === 1)
+                this.axisAnchors.add(`${on[0].name}\n${axis}`);
+        });
+    }
+    /** Whether a box with nothing stated on this axis is left free there: no lone direction centers it, or the one that would is placed from the box itself. */
+    loneGivesWay(node, axis) {
+        const offsets = node.placements.filter((placement) => placement.kind === 'offset' && component(placement.direction, axis) === undefined);
+        if (offsets.length === 0)
+            return true;
+        if (offsets.length > 1)
+            return false;
+        return this.namedFrom(offsets[0]).some((named) => this.placedFrom(named, axis, node, new Set()));
+    }
+    /** The boxes a placement names, through points and regions. */
+    namedFrom(placement) {
+        return placement.targets
+            .flatMap((target) => this.boxesNamed(target, []))
+            .flatMap((name) => this.byName.get(name) ?? []);
+    }
+    /** Whether a box's place on one axis is worked out, however indirectly, from `from` or something inside it. */
+    placedFrom(node, axis, from, seen) {
+        if (node === from || isWithin(node, from))
+            return true;
+        if (seen.has(node))
+            return false;
+        seen.add(node);
+        const stated = this.statements(node, axis).map((statement) => statement.placement);
+        const placements = stated.length > 0
+            ? stated
+            : node.placements.filter((placement) => placement.kind === 'offset' && component(placement.direction, axis) === undefined);
+        return placements.some((placement) => this.namedFrom(placement).some((named) => this.placedFrom(named, axis, from, seen)));
     }
     /**
      * A box in a venn's part may be placed against a box in another part, and
@@ -9709,6 +9790,7 @@ const BRACKET_KEYS = {
     text: TEXT_KEYS,
     contents: CONTENTS_KEYS,
     line: LINE_KEYS,
+    border: BORDER_KEYS,
     checks: CHECK_KINDS,
 };
 /** How each bracketed key's error quotes itself back, and what it is about. */
@@ -9716,6 +9798,7 @@ const BRACKET_ABOUT = {
     text: { kind: 'a text', example: 'color: theme-muted' },
     contents: { kind: 'a `contents:` bracket', example: 'widths: match' },
     line: { kind: 'a line', example: 'path: square' },
+    border: { kind: 'a border', example: 'thickness: thick' },
     checks: { kind: 'a `checks:` bracket', example: 'edge-crossings: on' },
 };
 /**
@@ -10102,7 +10185,8 @@ function readAttr(tokens, at, attrs, line, subject) {
             // A line's color is stored where `line: red` puts it, so the short form
             // and the bracket are one key: a style's `line: red` merges under an
             // edge's `line: (color: blue)`, and writing both on one line is a repeat.
-            const stored = key === 'line' && inner === 'color' ? 'line' : `${key}.${inner}`;
+            // A border's color the same.
+            const stored = (key === 'line' || key === 'border') && inner === 'color' ? key : `${key}.${inner}`;
             setOnce(attrs, stored, value, subject, line, { key: `${key}: (${inner}: …)`, value: (v) => v });
         }
         return read.next;
@@ -10116,6 +10200,16 @@ function readAttr(tokens, at, attrs, line, subject) {
         if (!value || !value.quoted) {
             throw new SourceError(`${subject}: a url is written in quotes — \`url: "https://example.com"\`. Without them ` +
                 'everything from the `//` onwards is read as a comment', line);
+        }
+        setOnce(attrs, key, value.text, subject, line, { key, value: quoteOf });
+        return at + 2;
+    }
+    if (key === 'title') {
+        // A title is a text, and every text is quoted. Unquoted, its first word
+        // would be the title and the rest read as stray words.
+        const value = tokens[at + 1];
+        if (!value || !value.quoted) {
+            throw new SourceError(`${subject}: a title is written in quotes — \`title: "How a login reaches the database"\``, line);
         }
         setOnce(attrs, key, value.text, subject, line, { key, value: quoteOf });
         return at + 2;
@@ -10168,7 +10262,7 @@ function readAttr(tokens, at, attrs, line, subject) {
         });
         return next;
     }
-    if (bracketKeys !== undefined && key !== 'text' && key !== 'line') {
+    if (bracketKeys !== undefined && key !== 'text' && key !== 'line' && key !== 'border') {
         // `contents: match` names the part and then says one of its two properties
         // without saying which. The brackets are what make the level shift visible,
         // so there is no unbracketed spelling to fall back to.
@@ -10220,6 +10314,11 @@ function readAttr(tokens, at, attrs, line, subject) {
             throw new SourceError(`\`line: ${valueToken.text}\` — \`line:\` on its own takes a color. The line's other properties go in its bracket: ` +
                 `\`line: (${property}: ${valueToken.text})\``, line);
         }
+    }
+    if (key === 'border' && !valueToken.quoted && /^(thin|normal|thick|\d*\.?\d+(px)?)$/.test(valueToken.text)) {
+        // `border: red` is the short form of the color, as `line: red` is.
+        throw new SourceError(`\`border: ${valueToken.text}\` — \`border:\` on its own takes a color. Its thickness goes in its bracket: ` +
+            `\`border: (thickness: ${valueToken.text})\``, line);
     }
     if (key === 'align' && valueToken.text === 'widths') {
         // Removed in 0.3.0. It was a size operation wearing an alignment's name,
@@ -12833,22 +12932,21 @@ function monospaceMeasurer(fontFamily = DEFAULT_STACK, advanceRatio = DEFAULT_AD
 const CORNER = 8;
 /** Turn solved geometry into a standalone SVG document. */
 function render(layout, options = {}) {
+    return drawing(layout, options)(false);
+}
+/**
+ * The SVG as `render` gives it, and the same drawing with each thing wrapped in
+ * a group naming it and its statement's line, for a page that points at things
+ * (`--page`). Drawn once, so the two can't disagree.
+ */
+function renderTagged(layout, options = {}) {
+    const assemble = drawing(layout, options);
+    return { svg: assemble(false), tagged: assemble(true) };
+}
+function drawing(layout, options) {
     const measurer = options.measurer ?? monospaceMeasurer();
     const fontSize = options.fontSize ?? DEFAULT_FONT_SIZE;
-    // A theme passed in — the command line's `--theme` — beats the one the file
-    // names, so one source renders in either. `diagram background:` and `text:`
-    // are the author overruling a color of whichever theme that is, and a color
-    // written by hand wins over any theme, so they are folded in afterwards and
-    // everything downstream sees one theme.
-    const named = layout.diagram['theme'];
-    const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
-    const page = layout.diagram['background'];
-    const words = layout.diagram['text.color'];
-    const theme = {
-        ...base,
-        ...(page !== undefined && { background: themeColor(page, base) }),
-        ...(words !== undefined && { text: themeColor(words, base) }),
-    };
+    const theme = themeOf(layout, options);
     // Guides are shown by the viewer (`--guides`), or by a file that explains
     // its own construction (`diagram guides: show`).
     const guides = {
@@ -12932,8 +13030,8 @@ function render(layout, options = {}) {
     }
     const lineSvg = new Map(lines.map((line) => [line.key, line.svg]));
     const body = sequence
-        .map((item) => lineSvg.get(item.key) ?? item.svg)
-        .filter((svg) => svg.length > 0);
+        .map((item) => ({ item, svg: lineSvg.get(item.key) ?? item.svg }))
+        .filter(({ svg }) => svg.length > 0);
     // An edge's geometry is measured rather than solved for, so the resolver sized
     // the canvas from the boxes alone. A curve out of a `top` side, or a text
     // riding above one, lands outside that — so the page grows to hold it and the
@@ -12957,8 +13055,11 @@ function render(layout, options = {}) {
                 markers.set(markerId(mark, color, free), [mark, color, free]);
         }
     }
-    const svg = [
+    return (tagged) => ownIds([
         `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="${canvas.x} ${canvas.y} ${canvas.width} ${canvas.height}" font-family=${quote(measurer.fontFamily)} font-size="${fontSize}px">`,
+        // `diagram title:` — what a browser shows on the tab when the SVG is opened
+        // on its own, and what a screen reader announces.
+        ...(layout.diagram['title'] === undefined ? [] : [`  <title>${escapeXml(layout.diagram['title'])}</title>`]),
         '  <defs>',
         ...[...markers.values()].map(([mark, color, free]) => markMarker(mark, color, theme.background, free)),
         // Each mask covers the whole page, in page units: the default region is the
@@ -12972,11 +13073,51 @@ function render(layout, options = {}) {
         ].join('\n')),
         '  </defs>',
         `  <rect x="${canvas.x}" y="${canvas.y}" width="${canvas.width}" height="${canvas.height}" fill="${theme.background}"/>`,
-        ...body,
+        ...body.map(({ item, svg }) => (tagged ? tag(layout, item, svg) : svg)),
         '</svg>',
         '',
-    ].join('\n');
-    return ownIds(svg);
+    ].join('\n'));
+}
+/**
+ * The colors a drawing is made in. A theme passed in — the command line's
+ * `--theme` — beats the one the file names, so one source renders in either.
+ * `diagram background:` and `text:` are the author overruling a color of
+ * whichever theme that is, and a color written by hand wins over any theme, so
+ * they are folded in afterwards and everything downstream sees one theme.
+ */
+function themeOf(layout, options = {}) {
+    const named = layout.diagram['theme'];
+    const base = options.theme ?? (named === undefined ? undefined : THEMES[named]) ?? DARK_THEME;
+    const page = layout.diagram['background'];
+    const words = layout.diagram['text.color'];
+    return {
+        ...base,
+        ...(page !== undefined && { background: themeColor(page, base) }),
+        ...(words !== undefined && { text: themeColor(words, base) }),
+    };
+}
+/**
+ * `<g data-name="api" data-line="12">` round each thing drawn: what a page
+ * shows on hover, and what a finding about that line lights up.
+ */
+function tag(layout, item, svg) {
+    let name;
+    let line;
+    if (item.node) {
+        ({ name, line } = item.node);
+    }
+    else if (item.key.startsWith('edge ')) {
+        const edge = layout.edges[Number(item.key.slice('edge '.length))];
+        name = edge.name ?? `${edge.from.name} ${edge.arrow} ${edge.to.name}`;
+        line = edge.line;
+    }
+    else {
+        const mark = layout.marks.find((one) => one.name === item.key);
+        if (!mark)
+            return svg;
+        ({ name, line } = mark);
+    }
+    return `<g data-name="${escapeXml(name).replace(/"/g, '&quot;')}" data-line="${line}">\n${svg}\n</g>`;
 }
 /**
  * Gives every id in a drawing a prefix of its own, taken from a hash of the
@@ -13127,7 +13268,7 @@ function drawNode(node, theme, measurer, fontSize, markup, guides, inherited) {
  * cards drawn back to front, so the first, the front card, is on top.
  */
 function drawDeck(node, theme, measurer, fontSize, markup, guides, url) {
-    const outlined = node.appearance['fill'] !== undefined || node.appearance['border'] !== undefined;
+    const outlined = outlineStated(node.appearance);
     const drawn = outlined ? node : { ...node, appearance: { ...node.appearance, fill: 'none', border: 'none' } };
     const cards = node.children.filter((child) => child !== node.heading && !joinedToText(child));
     // The cards are the same thing, so each looks like the front one unless it says otherwise.
@@ -13186,8 +13327,29 @@ function borderSvg(node, theme) {
     if (node.body.kind !== 'shape')
         return '';
     const face = faceOf(node);
+    const d = outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners, node.body.look);
+    const stroke = borderStroke(node.borderWidth, `<path d="${d}"/>`, `rim-${node.name.replace(/[^\w.-]/g, '_')}`);
     const border = borderOf(node.appearance, theme, theme.containerStroke);
-    return `  <path d="${outlinePath(node.body.outline, face.x, face.y, face.width, face.height, node.corners, node.body.look)}" fill="none" stroke="${border}"/>`;
+    return `${stroke.clip}  <path d="${d}" fill="none" stroke="${border}"${stroke.attr}/>`;
+}
+/**
+ * How a border is stroked. A thick border lies wholly inside the outline: the
+ * outline is stroked twice as wide and clipped to itself, so only the inner
+ * half shows, and its outer edge is the outline exactly, along every side and
+ * at every corner and point of every shape, where a line ends and a gap is
+ * measured from (design.org 9.1). A normal border straddles the outline, as
+ * every box's always did, and writes nothing here. `detail` is for the lines
+ * drawn inside a shape, such as a cylinder's rim, which are as wide as the
+ * border and straddle where they run.
+ */
+function borderStroke(width, outline, id) {
+    if (width === undefined)
+        return { clip: '', attr: '', detail: '' };
+    return {
+        clip: `  <clipPath id="${id}">${outline}</clipPath>\n`,
+        attr: ` stroke-width="${round(width * 2)}" clip-path="url(#${id})"`,
+        detail: ` stroke-width="${round(width)}" clip-path="url(#${id})"`,
+    };
 }
 /** What a node draws of its own, without its children, which are drawn as items of their own. */
 function nodeSvg(node, theme, measurer, fontSize, markup) {
@@ -13253,18 +13415,22 @@ function nodeSvg(node, theme, measurer, fontSize, markup) {
     // and the fill, drawn without a stroke, still shows behind the title's inner
     // half.
     const onBorder = node.lines.length > 0 && node.textAttrs['place']?.startsWith('on ') === true;
+    const d = outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look);
+    const stroke = borderStroke(node.borderWidth, `<path d="${d}"/>`, `border-${node.name.replace(/[^\w.-]/g, '_')}`);
+    if (stroke.clip)
+        parts.push(stroke.clip.trimEnd());
     if (onBorder) {
         const id = `title-${node.name.replace(/[^\w.-]/g, '_')}`;
         const room = PAD / 2;
         const hole = node.textBox;
         const grown = { x: face.x - PAD, y: face.y - PAD, w: face.width + PAD * 2, h: face.height + PAD * 2 };
-        parts.push(`  <mask id="${id}" maskUnits="userSpaceOnUse" x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}">`, `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`, `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`, '  </mask>', `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="none"/>`, `  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="none" stroke="${border}" mask="url(#${id})"/>`);
+        parts.push(`  <mask id="${id}" maskUnits="userSpaceOnUse" x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}">`, `    <rect x="${round(grown.x)}" y="${round(grown.y)}" width="${round(grown.w)}" height="${round(grown.h)}" fill="white"/>`, `    <rect x="${round(node.x + hole.x - room)}" y="${round(node.y + hole.y)}" width="${round(hole.width + room * 2)}" height="${round(hole.height)}" fill="black"/>`, '  </mask>', `  <path d="${d}" fill="${fill}" stroke="none"/>`, `  <path d="${d}" fill="none" stroke="${border}"${stroke.attr} mask="url(#${id})"/>`);
     }
     else {
-        parts.push(`  <path d="${outlinePath(outline, face.x, face.y, face.width, face.height, node.corners, look)}" fill="${fill}" stroke="${border}"/>`);
+        parts.push(`  <path d="${d}" fill="${fill}" stroke="${border}"${stroke.attr}/>`);
     }
     for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height, look)) {
-        parts.push(`  <path d="${extra}" fill="none" stroke="${border}"/>`);
+        parts.push(`  <path d="${extra}" fill="none" stroke="${border}"${stroke.detail}/>`);
     }
     // A leaf's text defaults to the middle of its box, a container's to the top
     // left of the band; both then read `at` for where it really goes. Where the
@@ -13315,6 +13481,11 @@ function markSvg(mark, theme, guides, markup, fontSize) {
         ? `d="M${round(mark.x)} ${round(mark.y)}L${round(mark.x + mark.width)} ${round(mark.y + mark.height)}"`
         : `x="${round(mark.x)}" y="${round(mark.y)}" width="${round(mark.width)}" height="${round(mark.height)}" rx="4"`;
     const shape = flat ? 'path' : 'rect';
+    // A thick border lies inside the region's stated edge, as a box's does; one
+    // drawn as a line has no inside, so it is only wider.
+    const edge = flat
+        ? { clip: '', attr: mark.borderWidth === undefined ? '' : ` stroke-width="${round(mark.borderWidth)}"` }
+        : borderStroke(mark.borderWidth, `<rect ${box}/>`, `edge-${mark.name.replace(/[^\w.-]/g, '_')}`);
     // A text on the border breaks it, as a title on a box's border does.
     const hole = mark.text && mark.text.textAttrs['place']?.startsWith('on ') ? mark.text.box : undefined;
     const id = `region-${mark.name.replace(/[^\w.-]/g, '_')}`;
@@ -13328,13 +13499,13 @@ function markSvg(mark, theme, guides, markup, fontSize) {
     if (mark.guide) {
         const fill = color(said('fill')) ?? 'none';
         const border = color(said('border')) ?? guides.color;
-        return `${masked}  <${shape} ${box} fill="${fill}" stroke="${border}" stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
+        return `${edge.clip}${masked}  <${shape} ${box} fill="${fill}" stroke="${border}"${edge.attr} stroke-dasharray="${GUIDE_DASH}"${mask}/>${label}`;
     }
     const fill = regionFill(mark, theme);
     const border = color(said('border'));
     const opacity = fill.color === 'none' || fill.opacity >= 1 ? '' : ` fill-opacity="${round(fill.opacity)}"`;
-    return (`${masked}  <${shape} ${box} fill="${fill.color}"${opacity}` +
-        ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''} stroke-width="1"${mask}/>${label}`);
+    return (`${edge.clip}${masked}  <${shape} ${box} fill="${fill.color}"${opacity}` +
+        ` stroke="${border ?? theme.primary.color}"${border === undefined ? ' stroke-opacity="0.5"' : ''}${edge.attr || ' stroke-width="1"'}${mask}/>${label}`);
 }
 /**
  * A region's fill (design.org 8.3): what it states, or the theme's tint, at
@@ -14122,12 +14293,15 @@ function factsFor(node, measurer, fontSize) {
     const venn = vennOf(node);
     const circle = isCircle(node);
     // A deck that draws no outline of its own is its cards, with nothing round them.
-    const undrawnDeck = node.appearance['layout'] === 'deck' && node.appearance['fill'] === undefined && node.appearance['border'] === undefined;
+    const undrawnDeck = node.appearance['layout'] === 'deck' && !outlineStated(node.appearance);
+    // A thick border is drawn inside the outline, so the padding is measured
+    // from its inner edge and the box grows by the extra (design.org 9.1).
+    const extra = (node.borderWidth ?? BORDER_WIDTH) - BORDER_WIDTH;
     const padding = node.body.kind === 'none' || (undrawnDeck && node.appearance['padding'] === undefined)
         ? 0
-        : node.appearance['padding'] !== undefined
+        : (node.appearance['padding'] !== undefined
             ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
-            : PAD;
+            : PAD) + extra;
     // `padding-right: 4`: one side's padding, over `padding:` there.
     const pad = { top: padding, right: padding, bottom: padding, left: padding };
     for (const side of PADDING_SIDES) {
@@ -14137,7 +14311,7 @@ function factsFor(node, measurer, fontSize) {
         if (circle) {
             throw new SourceError(`"${node.name}" padding-${side}: a circle has no sides to pad one of — use padding:`, node.line);
         }
-        pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line);
+        pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line) + extra;
     }
     // A subprocess's bars stand inside its sides, so its text keeps its padding clear of them.
     if (node.body.kind === 'shape' && node.body.outline === 'flow-subprocess') {
@@ -14577,6 +14751,7 @@ function buildMarks(named, placed, styles, texts = new Map()) {
         else if (text) {
             box = pointTextBox(at.x, at.y, text);
         }
+        const borderWidth = borderWidthOf(`region "${name}"`, appearance['border.thickness'], stmt.line);
         marks.push({
             kind: stmt.kind,
             name,
@@ -14584,6 +14759,7 @@ function buildMarks(named, placed, styles, texts = new Map()) {
             names,
             appearance,
             guide: stmt.guide === true,
+            ...(borderWidth !== BORDER_WIDTH ? { borderWidth } : {}),
             ...(text && box ? { text: { lines: text.lines, textAttrs: text.textAttrs, size: text.size, lineHeight: text.lineHeight, box } } : {}),
             line: stmt.line,
         });
@@ -14872,6 +15048,10 @@ function buildTree(statements, styles, defaults, icons) {
         // the renderer does for its colors; its own words beat both.
         const guideLook = stmt.guide ? defaults.get('guide node')?.['corners'] : undefined;
         node.corners = cornersOf(node, stmt.attrs['corners'] ?? guideLook ?? appearance['corners'], stmt.attrs['corners'] !== undefined);
+        const guideBorder = stmt.guide ? defaults.get('guide node')?.['border.thickness'] : undefined;
+        const borderWidth = borderWidthOf(`"${node.name}"`, stmt.attrs['border.thickness'] ?? guideBorder ?? appearance['border.thickness'], stmt.line);
+        if (borderWidth !== BORDER_WIDTH)
+            node.borderWidth = borderWidth;
         const cut = stmt.name.lastIndexOf('.');
         if (cut === -1) {
             roots.push(node);
@@ -15188,7 +15368,7 @@ function checkAttrs(kind, name, attrs, line) {
         // Quoted back the way it was written. A bracketed value arrives one dotted
         // key at a time, and `contents: match` is not a line anybody could look for.
         // A deck's cards are stored joined on a line break; quote them back as written.
-        const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+        const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : key === 'title' ? `"${value}"` : value;
         const wrote = written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
         if (!ALL_ATTR_KEYS.includes(key)) {
             // Nothing anywhere in the language answers to this word, so the only
@@ -15235,6 +15415,23 @@ function checkAttrs(kind, name, attrs, line) {
  * node drawn as a picture or with no body has no outline; `checkAttrs` has
  * already refused the word written on one, and a style's is unused.
  */
+/**
+ * A border's thickness in pixels: `thin`, `normal`, `thick`, a multiple of
+ * normal, or `px`, read as a line's is (design.org 3.8).
+ */
+function borderWidthOf(what, value, line) {
+    if (value === undefined)
+        return BORDER_WIDTH;
+    const named = BORDER_THICKNESS[value];
+    if (named !== undefined)
+        return named;
+    const number = /^(\d*\.?\d+)(px)?$/.exec(value);
+    if (!number || Number(number[1]) <= 0) {
+        throw new SourceError(`${what}: "border: (thickness: ${value})" — a thickness is thin, normal, thick, ` +
+            'a multiple of normal greater than zero such as `thickness: 2`, or pixels such as `thickness: 3px`', line);
+    }
+    return number[2] ? Number(number[1]) : BORDER_WIDTH * Number(number[1]);
+}
 function cornersOf(node, value, written) {
     if (node.body.kind !== 'shape' || value === undefined)
         return NODE_CORNERS[0];

@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve as resolvePath } from 'node:path';
-import { nearMatch, readChecks, type Checks } from './checks.js';
+import { basename, dirname, resolve as resolvePath } from 'node:path';
+import { nearMatch, readChecks, type Checks, type Finding } from './checks.js';
 import { SourceError } from './errors.js';
 import { format } from './format.js';
 import { DEFAULT_FORMAT, readFormatSettings, SETTINGS_FILE, settingsFileText, type FormatSettings } from './format-settings.js';
-import { draw } from './index.js';
+import { draw, type DrawOptions } from './index.js';
+import { drawPage } from './page.js';
 import { THEME_NAMES, THEMES } from './themes.js';
 
 const USAGE = `reladraw — draw a diagram from stated placement
 
   reladraw render <input.reladraw> [-o <output.svg>] [options]
+  reladraw render <input.reladraw> --page [-o <output.html>] [options]
   reladraw check <input.reladraw> [options]
   reladraw format <input.reladraw>... [--check]
   reladraw format - [--check]
@@ -34,6 +36,11 @@ const USAGE = `reladraw — draw a diagram from stated placement
 
   -o, --out   where render writes the SVG. Defaults to the input path with
               its extension replaced by .svg. Use - for standard output.
+  --page      render writes a page for looking at the diagram instead: one
+              HTML file in the diagram's colors, headed with its title, that
+              pans, zooms, goes full screen, saves the SVG or a PNG, lists the
+              findings and names what is under the pointer. Defaults to the
+              input path with .html.
   --theme     render in this theme, whatever the file's \`diagram theme:\`
               says. One of ${THEME_NAMES.join(', ')}.
   --guides    draw the guides: everything written with \`guide\` in front,
@@ -85,6 +92,7 @@ async function main(argv: string[]): Promise<number> {
   let checks: string | undefined;
   let noChecks = false;
   let guides = false;
+  let page = false;
 
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -122,6 +130,11 @@ async function main(argv: string[]): Promise<number> {
       noChecks = true;
     } else if (arg === '--guides') {
       guides = true;
+    } else if (arg === '--page' && command === 'render') {
+      page = true;
+    } else if (arg === '--page') {
+      process.stderr.write('reladraw: check writes nothing, so it takes no --page; reladraw render --page writes one\n');
+      return 1;
     } else if (arg.startsWith('-') && arg !== '-') {
       process.stderr.write(`reladraw: unknown option ${arg}\n`);
       return 1;
@@ -161,16 +174,23 @@ async function main(argv: string[]): Promise<number> {
 
   const source = await readFile(input, 'utf8');
 
-  let drawn: ReturnType<typeof draw>;
+  const options: DrawOptions = {
+    ...(theme === undefined ? {} : { theme: THEMES[theme]! }),
+    ...(guides ? { guides: true } : {}),
+    // An icon's file is found from the diagram, not from wherever the tool
+    // happens to be run.
+    readIconFile: (path) => readFileSync(resolvePath(dirname(input), path), 'utf8'),
+    ...(noChecks ? { checks: false as const } : overChecks ? { checks: overChecks } : {}),
+  };
+  let drawn: { text: string; findings: Finding[] };
   try {
-    drawn = draw(source, {
-      ...(theme === undefined ? {} : { theme: THEMES[theme]! }),
-      ...(guides ? { guides: true } : {}),
-      // An icon's file is found from the diagram, not from wherever the tool
-      // happens to be run.
-      readIconFile: (path) => readFileSync(resolvePath(dirname(input), path), 'utf8'),
-      ...(noChecks ? { checks: false as const } : overChecks ? { checks: overChecks } : {}),
-    });
+    if (page) {
+      const made = drawPage(source, basename(input).replace(/\.[^.]+$/, ''), options);
+      drawn = { text: made.html, findings: made.findings };
+    } else {
+      const made = draw(source, options);
+      drawn = { text: made.svg, findings: made.findings };
+    }
   } catch (error) {
     if (error instanceof SourceError) {
       process.stderr.write(`${error.format(input)}\n`);
@@ -183,13 +203,13 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'check') return 0;
 
   if (out === '-') {
-    process.stdout.write(drawn.svg);
+    process.stdout.write(drawn.text);
     return 0;
   }
 
-  const target = resolvePath(out ?? input.replace(/\.[^.]+$/, '') + '.svg');
+  const target = resolvePath(out ?? input.replace(/\.[^.]+$/, '') + (page ? '.html' : '.svg'));
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, drawn.svg, 'utf8');
+  await writeFile(target, drawn.text, 'utf8');
   process.stderr.write(`${target}\n`);
   return 0;
 }

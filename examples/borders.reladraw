@@ -1,0 +1,28 @@
+// A border's thickness. It is drawn inside the box's outline, and the box
+// grows by the extra, so the padding round what it holds stays what it says
+// and a gap is still measured from the outside of the stroke.
+
+style hot  border: (color: #d2904e, thickness: 4)
+
+node host "Host"
+node host.app "App"
+node db "DB"  right of host
+edge host -> db
+
+node thick "Host"  below host  style: hot
+node thick.app "App"
+node db2 "DB"  right of thick
+edge thick -> db2
+
+node thin    "thin"    below thick  border: (thickness: thin)
+node normal  "normal"  right of thin (gap: tight)
+node bold    "thick"   right of normal (gap: tight)  border: (thickness: thick)
+node px      "6px"     right of bold (gap: tight)  border: (thickness: 6px)
+
+node ring    "ring"    below thin  shape: circle  style: hot
+node gem     "gem"     right of ring (gap: tight)  shape: diamond  style: hot
+node hex     "hex"     right of gem (gap: tight)  shape: hexagon  style: hot
+node can     "can"     right of hex (gap: tight)  shape: cylinder  style: hot
+node doc     "doc"     right of can (gap: tight)  shape: document  style: hot
+node legend  "Legend" (on top)  right of doc (gap: tight)  style: hot
+node legend.item "item"

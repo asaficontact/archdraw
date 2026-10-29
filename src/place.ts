@@ -229,6 +229,8 @@ export class Placer {
   private readonly origins = new Map<string, number>();
   /** Containers whose anchor is being placed on the page, so a box outside them is measured on the page rather than in their frame. */
   private readonly onPage = new Set<string>();
+  /** Boxes that anchor their frame on one axis only, when no box in it says nothing at all (`splitAnchors`). */
+  private readonly axisAnchors = new Set<string>();
 
   /** Named points and regions being worked out, innermost last, to refuse one defined through itself. */
   private readonly expanding: string[] = [];
@@ -400,7 +402,7 @@ export class Placer {
     const worked = this.guard(`origin\n${key}`, node, axis, undefined, () => {
       if (this.frameAnchor(node, axis)) return this.anchorOnPage(node, axis);
       const above = node.parent ? this.origin(node.parent, axis) : 0;
-      if (this.floats(node)) return above;
+      if (this.floats(node, axis)) return above;
       this.refusePlacedTwice(node, axis);
       return above + this.start(node, axis) - this.frame(node, axis).boxStart;
     });
@@ -461,9 +463,10 @@ export class Placer {
    * goes, and nothing inside it is placed against a box outside it in its
    * stead. Its frame's origin is its own container's.
    */
-  private floats(node: LayoutNode): boolean {
+  private floats(node: LayoutNode, axis: Axis): boolean {
     const parent = node.parent;
-    if (node.placements.length > 0 || node.children.length === 0) return false;
+    if (node.children.length === 0) return false;
+    if (node.placements.length > 0 && !this.axisAnchors.has(`${node.name}\n${axis}`)) return false;
     if (parent && (parent.heading === node || joinedToText(node) || this.facts.get(parent)!.layout || this.vennPart(node) !== undefined)) {
       return false;
     }
@@ -732,7 +735,7 @@ export class Placer {
     }
     // A container that anchors its frame shares its container's origin, so
     // its box starts where its outline does.
-    if (this.floats(node)) return this.frame(node, axis).boxStart;
+    if (this.floats(node, axis)) return this.frame(node, axis).boxStart;
     if (node.placements.length === 0 || this.acrossParts(node)) {
       // The anchor of its frame. One placed against a box in another part of
       // a venn is still its part's anchor; the placement moves the part. A container's title, when something is
@@ -751,7 +754,7 @@ export class Placer {
   /** A box's start from its own placements. */
   private placed(node: LayoutNode, axis: Axis): number {
     const statements = this.statements(node, axis);
-    if (statements.length === 0) return this.lone(node, axis);
+    if (statements.length === 0) return this.axisAnchors.has(`${node.name}\n${axis}`) ? 0 : this.lone(node, axis);
     if (statements.length === 1) {
       const [only] = statements;
       return this.apply(node, axis, only!);
@@ -2443,9 +2446,7 @@ export class Placer {
       const content = members.filter((member) => !this.framed(member));
       const unplaced = content.filter((member) => this.unplaced(member));
       const onTitle = content.find((member) => this.onTitle(member));
-      if (!parent && unplaced.length === 0) {
-        throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
-      }
+      if (unplaced.length === 0 && !(parent && this.anchoredOnTitle(parent))) this.splitAnchors(content, parent);
       if (unplaced.length > 1) {
         const names = unplaced.map((node) => `"${node.name}"`).join(', ');
         throw new SourceError(
@@ -2466,6 +2467,66 @@ export class Placer {
       }
     }
     for (const member of all) this.checkAnchors(member.children, member);
+  }
+
+  /**
+   * Every box in a frame says something about where it goes, so the frame is
+   * anchored one axis at a time (design.org 5.3): across by the one box that
+   * says nothing across, up and down by the one that says nothing up and
+   * down. A lone direction's centering counts as saying nothing when its
+   * target's place on that axis is worked out from the box itself, as with
+   * `b right of a` and `a even with b.1`: the centering gives way to what was
+   * written. An axis nobody leaves free is a circle, reported when placing,
+   * and an axis a container is placed on by what it holds needs no anchor.
+   */
+  private splitAnchors(members: LayoutNode[], parent: LayoutNode | undefined): void {
+    const free = BOTH_AXES.map((axis) =>
+      parent && this.frameAnchor(parent, axis)
+        ? []
+        : members.filter((member) => this.statements(member, axis).length === 0 && this.loneGivesWay(member, axis)),
+    );
+    if (!parent && free.every((on) => on.length === 0)) {
+      throw new SourceError('every node is placed relative to another, so nothing anchors the diagram', 1);
+    }
+    BOTH_AXES.forEach((axis, index) => {
+      const on = free[index]!;
+      // With the other axis bound all round there is a circle, which placing reports better.
+      if (on.length > 1 && free.every((other) => other.length > 0)) {
+        const names = on.map((node) => `"${node.name}"`).join(', ');
+        throw new SourceError(
+          `exactly one node may say nothing about where it goes ${AXIS_SAID[axis]}, but ${on.length} do: ${names}`,
+          on[1]!.line,
+        );
+      }
+      if (on.length === 1) this.axisAnchors.add(`${on[0]!.name}\n${axis}`);
+    });
+  }
+
+  /** Whether a box with nothing stated on this axis is left free there: no lone direction centers it, or the one that would is placed from the box itself. */
+  private loneGivesWay(node: LayoutNode, axis: Axis): boolean {
+    const offsets = node.placements.filter((placement) => placement.kind === 'offset' && component(placement.direction, axis) === undefined);
+    if (offsets.length === 0) return true;
+    if (offsets.length > 1) return false;
+    return this.namedFrom(offsets[0]!).some((named) => this.placedFrom(named, axis, node, new Set()));
+  }
+
+  /** The boxes a placement names, through points and regions. */
+  private namedFrom(placement: Placement): LayoutNode[] {
+    return placement.targets
+      .flatMap((target) => this.boxesNamed(target, []))
+      .flatMap((name) => this.byName.get(name) ?? []);
+  }
+
+  /** Whether a box's place on one axis is worked out, however indirectly, from `from` or something inside it. */
+  private placedFrom(node: LayoutNode, axis: Axis, from: LayoutNode, seen: Set<LayoutNode>): boolean {
+    if (node === from || isWithin(node, from)) return true;
+    if (seen.has(node)) return false;
+    seen.add(node);
+    const stated = this.statements(node, axis).map((statement) => statement.placement);
+    const placements = stated.length > 0
+      ? stated
+      : node.placements.filter((placement) => placement.kind === 'offset' && component(placement.direction, axis) === undefined);
+    return placements.some((placement) => this.namedFrom(placement).some((named) => this.placedFrom(named, axis, from, seen)));
   }
 
   /**

@@ -13,7 +13,7 @@ That matters here specifically. You can't see the SVG you produced. With auto-la
 
 ## Check it is installed, and the same version as this skill
 
-This skill teaches reladraw 0.20.0. Once per session, before the first render, run:
+This skill teaches reladraw 0.21.0. Once per session, before the first render, run:
 
 ```
 reladraw --version
@@ -39,6 +39,7 @@ diagram.reladraw:9: warning(edge-node-overlap): line api -> db crosses node cach
 
 5. Fix each finding in the source, by placing something differently or saying where a line goes, and re-run until there are none. `reladraw check diagram.reladraw` prints the findings without writing the SVG.
 6. `reladraw format diagram.reladraw` before handing the file over. It lines statements up in columns and evens out spacing, by the project's `.reladraw-format` if there is one, and changes nothing about what the file draws. A file you wrote then reads like one the user's project already has.
+7. To show the user the picture, `reladraw render diagram.reladraw --page` writes `diagram.html`: a page in the diagram's own colors that pans, zooms, goes full screen and saves an SVG or PNG. Open that rather than the bare SVG, and don't build a page of your own around it. Give the diagram a title first with `diagram  title: "…"`, which heads the page.
 
 A file with no errors and no findings has nothing on top of anything. That is still not the same as a good picture: re-read your source to confirm the arrangement says what you meant, and for a large diagram tell the user you have checked the findings but not seen the render.
 
@@ -148,7 +149,7 @@ style store  fill: theme-primary-subtle  border: theme-primary  badge: database
 node records "Records"  style: store
 ```
 
-`fill` is a box's area, `border` its outline, `line` an edge's line, and a text's color goes in its bracket. `corners: sharp` squares a box's rounded corners. Prefer theme colors, which read in light and dark themes alike: `theme-primary` and `theme-secondary` are the accents, `-subtle` is an accent softened toward the page (the one to fill a box with), `theme-muted` is quieter text. A hex or CSS color stays fixed in every theme.
+`fill` is a box's area, `border` its outline, `line` an edge's line, and a text's color goes in its bracket. `corners: sharp` squares a box's rounded corners, and `border: (color: theme-primary, thickness: thick)` thickens its outline, the box growing to keep its padding. Prefer theme colors, which read in light and dark themes alike: `theme-primary` and `theme-secondary` are the accents, `-subtle` is an accent softened toward the page (the one to fill a box with), `theme-muted` is quieter text. A hex or CSS color stays fixed in every theme.
 
 ## A complete small file
 

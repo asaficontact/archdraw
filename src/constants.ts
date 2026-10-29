@@ -74,6 +74,16 @@ export const THICKNESS: Record<string, number> = {
   thick: LINE_WIDTH * 2,
 };
 
+/** A box's border as it always was, in pixels: `border: (thickness: normal)`. */
+export const BORDER_WIDTH = 1;
+
+/** What a border's `thickness: thin | normal | thick` draw, in pixels. */
+export const BORDER_THICKNESS: Record<string, number> = {
+  thin: BORDER_WIDTH / 2,
+  normal: BORDER_WIDTH,
+  thick: BORDER_WIDTH * 2,
+};
+
 /**
  * How much of a line of this thickness its arrowhead covers. The marker scales
  * with the stroke, so a thick line gets a bigger head, and the room an edge's

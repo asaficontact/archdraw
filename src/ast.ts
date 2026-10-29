@@ -523,6 +523,13 @@ export const TEXT_KEYS = ['color', 'size', 'wrap', 'align', 'at'] as const;
 export const LINE_KEYS = ['color', 'path', 'corners', 'crossing', 'pattern', 'thickness', 'curve', 'turn', 'step-out'] as const;
 
 /**
+ * What a box's border takes in its bracket: `border: (color: red, thickness:
+ * thick)`, mirroring the line's. `border: red` is the short form of the color,
+ * and both are stored under the bare `border` key.
+ */
+export const BORDER_KEYS = ['color', 'thickness'] as const;
+
+/**
  * The words each of the line's properties takes, the default first. Thickness
  * takes a multiple of normal (`2`) or pixels (`3px`) as well. `turn:` takes a fraction and
  * `step-out:` a distance, so neither has a list.
@@ -816,9 +823,10 @@ export interface DiagramStmt {
  * `text: (color: …)`, and sets the text color of everything at once — the
  * theme has one text color, shared by nodes and edges, and this is that.
  * `checks` takes a bracket too, `checks: (edge-crossings: on)`, turning kinds
- * of finding on or off by name.
+ * of finding on or off by name. `title` is quoted, and names the drawing: the
+ * SVG carries it as its own title, and a page made with `--page` heads with it.
  */
-export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides'] as const;
+export const DIAGRAM_KEYS = ['theme', 'background', 'text', 'checks', 'guides', 'title'] as const;
 
 /**
  * `default leaf  fill: #2e5d3a` — a style that applies to every thing of one

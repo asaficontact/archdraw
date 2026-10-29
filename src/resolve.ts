@@ -29,6 +29,8 @@ import {
   LINE_WIDTH,
   PAD,
   THICKNESS,
+  BORDER_THICKNESS,
+  BORDER_WIDTH,
   fontSizeFor,
   widestLine,
 } from './constants.js';
@@ -37,7 +39,7 @@ import { type Body, bodyFor, type Icon, pastedIcon } from './icons.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { isBoxy, middleOf, sizeFor, SUBPROCESS_INSET } from './outline.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
-import { joinedToText, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
+import { joinedToText, outlineStated, type DepthStatement, type Layout, type LayoutMark, type LayoutEdge, type LayoutNode, type LineLook, type Rect } from './model.js';
 import { checkOpacity, gapPixels, Placer, regionTextAt, type Layout as ChildLayout, type NodeFacts, type RegionTextFacts, type TitlePlace, type Venn } from './place.js';
 
 /**
@@ -63,14 +65,16 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   const venn = vennOf(node);
   const circle = isCircle(node);
   // A deck that draws no outline of its own is its cards, with nothing round them.
-  const undrawnDeck =
-    node.appearance['layout'] === 'deck' && node.appearance['fill'] === undefined && node.appearance['border'] === undefined;
+  const undrawnDeck = node.appearance['layout'] === 'deck' && !outlineStated(node.appearance);
+  // A thick border is drawn inside the outline, so the padding is measured
+  // from its inner edge and the box grows by the extra (design.org 9.1).
+  const extra = (node.borderWidth ?? BORDER_WIDTH) - BORDER_WIDTH;
   const padding =
     node.body.kind === 'none' || (undrawnDeck && node.appearance['padding'] === undefined)
       ? 0
-      : node.appearance['padding'] !== undefined
-        ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
-        : PAD;
+      : (node.appearance['padding'] !== undefined
+          ? gapPixels(node.appearance['padding'], `"${node.name}" padding:`, node.line)
+          : PAD) + extra;
   // `padding-right: 4`: one side's padding, over `padding:` there.
   const pad = { top: padding, right: padding, bottom: padding, left: padding };
   for (const side of PADDING_SIDES) {
@@ -79,7 +83,7 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
     if (circle) {
       throw new SourceError(`"${node.name}" padding-${side}: a circle has no sides to pad one of — use padding:`, node.line);
     }
-    pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line);
+    pad[side] = gapPixels(written, `"${node.name}" padding-${side}:`, node.line) + extra;
   }
   // A subprocess's bars stand inside its sides, so its text keeps its padding clear of them.
   if (node.body.kind === 'shape' && node.body.outline === 'flow-subprocess') {
@@ -609,6 +613,7 @@ function buildMarks(
     } else if (text) {
       box = pointTextBox(at.x, at.y, text);
     }
+    const borderWidth = borderWidthOf(`region "${name}"`, appearance['border.thickness'], stmt.line);
     marks.push({
       kind: stmt.kind,
       name,
@@ -616,6 +621,7 @@ function buildMarks(
       names,
       appearance,
       guide: stmt.guide === true,
+      ...(borderWidth !== BORDER_WIDTH ? { borderWidth } : {}),
       ...(text && box ? { text: { lines: text.lines, textAttrs: text.textAttrs, size: text.size, lineHeight: text.lineHeight, box } } : {}),
       line: stmt.line,
     });
@@ -925,6 +931,9 @@ function buildTree(
     // the renderer does for its colors; its own words beat both.
     const guideLook = stmt.guide ? defaults.get('guide node')?.['corners'] : undefined;
     node.corners = cornersOf(node, stmt.attrs['corners'] ?? guideLook ?? appearance['corners'], stmt.attrs['corners'] !== undefined);
+    const guideBorder = stmt.guide ? defaults.get('guide node')?.['border.thickness'] : undefined;
+    const borderWidth = borderWidthOf(`"${node.name}"`, stmt.attrs['border.thickness'] ?? guideBorder ?? appearance['border.thickness'], stmt.line);
+    if (borderWidth !== BORDER_WIDTH) node.borderWidth = borderWidth;
 
     const cut = stmt.name.lastIndexOf('.');
     if (cut === -1) {
@@ -1278,7 +1287,8 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
     // Quoted back the way it was written. A bracketed value arrives one dotted
     // key at a time, and `contents: match` is not a line anybody could look for.
     // A deck's cards are stored joined on a line break; quote them back as written.
-    const shown = key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : value;
+    const shown =
+      key === 'cards' ? value.split('\n').map((text) => `"${text}"`).join(' ') : key === 'title' ? `"${value}"` : value;
     const wrote =
       written === key ? `${key}: ${shown}` : `${key}: (${written.slice(key.length + 1)}: ${shown})`;
 
@@ -1347,6 +1357,25 @@ function checkAttrs(kind: Kind, name: string, attrs: Attrs, line: number): void 
  * node drawn as a picture or with no body has no outline; `checkAttrs` has
  * already refused the word written on one, and a style's is unused.
  */
+/**
+ * A border's thickness in pixels: `thin`, `normal`, `thick`, a multiple of
+ * normal, or `px`, read as a line's is (design.org 3.8).
+ */
+export function borderWidthOf(what: string, value: string | undefined, line: number): number {
+  if (value === undefined) return BORDER_WIDTH;
+  const named = BORDER_THICKNESS[value];
+  if (named !== undefined) return named;
+  const number = /^(\d*\.?\d+)(px)?$/.exec(value);
+  if (!number || Number(number[1]) <= 0) {
+    throw new SourceError(
+      `${what}: "border: (thickness: ${value})" — a thickness is thin, normal, thick, ` +
+        'a multiple of normal greater than zero such as `thickness: 2`, or pixels such as `thickness: 3px`',
+      line,
+    );
+  }
+  return number[2] ? Number(number[1]) : BORDER_WIDTH * Number(number[1]);
+}
+
 function cornersOf(node: LayoutNode, value: string | undefined, written: boolean): NodeCorners {
   if (node.body.kind !== 'shape' || value === undefined) return NODE_CORNERS[0];
   if (!(NODE_CORNERS as readonly string[]).includes(value)) {

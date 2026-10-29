@@ -33,6 +33,12 @@ export interface LayoutNode {
    * a document's are read; drawing alone depends on it, never placement.
    */
   corners: NodeCorners;
+  /**
+   * How wide the border is drawn, in pixels, from `border: (thickness: …)`;
+   * left out when it is the normal width. The stroke lies inside the outline,
+   * and the padding grows by the extra, so a thick border takes room.
+   */
+  borderWidth?: number;
   /** The text as written, before line splitting. */
   text: string;
   /** The text split into the lines that will be drawn, each as its runs. */
@@ -146,6 +152,8 @@ export interface LayoutMark {
   names: string[];
   appearance: Attrs;
   guide: boolean;
+  /** A region's border width in pixels, left out when normal; drawn inside its stated edge. */
+  borderWidth?: number;
   /** Its text, if it has one, and where that sits on the page (design.org 7.4). */
   text?: MarkTextBox;
   line: number;
@@ -311,6 +319,14 @@ export interface Layout {
   depths: DepthStatement[];
   /** How a shown guide of each kind looks: `default guide node` and the rest. */
   guideLooks: Record<'node' | 'edge' | 'point' | 'region', Attrs>;
+}
+
+/**
+ * Whether a deck, which draws no outline of its own, was given one: a fill, or
+ * something about its border.
+ */
+export function outlineStated(appearance: Attrs): boolean {
+  return appearance['fill'] !== undefined || appearance['border'] !== undefined || appearance['border.thickness'] !== undefined;
 }
 
 /**
