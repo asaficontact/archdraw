@@ -2,7 +2,9 @@
 
 reladraw is a text language for diagrams where you say where things go.
 
-**[Try it in your browser →](https://reladraw.github.io/reladraw/)**
+> The language is changing frequently. The playground always runs the newest syntax, so a diagram that draws there today may need a small edit later. An installed copy from npm changes only when you upgrade it.
+
+**[Try it in your browser in the reladraw playground →](https://reladraw.github.io/reladraw/)**
 
 I wanted to be able to create custom, expressive diagrams where I decided how to arrange the diagram, but without the inefficiency of manually drawing in draw.io. For example, this is a diagram drawn in draw.io:
 
@@ -25,12 +27,14 @@ reladraw sits between those two extremes, aiming to have the benefits of a diagr
 ```
 node app "Web app"
 node app.ui  "Interface"
-node app.api "API"  below app.ui
+node app.api "API"  below app.ui (gap: tight)
 
-node store "Database"  right of app  level with app
+node store "Database"  right of app (gap: 12)  even with app.api
 
-edge app.api -> store  "queries"  from: right  to: left
+edge app.api -> store  "queries"
 ```
+
+The tool draws what the file says and nothing else: a gap is the gap you wrote, and a line is straight unless you say how it bends or where it passes. It never moves a box to make room or routes a line round one. Where the picture may not read as you meant, such as a line crossing a box or two texts on top of each other, it draws it anyway and prints a one-line warning saying where and by how much, so you or your agent can fix the source.
 
 See also [SYNTAX.md](SYNTAX.md) and [examples/](examples/).
 
@@ -38,14 +42,16 @@ See also [SYNTAX.md](SYNTAX.md) and [examples/](examples/).
 
 ```
 npm install -g reladraw
-reladraw diagram.reladraw -o diagram.svg
+reladraw render diagram.reladraw -o diagram.svg
 ```
+
+`reladraw check diagram.reladraw` prints the warnings without writing a picture, and `reladraw format diagram.reladraw` lines its statements up in columns. `reladraw render diagram.reladraw --page` writes a page for looking at it in a browser, with pan, zoom, full screen and the warnings beside it.
 
 Or from a clone, which also gets you the examples:
 
 ```
 npm install && npm run build
-node dist/cli.js examples/arch.reladraw -o out.svg
+node dist/cli.js render examples/arch.reladraw -o out.svg
 ```
 
 ## In a web page
@@ -69,22 +75,22 @@ Each `<reladraw-diagram>` is replaced by its SVG. Indent the source however suit
 To install a skill to let your agent know how to use reladraw:
 
 ```
-npx skills add reladraw/reladraw -g
+reladraw install-skill -g
 ```
 
-That installs it for every agent you use (Claude Code, Codex, Cursor, Copilot and others), each in its own skills directory. Leave off `-g` to install it into the current project only. To install it for just one agent, name it with `-a`:
+That installs the skill that came with your copy of reladraw, so it teaches what your reladraw accepts, for every agent you use (Claude Code, Codex, Cursor, Copilot and others), each in its own skills directory. It hands the work to [skills](https://www.npmjs.com/package/skills), and passes on whatever you write after `install-skill`. Leave off `-g` to install it into the current project only. To install it for just one agent, name it with `-a`:
 
 ```
-npx skills add reladraw/reladraw -g -a claude-code
+reladraw install-skill -g -a claude-code
 ```
 
-That gets you a copy of the skill at the time you run it, so you'll need to re-run that command to get the latest skill when there is a new release.
+The skill is a copy, so after upgrading reladraw, run the command again to bring the skill up to date with it.
+
+To install the skill from the main branch instead, which can run ahead of the release on npm, run `npx skills add reladraw/reladraw -g`.
 
 ## Status
 
-Version 0.16.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
-
-The language isn't stable yet, so expect the syntax to change.
+Version 0.22.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
 
 ## License
 
@@ -92,4 +98,4 @@ Apache-2.0. See [LICENSE](LICENSE). The license covers the code, not the name. I
 
 ## Contributing
 
-Issues are welcome. Particularly helpful is a diagram you could not represent in reladraw. While the language is still changing quickly, an issue helps more than a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues are welcome. Particularly helpful is a diagram you could not represent in reladraw. Pull requests are not accepted; please open an issue instead. See [CONTRIBUTING.md](CONTRIBUTING.md).

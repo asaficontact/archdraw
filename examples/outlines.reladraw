@@ -1,0 +1,56 @@
+// Every outline `shape:` names. A shape geometry has a word for is named by
+// it, and takes settings in a bracket for what its box doesn't decide; a
+// flowchart shape with no geometric word is `flow-` and what it means, drawn
+// as the standard draws it. Each grows until its text fits at its middle.
+
+node diamond  "valid?"  shape: diamond
+node flat     "valid?"  right of diamond (gap: tight)  shape: diamond  width: 18  height: 5
+node pill     "start"  right of flat (gap: tight)  shape: pill
+node para     "read input"  right of pill (gap: tight)  shape: parallelogram
+node left     "read input"  right of para (gap: tight)  shape: parallelogram (slant: 3, lean: left)
+
+node hexagon  "set up"  below diamond (gap: wide)  shape: hexagon
+node pointy   "set up"  right of hexagon (gap: tight)  shape: hexagon (point: 3)
+node trap     "sign off"  right of pointy (gap: tight)  shape: trapezoid
+node trapup   "sign off"  right of trap (gap: tight)  shape: trapezoid (taper: 3, narrow: top)
+// The text sits at a triangle's middle, a third of the way from its base.
+node up       "split"  right of trapup (gap: tight)  shape: triangle (aim: up)
+node down     "merge"  right of up (gap: tight)  shape: triangle
+node aimed    "next"  right of down (gap: tight)  shape: triangle (aim: right)
+
+node db       "orders"  below hexagon (gap: wide)  shape: cylinder
+node queue    "queue"  right of db (gap: tight)  shape: cylinder (cap: 1.5, lying)
+node oval     "cache"  right of queue (gap: tight)  shape: circle  width: 16  height: 6
+node doc      "report"  right of oval (gap: tight)  shape: document (fold: 1.5)
+
+node sub      "handle"  below db (gap: wide)  shape: flow-subprocess
+node wavy     "report"  right of sub (gap: tight)  shape: flow-document
+node page     "p. 2"  right of wavy (gap: tight)  shape: flow-off-page
+node delay    "wait"  right of page (gap: tight)  shape: flow-delay
+node manual   "type code"  right of delay (gap: tight)  shape: flow-manual-input
+node stored   "store"  right of manual (gap: tight)  shape: flow-stored-data
+
+node loop     "each file"  below sub (gap: wide)  shape: flow-loop-start
+node next     "next"  right of loop (gap: tight)  shape: flow-loop-end
+node card     "card"  right of next (gap: tight)  shape: flow-card
+node screen   "screen"  right of card (gap: tight)  shape: flow-display
+node tape     "T"  right of screen (gap: tight)  shape: flow-tape
+node paper    "tape"  right of tape (gap: tight)  shape: flow-punched-tape
+// Collate's middle is where its two halves meet, so its text sits on a patch.
+node collate  "collate"  right of paper (gap: tight)  shape: flow-collate
+
+// Lines on a shape's sides and corners. A corner is where the line from the
+// shape's middle to that corner of its box meets the outline.
+node hub      "route?"  below loop (gap: wide)  shape: diamond
+node north    "in"  above hub (gap: normal)  shape: none
+node east     "no"  right of hub (gap: wide)
+node south1   "a"  below hub (gap: wide)
+node south2   "b"  right of south1 (gap: tight)
+node south3   "c"  right of south2 (gap: tight)
+node note     "see policy"  right of north (gap: wide)  shape: none
+edge north -> hub
+edge hub -> east  from: right
+edge hub -> south1  from: bottom
+edge hub -> south2  from: bottom
+edge hub -> south3  from: bottom
+edge note -> hub  to: top-right

@@ -1,25 +1,14 @@
-import type { Attrs, Axis, Direction, Kind, Mark, Placement } from './ast.js';
+import type { Attrs, EdgeTextPlace, Kind, Limit, Mark, NodeCorners, Placement, PlacementTarget, ViaEntry, Way } from './ast.js';
+
+/** A rectangle on the page; a side or a point has no size on one axis or both. */
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 import type { Line } from './text.js';
 import type { Body } from './icons.js';
-
-/** A `between` clause with its targets resolved. Mirrors `Passage` in `ast.ts`. */
-export interface LayoutPassage {
-  nodes: [LayoutNode, LayoutNode];
-  /** Which gap, where the pair has two. Absent when the pair leaves no doubt. */
-  axis?: Axis;
-}
-
-/**
- * `below resolver` on an edge with its targets resolved: the line is on that
- * side of the box bounding `nodes`, where it passes them. Mirrors the edge's
- * `passes` in `ast.ts`.
- */
-export interface LayoutPass {
-  direction: Direction;
-  nodes: LayoutNode[];
-  /** As the author wrote it, for error messages. */
-  written: string;
-}
 
 /** A node with its geometry solved. Coordinates are absolute, origin top-left. */
 /** A distance past each side of a box. */
@@ -39,25 +28,49 @@ export interface LayoutNode {
    * resolver, which sizes it, and the renderer, which draws it, cannot disagree.
    */
   body: Body;
+  /**
+   * How an outline's corners are drawn, from `corners:`. Only a rectangle's and
+   * a document's are read; drawing alone depends on it, never placement.
+   */
+  corners: NodeCorners;
+  /**
+   * How wide the border is drawn, in pixels, from `border: (thickness: …)`;
+   * left out when it is the normal width. The stroke lies inside the outline,
+   * and the padding grows by the extra, so a thick border takes room.
+   */
+  borderWidth?: number;
   /** The text as written, before line splitting. */
   text: string;
   /** The text split into the lines that will be drawn, each as its runs. */
   lines: Line[];
   parent?: LayoutNode;
   children: LayoutNode[];
+  /**
+   * The child that is this box's heading (`heading:`): it sits where the title
+   * would, and the other children are arranged under it. It does not make the
+   * box a container to look at.
+   */
+  heading?: LayoutNode;
+  /**
+   * What this node moves with (`join-with:`, or the child `badge:` writes
+   * out): its container's text, or a sibling. Those joined to the text,
+   * directly or through each other, are one unit with it, placed by the text's
+   * position words (design.org 5.6).
+   */
+  joinWith?: LayoutNode | 'text';
+  /**
+   * Placements in the title's bracket, against the box's own children: what
+   * places the title on the axes they state, in place of its side words
+   * (design.org 7.2).
+   */
+  titlePlacements?: Placement[];
+  /** `stays above laptop.photos`: what it keeps clear of (design.org 5.6). */
+  limits?: Limit[];
 
   x: number;
   y: number;
   width: number;
   height: number;
-
-  /**
-   * Distance from the node's outer box to its drawn face. Zero for everything
-   * except a deck, where the offset copies sit in that margin.
-   */
-  inset: number;
-  /** One text per copy behind this node, back to front. Empty for most nodes. */
-  deckTexts: string[];
 
   /**
    * Vertical space this node's own text and icon occupy, at whichever end of
@@ -119,7 +132,80 @@ export interface LayoutNode {
 
   /** What the author said about where it goes, kept so diagnostics can quote the source back. */
   placements: Placement[];
+  /** `guide node`: placed, holding and placed against as any node, drawn only when guides are shown. */
+  guide?: boolean;
   line: number;
+}
+
+/**
+ * A named point or region, worked out on the page (design.org 4.5, 8.3). A
+ * point is a dot; a region a tinted rectangle, drawn behind what it names.
+ */
+export interface LayoutMark {
+  kind: 'point' | 'region';
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The things its definition names, directly or through other points and regions. */
+  names: string[];
+  appearance: Attrs;
+  guide: boolean;
+  /** A region's border width in pixels, left out when normal; drawn inside its stated edge. */
+  borderWidth?: number;
+  /** Its text, if it has one, and where that sits on the page (design.org 7.4). */
+  text?: MarkTextBox;
+  line: number;
+}
+
+/** A point's or a region's text, measured and placed. `box` is the turned ink when it reads up or down. */
+export interface MarkTextBox {
+  lines: Line[];
+  textAttrs: Attrs;
+  size: number;
+  lineHeight: number;
+  box: Rect;
+}
+
+/** `depth: behind b, in front of c` on one thing, read into its clauses (design.org 8.4). */
+export interface DepthStatement {
+  /** What moves: a node's or a mark's name, or `edge <n>` for the nth edge. */
+  subject: string;
+  /** The subject as written, for quoting back. */
+  written: string;
+  clauses: {
+    way: 'behind' | 'in front of';
+    /** What it moves against, as drawing-order keys: a name, or `edge <n>` for a named line. */
+    names: string[];
+    /** The same, as written, for quoting back. */
+    shown: string[];
+    /**
+     * Legs named, each with the key of the line it belongs to. A leg moves
+     * nothing in the sequence: it says which of two lines is on top where
+     * they cross on that leg, and nowhere else.
+     */
+    legs: { leg: string; line: string }[];
+  }[];
+  line: number;
+}
+
+/** One text on a line, measured, with what its bracket says about where it sits. */
+export interface LayoutEdgeText {
+  text: string;
+  /** The text split into the lines that will be drawn, each as its runs. */
+  lines: Line[];
+  /** Its bracket's look, with a style's `text: (…)` underneath. */
+  textAttrs: Attrs;
+  place: EdgeTextPlace;
+  /** Its font size, and the size of its lines unturned. */
+  size: number;
+  width: number;
+  height: number;
+  /** Where the box a `straight … from` or a box relation names is, once placed. */
+  target?: Rect;
+  /** Where each `even with` in its bracket lines up, once placed: the axis, which part of the text, and what it lines up with. */
+  evenAt?: { axis: 'x' | 'y'; side: 'start' | 'center' | 'end'; rect: Rect }[];
 }
 
 export interface LayoutEdge {
@@ -127,23 +213,50 @@ export interface LayoutEdge {
   to: LayoutNode;
   /** What is drawn at each end, settled: the arrow, then the edge's own attributes, then its style. */
   marks: { from: Mark; to: Mark };
-  text?: string;
-  /** The text split into the lines that will be drawn, each as its runs. */
-  lines?: Line[];
-  /** The text's bracketed modifiers, with a style's `text: (…)` underneath. */
-  textAttrs: Attrs;
+  /** Its texts in written order, measured; where each goes is worked out once the line is drawn (`linetexts.ts`). */
+  texts: LayoutEdgeText[];
+  /** The arrow as written, for quoting the edge back: `a -> b`. */
+  arrow: string;
+  /** `edge req client -> api`: the line's own name, for other statements to refer to. */
+  name?: string;
+  /** The places the line passes, as written (design.org 6.4). */
+  via?: ViaEntry[];
   /**
-   * The gap a `between` clause named, with its two nodes resolved. Nothing in
-   * the resolver uses this — a corridor is measured off the solved layout
-   * rather than solved for, so edges stay out of the constraint system entirely.
+   * Where each `via:` stop that names something placed is on the page, worked
+   * out by the placer once everything is placed: a box, a side, a point or a
+   * region. Absent for a stop on a line or beside a leg, which `lines.ts`
+   * works out from the lines themselves. Same order as `via`.
    */
-  between?: LayoutPassage;
-  /** Which side of which nodes the line passes. Measured in the renderer, like `between`. */
-  passes?: LayoutPass[];
+  viaAt?: (Rect | undefined)[];
+  /** `straight down`: leaving its start that way from the center, and ending where that meets the far end (6.2). */
+  straight?: Way;
+  /** `to: left, even with cat1`: what each end is even with, as written (6.2). */
+  evenWith?: { from?: PlacementTarget[]; to?: PlacementTarget[] };
+  /**
+   * Where each end's `even with` thing is on the page, worked out by the
+   * placer: a box, a side, a point or the region round several. Its center
+   * gives the end's height, or its place across.
+   */
+  evenAt?: { from?: Rect; to?: Rect };
+  /** An end on another line (`edge log audit -> req`): the line it is on, for that end. */
+  onLine?: { from?: LayoutEdge; to?: LayoutEdge };
+  /** An end at a named point or region (`edge a -> b` between two points): which kind, for that end. */
+  onMark?: { from?: 'point' | 'region'; to?: 'point' | 'region' };
   /** What the line's bracket says, checked and with every default filled in. */
   look: LineLook;
   attrs: Attrs;
   appearance: Attrs;
+  /** `guide edge`: drawn only when guides are shown. */
+  guide?: boolean;
+  /**
+   * A `bundle` statement: a line with no ends, whose path is its `via:` list
+   * alone, and which other lines travel along (design.org 6.6). Its `from` and
+   * `to` are placeholders named after it. A parallel bundle is drawn only with
+   * the guides; a collapsed one is drawn, as the bus. A bundle written
+   * `a -> b` has no path: `between` holds its two boxes, and its members are
+   * drawn straight from one to the other.
+   */
+  bundle?: { arrangement: 'parallel' | 'collapsed' | 'fan'; gap: number; order?: string[]; between?: [LayoutNode, LayoutNode] };
   line: number;
 }
 
@@ -158,6 +271,20 @@ export interface LineLook {
   pattern: 'solid' | 'dashed' | 'dotted' | 'dash-dot';
   /** In pixels. */
   thickness: number;
+  /** How widely a curved line swings between its points. */
+  curve: 'normal' | 'strong' | 'subtle';
+  /**
+   * Where the free leg sits, a fraction of the way from the start's box (6.3).
+   * Undefined where nothing says: a square line's leg sits halfway, and a
+   * curved line takes one free sweep.
+   */
+  turn: number | undefined;
+  /** `turn:` as written on the edge itself, refused where it places nothing; from a style or a default it is undefined. */
+  turnWritten: string | undefined;
+  /** The short first and last leg of a square or curved line, in pixels. */
+  stepOut: number;
+  /** `step-out:` as written on the edge itself; from a style or a default it is undefined. */
+  stepOutWritten: string | undefined;
 }
 
 export interface Layout {
@@ -186,4 +313,40 @@ export interface Layout {
    * a `top` side does exactly that, and the canvas has to grow to hold it.
    */
   margin: number;
+  /** Named points and regions, in the order written. */
+  marks: LayoutMark[];
+  /** Every `depth:`, in the order written. */
+  depths: DepthStatement[];
+  /** How a shown guide of each kind looks: `default guide node` and the rest. */
+  guideLooks: Record<'node' | 'edge' | 'point' | 'region', Attrs>;
+}
+
+/**
+ * Whether a deck, which draws no outline of its own, was given one: a fill, or
+ * something about its border.
+ */
+export function outlineStated(appearance: Attrs): boolean {
+  return appearance['fill'] !== undefined || appearance['border'] !== undefined || appearance['border.thickness'] !== undefined;
+}
+
+/**
+ * Whether a node is joined to its container's text, directly or through
+ * siblings joined to it: one unit with the text, placed by the text's position
+ * words (design.org 5.6).
+ */
+export function joinedToText(node: LayoutNode): boolean {
+  const seen = new Set<LayoutNode>();
+  for (let at: LayoutNode | undefined = node; at && !seen.has(at); ) {
+    seen.add(at);
+    const target: LayoutNode | 'text' | undefined = at.joinWith;
+    if (target === 'text') return true;
+    at = target;
+  }
+  return false;
+}
+
+/** Whether a node is inside another, at any depth. */
+export function isWithin(node: LayoutNode, ancestor: LayoutNode): boolean {
+  for (let at = node.parent; at; at = at.parent) if (at === ancestor) return true;
+  return false;
 }

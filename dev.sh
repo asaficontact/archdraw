@@ -40,9 +40,20 @@ Commands:
                                  This is the one to use when you want to see a
                                  diagram; it needs no dimensions from you.
                                  out.png defaults to a temp file, path printed.
-  readme-image                  Regenerate the README's tracked pictures:
+  look-svg <file.svg> [out.png] Screenshot an SVG already on disk, as look
+                                 does, for one rendered by another build (such
+                                 as compare's old/ half). ImageMagick drops
+                                 dashed lines, so this goes through the browser.
+  findings <file> [png]         Print every finding for one file, then a count
+                                 of each kind. With png, also render beside it
+                                 and screenshot there. For working a large
+                                 diagram down to no findings.
+  readme-image                 Regenerate the README's tracked pictures:
                                  docs/arch-render.png, the rendered half of the
-                                 comparison, and docs/gap.png
+                                 comparison, and docs/gap.png. Redraws only a
+                                 picture whose SVG changed, judged by the
+                                 fingerprints in docs/readme-images.sum, so
+                                 another machine's rasterizer never churns them.
   playground                    Regenerate docs/index.html, the browser
                                  playground, with the compiled library inlined
                                  into the page. Edit tools/playground.html, not
@@ -58,8 +69,8 @@ Commands:
                                  stranger's-first-command check, run before
                                  every release.
   check-version <version>       Refuse unless README.md, SYNTAX.md's title and
-                                 changelog, and the skill's copy of SYNTAX.md
-                                 all say <version>. Run by `npm version` as the
+                                 changelog, the skill's SKILL.md and its copy
+                                 of SYNTAX.md all say <version>. Run by `npm version` as the
                                  preversion script, so a release whose docs
                                  name the old number stops before anything is
                                  bumped, committed or tagged.
@@ -73,6 +84,13 @@ Commands:
                                  language model to read at one URL. Re-run after
                                  editing either. docs/llms.txt, the short index
                                  that points at it, is written by hand.
+  format-examples ["setting: value" ...]
+                                 Format a scratch copy of every example under the
+                                 settings given (the defaults when none are), and
+                                 check a second pass changes nothing. format
+                                 itself refuses a result that draws differently,
+                                 so a clean run means no example's picture moved.
+                                 Prints where the copies are, to read them.
   snippets [file.md ...]        Parse every reladraw snippet in the hand-written
                                  docs and name the ones the parser now refuses.
                                  Defaults to README.md, SYNTAX.md, CONTRIBUTING.md,
@@ -85,16 +103,14 @@ Commands:
                                  questions only a reader can answer. Run before
                                  committing a change to the language or the
                                  examples; the local pre-commit hook runs it too.
-  page [out.png] [WxH] [fragment]
-                                 Screenshot the built playground page. `page dom
-                                 [fragment]` prints the DOM after its scripts
-                                 have run, which is how you check the page
-                                 assembled itself without opening a browser.
-                                 The optional fragment is a shared link's
-                                 base64url source — the way to load a long file
-                                 into the editor without clicking. Run
+  page [out.png] [WxH]
+                                 Screenshot the built playground page. `page dom`
+                                 prints the DOM after its scripts have run,
+                                 which is how you check the page assembled
+                                 itself without opening a browser. Run
                                  `playground` first — this looks at what is on
-                                 disk, not at the template.
+                                 disk, not at the template. To load a file into
+                                 the editor, use page-run.
   page-run '<js>' [out.png] [WxH]
                                  Screenshot a copy of the playground that runs
                                  <js> once its own scripts have. A headless
@@ -104,6 +120,11 @@ Commands:
                                  untouched. Chrome will not lay a window out
                                  much narrower than 500 pixels, so a narrower
                                  WxH is cropped rather than reflowed.
+  viewer <file> [out.png] [WxH] ['<js>']
+                                 Render one file with --page and screenshot the
+                                 page, after running <js> if given, as page-run
+                                 does for the playground. The page is written
+                                 to a temp file beside the PNG, path printed.
   page-examples [out.png] [WxH] [n]
                                  page-run with the Examples picker open and the
                                  nth example (default 1, counting from 0)
@@ -125,6 +146,15 @@ Commands:
                                  was not meant to touch is a regression. It
                                  compares SVG bytes, so a `url:` shows as moved
                                  with no visible change; compare the PNGs.
+  compare [ref]                 One page with every example as <ref> (default
+                                 v0.16.0) drew it, its own source with its own
+                                 build, beside the working tree's render, each
+                                 source under its picture, with line counts and
+                                 whatever the tool reported. For judging a change
+                                 that moves every picture, such as a rewrite of
+                                 the examples. Writes examples/out/compare/
+                                 index.html; the old renders are kept there and
+                                 reused while <ref> is the same.
   regress [ref]                 Like `pictures`, but renders the working tree's
                                  example files with both builds, to isolate a
                                  code change. Only for when no example file
@@ -140,6 +170,8 @@ Commands:
                                  made-up diagrams of 45 boxes and 5, 10 and 20
                                  lines, stopping at the first over its limit, in
                                  a few seconds. `full` goes on to 30 and 48 lines.
+                                 First, 150 copies of one line, which must
+                                 draw in under half a second.
                                  Run after changing how lines are routed; it
                                  builds first. Each run adds a row to
                                  stress-history.tsv (untracked): when, commit
@@ -224,8 +256,11 @@ compile() {
 # drawing changes its prefix, so this only tells a change to how ids are named
 # apart from a change to what is drawn.
 same_but_ids() {
-  local strip='s/(id="|url\(#)r[0-9a-f]{8}-/\1/g'
-  cmp -s <(sed -E "$strip" "$1") <(sed -E "$strip" "$2")
+  cmp -s <(strip_ids "$1") <(strip_ids "$2")
+}
+
+strip_ids() {
+  sed -E 's/(id="|url\(#)r[0-9a-f]{8}-/\1/g' "$1"
 }
 
 # Chrome clips to the window, so take the window from the drawing itself.
@@ -262,6 +297,10 @@ chrome_bin() {
 
 screenshot() {
   local in="$1" out="$2" size="${3:-1600x1200}" bg="${4:-ffffff}"
+  # A fifth argument waits that many milliseconds of the page's own time
+  # before the shot, for a page whose scripts run late (`page-run`).
+  local wait=()
+  [ -n "${5:-}" ] && wait=(--virtual-time-budget="$5")
   case "$bg" in
     white) bg=ffffff ;;
     black) bg=000000 ;;
@@ -283,6 +322,7 @@ screenshot() {
     --screenshot="$out" \
     --window-size="$size" \
     --default-background-color="$bg" \
+    "${wait[@]}" \
     "$in" >/dev/null 2>&1 || true
   if [ ! -f "$out" ]; then
     echo "$chrome produced no screenshot for $in" >&2
@@ -308,11 +348,25 @@ cmd="${1:-}"
 shift || true
 
 
+# Run a build's CLI to render: `cli <path/to/cli.js> <in> -o <out> [options]`.
+# From 0.17 the CLI takes a command first and refuses the bare file; builds of
+# older refs take only the bare file. Which one a build is comes from its own
+# usage text, so a comparison against any ref still runs.
+cli() {
+  local js="$1"
+  shift
+  if grep -q 'reladraw render' "$js"; then
+    node "$js" render "$@"
+  else
+    node "$js" "$@"
+  fi
+}
+
 # Render a file to an SVG, saying nothing unless it fails — then everything the
 # CLI said, since that is the error. Exits with the CLI's status.
 render_quietly() {
   local said
-  if ! said="$(node dist/cli.js "$1" -o "$2" 2>&1)"; then
+  if ! said="$(cli dist/cli.js "$1" -o "$2" 2>&1)"; then
     echo "$said" >&2
     exit 1
   fi
@@ -320,17 +374,34 @@ render_quietly() {
 
 # The README's pictures, rendered into the given directory. examples/out/ is
 # gitignored, so anything the front page shows needs a tracked copy of its own.
+#
+# Two machines rasterize the same SVG a few thousand pixels apart, so whether a
+# picture is current is judged by the SVG it was made from, never by its pixels:
+# docs/readme-images.sum holds a fingerprint of each picture's SVG, and a PNG is
+# redrawn only when its drawing changed. `readme_images write` redraws what
+# changed; `readme_images check` prints `ok` or `stale` and each picture's name.
+README_IMAGES=("arch:arch-render.png" "gap:gap.png")
+README_SUMS=docs/readme-images.sum
 readme_images() {
-  local dir="$1" pair name out svg
-  mkdir -p "$dir"
-  for pair in "arch:arch-render.png" "gap:gap.png"; do
+  local mode="$1" pair name png svg sum recorded
+  for pair in "${README_IMAGES[@]}"; do
     name="${pair%%:*}"
-    out="$dir/${pair#*:}"
+    png="${pair#*:}"
     svg="$(tmp_path readme svg)"
     render_quietly "examples/$name.reladraw" "$svg"
-    screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
+    sum="$(strip_ids "$svg" | node -e "process.stdout.write(require('crypto').createHash('sha256').update(require('fs').readFileSync(0)).digest('hex'))")"
+    recorded="$(awk -v png="$png" '$2 == png { print $1 }' "$README_SUMS" 2>/dev/null || true)"
+    if [ "$mode" = check ]; then
+      if [ "$sum" = "$recorded" ] && [ -f "docs/$png" ]; then echo "ok $png"; else echo "stale $png"; fi
+    elif [ "$sum" != "$recorded" ] || [ ! -f "docs/$png" ]; then
+      screenshot "$svg" "docs/$png" "$(svg_size "$svg")" ffffff
+      { grep -v "  $png\$" "$README_SUMS" 2>/dev/null || true; echo "$sum  $png"; } > "$README_SUMS.new"
+      mv "$README_SUMS.new" "$README_SUMS"
+      echo "docs/$png"
+    else
+      echo "docs/$png unchanged"
+    fi
     rm -f "$svg"
-    echo "$out"
   done
 }
 
@@ -373,13 +444,21 @@ case "$cmd" in
   render)
     in="${1:?input .reladraw path required}"
     out="${2:?output .svg path required}"
-    node dist/cli.js "$in" -o "$out"
+    cli dist/cli.js "$in" -o "$out"
     ;;
   try)
     src="${1:?source text required}"
     tmp="$(tmp_path try reladraw)"
     printf '%s\n' "$src" > "$tmp"
-    node dist/cli.js "$tmp" -o "${tmp%.reladraw}.svg" && echo "parsed, no complaint"
+    if said="$(cli dist/cli.js "$tmp" -o "${tmp%.reladraw}.svg" 2>&1)"; then
+      if grep -q 'warning(' <<<"$said"; then
+        grep 'warning(' <<<"$said"
+      else
+        echo "parsed, no complaint"
+      fi
+    else
+      echo "$said"
+    fi
     rm -f "$tmp" "${tmp%.reladraw}.svg"
     ;;
   out)
@@ -388,7 +467,7 @@ case "$cmd" in
     mkdir -p examples/out
     svg="examples/out/$base.svg"
     png="examples/out/$base.png"
-    node dist/cli.js "$in" -o "$svg" >/dev/null
+    cli dist/cli.js "$in" -o "$svg" >/dev/null
     screenshot "$svg" "$png" "$(svg_size "$svg")" ffffff
     echo "$svg"
     echo "$png"
@@ -402,7 +481,7 @@ case "$cmd" in
     for theme in $(node -e "import('./dist/themes.js').then((m) => console.log(m.THEME_NAMES.join(' ')))"); do
       svg="$dir/$base-$theme.svg"
       png="$dir/$base-$theme.png"
-      node dist/cli.js "$in" -o "$svg" --theme "$theme" >/dev/null
+      cli dist/cli.js "$in" -o "$svg" --theme "$theme" >/dev/null
       screenshot "$svg" "$png" "$(svg_size "$svg")" ffffff
       tiles+=(-label "$theme" "$png")
     done
@@ -428,12 +507,33 @@ case "$cmd" in
     rm -f "$svg"
     echo "$out"
     ;;
+  look-svg)
+    svg="${1:?input .svg path required}"
+    out="${2:-$(tmp_path look png)}"
+    screenshot "$svg" "$out" "$(svg_size "$svg")" ffffff
+    echo "$out"
+    ;;
+  findings)
+    in="${1:?input .reladraw path required}"
+    found="$(node dist/cli.js check "$in" 2>&1)" || { echo "$found"; exit 1; }
+    echo "$found"
+    echo "---"
+    kinds="$(echo "$found" | grep -oE 'warning\([a-z-]+\)' | sort | uniq -c || true)"
+    echo "${kinds:-no findings}"
+    if [[ -n "${2:-}" ]]; then
+      svg="$(tmp_path findings svg)"
+      render_quietly "$in" "$svg"
+      screenshot "$svg" "$2" "$(svg_size "$svg")" ffffff
+      rm -f "$svg"
+      echo "$2"
+    fi
+    ;;
   readme-image)
     # The README's pictures. examples/out/ is gitignored, so anything the front
     # page shows needs a tracked copy of its own. Regenerate them whenever the
     # examples or the renderer change, or the front page stops being a picture
     # of this code.
-    readme_images docs
+    readme_images write
     ;;
   playground)
     # docs/index.html is generated: the page from tools/playground.html with the
@@ -470,8 +570,10 @@ case "$cmd" in
     (
       cd "$t/probe"
       npm init -y >/dev/null 2>&1
-      npm install "$t"/reladraw-*.tgz >/dev/null 2>&1
-      ./node_modules/.bin/reladraw probe.reladraw -o probe.svg >/dev/null 2>&1
+      # No audit: the package has no dependencies to audit, and the audit's
+      # request once hung for minutes with the registry otherwise answering.
+      npm install --no-audit --no-fund "$t"/reladraw-*.tgz >/dev/null 2>&1
+      ./node_modules/.bin/reladraw render probe.reladraw -o probe.svg >/dev/null 2>&1
     )
     if [ -s "$t/probe/probe.svg" ]; then
       echo "packed, installed and rendered: $(wc -c < "$t/probe/probe.svg" | tr -d ' ') bytes of SVG"
@@ -499,6 +601,10 @@ case "$cmd" in
       || { echo "SYNTAX.md: the changelog still has an **Unreleased** entry" >&2; bad=1; }
     cmp -s SYNTAX.md .claude/skills/reladraw/reference/syntax.md \
       || { echo "the skill's copy of SYNTAX.md is stale: run ./dev.sh skill" >&2; bad=1; }
+    # The skill compares this number with `reladraw --version` to tell the
+    # user which of the two is out of date.
+    grep -q "^This skill teaches reladraw $v\. " .claude/skills/reladraw/SKILL.md \
+      || { echo "the skill's SKILL.md does not say \"This skill teaches reladraw $v.\"" >&2; bad=1; }
     llms="$(tmp_path llms txt)"
     llms_full "$llms"
     cmp -s "$llms" docs/llms-full.txt \
@@ -532,6 +638,15 @@ case "$cmd" in
     llms_full docs/llms-full.txt
     echo "docs/llms-full.txt regenerated from the skill and SYNTAX.md"
     ;;
+  format-examples)
+    [ -f dist/cli.js ] || compile
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/reladraw-format.XXXXXX")"
+    cp examples/*.reladraw "$dir/"
+    for setting in "$@"; do echo "$setting" >> "$dir/.reladraw-format"; done
+    out="$(node dist/cli.js format "$dir"/*.reladraw 2>&1)" || { echo "$out" | grep -v '^formatted '; exit 1; }
+    node dist/cli.js format --check "$dir"/*.reladraw || exit 1
+    echo "$(ls "$dir"/*.reladraw | wc -l | tr -d ' ') examples formatted, a second pass changes nothing: $dir"
+    ;;
   snippets)
     [ -f dist/index.js ] || compile
     if [ "$#" -gt 0 ]; then
@@ -559,21 +674,20 @@ case "$cmd" in
     node tools/playground.mjs "$t/index.html" >/dev/null
     cmp -s "$t/index.html" docs/index.html \
       && fresh docs/index.html || stale "docs/index.html (the playground)" playground
-    readme_images "$t" >/dev/null
-    for png in arch-render.png gap.png; do
-      cmp -s "$t/$png" "docs/$png" \
-        && fresh "docs/$png" || stale "docs/$png (a README picture)" readme-image
-    done
+    while read -r verdict png; do
+      [ "$verdict" = ok ] && fresh "docs/$png" || stale "docs/$png (a README picture)" readme-image
+    done < <(readme_images check)
 
     # Between releases every one of these names the last release; mid-release,
     # README and SYNTAX.md name the next one until `npm version` catches up.
     v="$(node -p 'require("./package.json").version')"
     readme_v="$(grep -oE '^Version [0-9.]+' README.md | cut -d' ' -f2 | sed 's/\.$//')"
     syntax_v="$(head -1 SYNTAX.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')"
-    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ]; then
-      fresh "version $v in package.json, README.md and SYNTAX.md"
+    skill_v="$(grep -oE '^This skill teaches reladraw [0-9]+\.[0-9]+\.[0-9]+' .claude/skills/reladraw/SKILL.md | grep -oE '[0-9.]+$')"
+    if [ "$readme_v" = "$v" ] && [ "$syntax_v" = "$v" ] && [ "$skill_v" = "$v" ]; then
+      fresh "version $v in package.json, README.md, SYNTAX.md and the skill"
     else
-      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none} — expected only mid-release"
+      echo "  DIFFER package.json $v, README.md ${readme_v:-none}, SYNTAX.md ${syntax_v:-none}, skill ${skill_v:-none} — expected only mid-release"
       found=1
     fi
 
@@ -605,22 +719,11 @@ EOF
     # can go wrong in the playground is a script that never ran: the picture
     # looks plausible and the buttons are simply absent.
     if [ "${1:-}" = "dom" ]; then
-      # An optional fragment, so the shared-link path can be exercised too:
-      # ./dev.sh page dom "$(printf '%s' "$src" | base64 -w0 | tr '+/' '-_')"
-      # A file:// URL, not a path: given a bare path Chrome escapes the '#' to
-      # %23 and the fragment is never seen by the page.
-      url="file://$PWD/docs/index.html${2:+#$2}"
       "$(chrome_bin)" --headless --disable-gpu --no-sandbox \
-        --virtual-time-budget=2000 --dump-dom "$url" 2>/dev/null
+        --virtual-time-budget=2000 --dump-dom "file://$PWD/docs/index.html" 2>/dev/null
     else
       out="${1:-$(tmp_path page png)}"
-      # A fragment here too, for the same reason the DOM mode takes one, and for
-      # one more: the editor's syntax coloring is drawn behind the textarea, so
-      # the thing to look at is a long file in a narrow pane, and the fragment is
-      # how you get a long file into the page without clicking anything.
-      # A file:// URL rather than a path, for the reason the DOM mode gives:
-      # given a bare path Chrome escapes the '#' and the fragment never arrives.
-      screenshot "file://$PWD/docs/index.html${3:+#$3}" "$out" "${2:-1600x1000}" "0d0d10"
+      screenshot "file://$PWD/docs/index.html" "$out" "${2:-1600x1000}" "0d0d10"
       echo "$out"
     fi
     ;;
@@ -634,8 +737,26 @@ EOF
     # still narrow and only then resizes it to WxH, so anything measured
     # straight away is measured in the page's narrow, stacked layout.
     { sed '/<\/body>/,$d' docs/index.html; printf '<script>setTimeout(function () { %s }, 300);</script>\n</body>\n</html>\n' "$js"; } >"$copy"
-    screenshot "file://$copy" "$out" "${3:-1400x900}" "0d0d10"
+    # Without the time budget the shot is taken before the delayed script
+    # runs, once the page is as heavy as the redesign's (2026-10-17).
+    screenshot "file://$copy" "$out" "${3:-1400x900}" "0d0d10" 2000
     rm -f "$copy"
+    echo "$out"
+    ;;
+  viewer)
+    file="${1:?.reladraw file required}"
+    out="${2:-$(tmp_path viewer png)}"
+    html="${out%.png}.html"
+    node dist/cli.js render "$file" --page -o "$html" >/dev/null
+    shot="$html"
+    if [ -n "${4:-}" ]; then
+      # The script runs once the page's own has, and a moment after the window
+      # reaches WxH, for the reason page-run gives.
+      shot="$(tmp_path viewer html)"
+      { sed '/<\/body>/,$d' "$html"; printf '<script>setTimeout(function () { %s }, 300);</script>\n</body>\n</html>\n' "$4"; } >"$shot"
+    fi
+    screenshot "file://$shot" "$out" "${3:-1400x900}" "0d0d10" 2000
+    [ "$shot" != "$html" ] && rm -f "$shot"
     echo "$out"
     ;;
   page-examples)
@@ -723,12 +844,12 @@ PY
       # rename an attribute and every example using it "moves", because the old
       # build drops the word it has never heard of. Say what actually happened
       # and point at the command that answers the question instead.
-      if ! node "$work/base/dist/cli.js" "$in" -o "$work/head/$name.base.svg" >/dev/null 2>&1; then
+      if ! cli "$work/base/dist/cli.js" "$in" -o "$work/head/$name.base.svg" >/dev/null 2>&1; then
         echo "OLDER $name  (source does not render at $ref — use ./dev.sh pictures)"
         moved=$((moved + 1))
         continue
       fi
-      node dist/cli.js "$in" -o "$work/head/$name.head.svg" >/dev/null 2>&1 || true
+      cli dist/cli.js "$in" -o "$work/head/$name.head.svg" >/dev/null 2>&1 || true
       if cmp -s "$work/head/$name.base.svg" "$work/head/$name.head.svg"; then
         echo "same  $name"
       elif same_but_ids "$work/head/$name.base.svg" "$work/head/$name.head.svg"; then
@@ -746,7 +867,7 @@ PY
     compile
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
-      node dist/cli.js "$in" -o "$dir/$name.svg" >/dev/null 2>&1 || echo "FAILS $name"
+      cli dist/cli.js "$in" -o "$dir/$name.svg" >/dev/null 2>&1 || echo "FAILS $name"
     done
     echo "$(ls "$dir"/*.svg | wc -l | tr -d ' ') examples rendered into $dir"
     ;;
@@ -761,7 +882,7 @@ PY
     moved=0
     for in in examples/*.reladraw; do
       name="$(basename "$in" .reladraw)"
-      if ! node dist/cli.js "$in" -o "$work/$name.svg" >"$work/$name.err" 2>&1; then
+      if ! cli dist/cli.js "$in" -o "$work/$name.svg" >"$work/$name.err" 2>&1; then
         echo "FAILS $name: $(tail -1 "$work/$name.err")"
         moved=$((moved + 1))
       elif ! cmp -s "$dir/$name.svg" "$work/$name.svg"; then
@@ -801,13 +922,13 @@ PY
         moved=$((moved + 1))
         continue
       fi
-      if ! (cd "$work/base" && node dist/cli.js "examples/$name.reladraw" \
+      if ! (cd "$work/base" && cli dist/cli.js "examples/$name.reladraw" \
               -o "$work/out/$name.base.svg") >/dev/null 2>&1; then
         echo "BROKE $name  (does not render at $ref)"
         moved=$((moved + 1))
         continue
       fi
-      node dist/cli.js "$in" -o "$work/out/$name.head.svg" >/dev/null 2>&1 || true
+      cli dist/cli.js "$in" -o "$work/out/$name.head.svg" >/dev/null 2>&1 || true
       if cmp -s "$work/out/$name.base.svg" "$work/out/$name.head.svg"; then
         echo "same  $name"
       elif same_but_ids "$work/out/$name.base.svg" "$work/out/$name.head.svg"; then
@@ -818,6 +939,36 @@ PY
       fi
     done
     echo "$moved of $(ls examples/*.reladraw | wc -l | tr -d ' ') pictures differ from $ref"
+    ;;
+  compare)
+    ref="${1:-v0.16.0}"
+    page=examples/out/compare
+    mkdir -p "$page/new"
+    if [ "$(cat "$page/old/.ref" 2>/dev/null)" != "$(git rev-parse "$ref")" ]; then
+      rm -rf "$page/old"
+      mkdir -p "$page/old"
+      work="$(mktemp -d -t reladraw-compare-XXXXXX)"
+      trap 'rm -rf "$work"' EXIT
+      git archive "$ref" | tar -x -C "$work"
+      ln -s "$PWD/node_modules" "$work/node_modules"
+      (cd "$work" && npx tsc >/dev/null)
+      for in in "$work"/examples/*.reladraw; do
+        name="$(basename "$in" .reladraw)"
+        cp "$in" "$page/old/"
+        # An old build printed the output path to stderr; keep only what it said.
+        cli "$work/dist/cli.js" "$in" -o "$PWD/$page/old/$name.svg" 2>&1 >/dev/null |
+          grep -vF "$PWD/$page/old/$name.svg" | sed "s|^$work/||" > "$page/old/$name.said" || true
+      done
+      git rev-parse "$ref" > "$page/old/.ref"
+    fi
+    compile
+    rm -f "$page"/new/*
+    for in in examples/*.reladraw; do
+      name="$(basename "$in" .reladraw)"
+      cp "$in" "$page/new/"
+      cli dist/cli.js "$in" -o "$page/new/$name.svg" 2>"$page/new/$name.said" >/dev/null || rm -f "$page/new/$name.svg"
+    done
+    node tools/compare.mjs "$page" "$ref"
     ;;
   before)
     # One example as a git ref renders it, beside the working tree's own render.
@@ -833,7 +984,7 @@ PY
     ln -s "$PWD/node_modules" "$work/node_modules"
     (cd "$work" && npx tsc >/dev/null)
     mkdir -p examples/out
-    node "$work/dist/cli.js" "$in" -o "examples/out/$name-before.svg"
+    cli "$work/dist/cli.js" "$in" -o "examples/out/$name-before.svg"
     rm -f "examples/out/$name-before.png"
     screenshot "examples/out/$name-before.svg" "examples/out/$name-before.png" "$(svg_size "examples/out/$name-before.svg")" ffffff
     echo "examples/out/$name-before.png"

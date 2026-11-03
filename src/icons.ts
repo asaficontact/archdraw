@@ -20,6 +20,7 @@
  */
 
 import { SourceError } from './errors.js';
+import { readShapeLook, type ShapeLook } from './outline.js';
 
 /**
  * Icons carry three tones rather than colors. `ink` is the drawn line, `shade`
@@ -168,20 +169,42 @@ export const ICON_NAMES = Object.keys(ICONS);
  * The outlines a node's body can take. `rectangle` is the plain one and needs no
  * word, since it is what a node is when it says nothing.
  *
- * Named for what a node *is*, never for the geometry, which is the same rule the
- * icon names follow: `document` and not `folded-corner`. A shape carrying a
- * conventional meaning is a second channel alongside color, and a stronger one
- * — a fill is whatever the author assigned and has to be learnt from the
- * diagram, while a folded corner has meant "an artifact, not a process" in
- * flowcharts for decades and reads with no legend at all.
+ * A shape geometry has a word for is named by that word, how it looks:
+ * `diamond`, never `decision`, since someone may just want a diamond, and
+ * reading `decision` as a diamond is a translation every reader has to make.
+ * Those take settings in a bracket for what the box doesn't decide. A
+ * flowchart shape geometry has no word for is named `flow-` and what it means,
+ * drawn the way the standard draws it, with no settings. No picture has two
+ * names. `document`, the folded corner, is older than the rule and keeps its
+ * name; the standard's wavy one is `flow-document`.
  *
- * `circle` is the one geometric name, because a circle carries no single
- * meaning to name it after — it is a state, a step, a person, whatever the
- * diagram's own convention makes it. `diamond` joins these when a diagram
- * asks. The set being short is a fact about what has been drawn, not about the
- * key.
+ * The geometry of each is in `outline.ts`.
  */
-export const OUTLINES = ['rectangle', 'document', 'circle'] as const;
+export const OUTLINES = [
+  'rectangle',
+  'document',
+  'circle',
+  'diamond',
+  'pill',
+  'parallelogram',
+  'hexagon',
+  'trapezoid',
+  'triangle',
+  'cylinder',
+  'flow-subprocess',
+  'flow-document',
+  'flow-off-page',
+  'flow-delay',
+  'flow-manual-input',
+  'flow-stored-data',
+  'flow-loop-start',
+  'flow-loop-end',
+  'flow-card',
+  'flow-display',
+  'flow-tape',
+  'flow-punched-tape',
+  'flow-collate',
+] as const;
 export type Outline = (typeof OUTLINES)[number];
 
 /** Every value `shape:` accepts, `none` included. */
@@ -199,11 +222,11 @@ export const SHAPE_WORDS = [...OUTLINES, 'none'] as const;
  * its text goes underneath.
  */
 export type Body =
-  | { kind: 'shape'; outline: Outline }
+  | { kind: 'shape'; outline: Outline; look: ShapeLook }
   | { kind: 'icon'; icon: Icon }
   | { kind: 'none' };
 
-const PLAIN: Body = { kind: 'shape', outline: 'rectangle' };
+const PLAIN: Body = { kind: 'shape', outline: 'rectangle', look: {} };
 
 /**
  * Which body a node has, from what it wrote and what its style carried.
@@ -237,11 +260,32 @@ export function bodyFor(
     );
   }
 
+  // The settings come from wherever the shape did: a node's own `shape:` takes
+  // its own bracket, never a style's.
+  const from = wroteShape ? attrs : appearance;
+  const settings: Record<string, string> = {};
+  for (const [key, value] of Object.entries(from)) if (key.startsWith('shape.')) settings[key.slice('shape.'.length)] = value;
   if (icon !== undefined) return { kind: 'icon', icon: iconNamed(icon, line, declared) };
   if (shape === undefined) return PLAIN;
-  if (shape === 'none') return { kind: 'none' };
+  if (shape === 'none') {
+    if (Object.keys(settings).length > 0) refuse(`\`shape: none\` draws no outline, so it takes no settings`, line);
+    return { kind: 'none' };
+  }
   if ((OUTLINES as readonly string[]).includes(shape)) {
-    return { kind: 'shape', outline: shape as Outline };
+    return { kind: 'shape', outline: shape as Outline, look: readShapeLook(shape, settings, `shape: ${shape}`, line) };
+  }
+  if (shape === 'hourglass') {
+    return refuse('`shape: hourglass` is the flowchart\'s collate symbol, and it is `flow-collate`', line);
+  }
+  if (shape === 'pentagon' || shape === 'pointed' || shape === 'home-plate') {
+    return refuse(`there is no shape "${shape}" — the flowchart's off-page connector, a box with one end pointed, is \`flow-off-page\``, line);
+  }
+  if (shape === 'ellipse' || shape === 'oval') {
+    return refuse(`there is no shape "${shape}" — an ellipse is a circle given a width and a height: \`shape: circle  width: 20  height: 8\``, line);
+  }
+  if (shape === 'decision' || shape === 'terminal' || shape === 'process') {
+    const look = { decision: 'diamond', terminal: 'pill', process: 'rectangle' }[shape];
+    return refuse(`a shape is named for how it looks, so a ${shape} is \`shape: ${look}\``, line);
   }
 
   // Until 0.3.0 `shape:` also took an icon name and drew the node as that
