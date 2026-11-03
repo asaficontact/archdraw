@@ -1,6 +1,6 @@
 {
   "name": "reladraw",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "A diagram language where you say where things go.",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
+    ".claude/skills",
     "dist",
     "NOTICE",
     "SYNTAX.md"
