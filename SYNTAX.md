@@ -1,4 +1,4 @@
-# Syntax reference — 0.22.0
+# Syntax reference — 0.22.1
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1240,7 +1240,7 @@ clause-gap: 2
 
 An unknown setting, one written twice, or a value it doesn't take is an error naming it.
 
-**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured on its own, before columns, so whether it breaks never depends on its neighbors; its first line still lines up with theirs. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
+**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured as it would be printed, lined up with its neighbors, so a short statement pushed past the width by a long neighbor's columns breaks too; its first line still lines up with theirs. A statement that can't break, such as a node's name and text with nothing after them, is left as it is, even when its columns carry it past the width. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
 
 ```
 // wrap-at: 60
@@ -1316,6 +1316,12 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.22.1**
+
+- **`reladraw format` keeps to `wrap-at` once the columns are lined up.** A statement's length used to be measured on its own, before it was lined up with its neighbors, so a short one like `node  api  "API"  layout: column` stayed on one line and was then padded out by a long neighbor's name to nearly twice the width. It is now measured as printed and breaks like any other long statement; `clause-per-line-at` is measured the same way.
+- **Output sent to another program is no longer cut off.** `reladraw format -` and `reladraw render -o -` stopped after the first 64 KB when their output went into a pipe rather than a file, and still reported success, so an editor formatting a large diagram could replace it with a shortened copy. All of it now comes through.
+- **The agent skill puts a link on the thing it belongs to.** Asked to add links, an agent would add a new text node for each one; the skill now says to give the existing node or line a `url:`. When a diagram's things have real web addresses, such as a pull request's files, it offers to link them rather than doing it unasked.
 
 **0.22.0**
 
