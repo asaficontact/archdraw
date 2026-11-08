@@ -1,0 +1,49 @@
+// Lines that travel together. A bundle is a path with no ends of its own;
+// each line joins it with `via:` and runs its whole length in a lane of its
+// own. The lanes are in one order across the bundle, so the lines cross
+// before they reach it or not at all, never inside it.
+
+style plain  fill: theme-fill  border: theme-border
+
+// Three lines through one gap. They are written c's first, so in written
+// order c's line would take the top lane and cross the other two on the way
+// in and on the way out; the bundle's order puts them as the columns are.
+node from "Senders"  layout: column  style: plain
+node from.a "a"
+node from.b "b"
+node from.c "c"
+node upper "Upper"  right of from (gap: wide)  6 above from  style: plain
+node lower "Lower"  below upper (gap: wide)  style: plain
+region slot  between upper and lower
+node to "Receivers"  right of upper (gap: wide)  6 below upper  layout: column  style: plain
+node to.x "x"
+node to.y "y"
+node to.z "z"
+bundle trunk  via: through slot horizontal  order: one, two, three
+edge three from.c -> to.z  via: trunk
+edge one from.a -> to.x  via: trunk
+edge two from.b -> to.y  via: trunk
+
+// A bus: a collapsed bundle is one thick line, drawn once. Each host taps it
+// with a line straight down or up to it, and one line rides it end to end.
+node h1 "Host 1"  below from (gap: wide)  left even with from  style: plain
+node h2 "Host 2"  right of h1 (gap: wide)  style: plain
+node h3 "Host 3"  right of h2 (gap: wide)  style: plain
+node s1 "Store 1"  6 below h1  style: plain
+node s2 "Store 2"  6 below h2  style: plain
+node s3 "Store 3"  6 below h3  style: plain
+point west  between h1 and s1
+point east  between h3 and s3
+bundle bus  via: west, east  layout: collapsed  line: (thickness: thick)  from-mark: dot  to-mark: dot
+edge h2 -- bus  straight down  to-mark: dot
+edge s2 -- bus  straight up  to-mark: dot
+edge h1 -> s3  from: bottom  to: top  via: bus  line: (path: square)
+
+// One line from each child, which stays true as children are added. They
+// meet at one point on Queue, so its side never runs out of room for them.
+node pool "Workers"  below s1 (gap: wide)  layout: column  style: plain
+node pool.w1 "w1"
+node pool.w2 "w2"
+node pool.w3 "w3"
+node queue "Queue"  right of pool (gap: wide)  style: plain
+edge each child of pool -> queue  to: left-center

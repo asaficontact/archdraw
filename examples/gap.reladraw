@@ -1,22 +1,21 @@
 // The picture from the README: where reladraw sits between auto-layout and
-// pixel-pushing. The middle node is what holds the two ends apart — delete its
-// line and they close up.
+// pixel-pushing, the middle node a gap from each end.
 
 style tool  fill: theme-fill  border: theme-border
 style here  fill: theme-primary-subtle  border: theme-primary
 style dim   text: (color: theme-muted)
 
-node auto "Auto-layout / [dim]placement is / an output[/dim]" (at: top-center, align: center)  contents: (widths: match)
+node auto "Auto-layout / [dim]placement is / an output[/dim]"  layout: column (gap: tight, widths: match)
 node auto.mermaid  "Mermaid.js"  style: tool
-node auto.graphviz "Graphviz"    below auto.mermaid (gap: tight)   left level with auto.mermaid  style: tool
-node auto.d2       "D2"          below auto.graphviz (gap: tight)  left level with auto.mermaid  style: tool
+node auto.graphviz "Graphviz"    style: tool
+node auto.d2       "D2"          style: tool
 
-node manual "Absolute / [dim]placement is / pixels[/dim]" (at: top-center, align: center)  right of auto  level with auto  contents: (widths: match)
+node here "reladraw / [dim]placement is / stated[/dim]"  right of auto  style: here
+
+node manual "Absolute / [dim]placement is / pixels[/dim]"  right of here  even with auto  layout: column (gap: tight, widths: match)
 node manual.drawio     "draw.io"     style: tool
-node manual.excalidraw "Excalidraw"  below manual.drawio (gap: tight)      left level with manual.drawio  style: tool
-node manual.figma      "Figma"       below manual.excalidraw (gap: tight)  left level with manual.drawio  style: tool
-
-node here "reladraw / [dim]placement is / stated[/dim]"  right of auto  left of manual  level with auto  style: here
+node manual.excalidraw "Excalidraw"  style: tool
+node manual.figma      "Figma"       style: tool
 
 edge auto -> here    from: right  to: left
 edge here -> manual  from: right  to: left
