@@ -1,5 +1,7 @@
 # reladraw
 
+<a href="https://news.ycombinator.com/item?id=49858513"><img src="https://hackergit.org/badge/reladraw/reladraw.svg" alt="Hacker News" height="20"></a>
+
 reladraw is a text language for diagrams where you say where things go.
 
 > The language is changing frequently. The playground always runs the newest syntax, so a diagram that draws there today may need a small edit later. An installed copy from npm changes only when you upgrade it.
@@ -90,7 +92,7 @@ To install the skill from the main branch instead, which can run ahead of the re
 
 ## Status
 
-Version 0.22.1. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
+Version 0.23.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
 
 ## License
 
