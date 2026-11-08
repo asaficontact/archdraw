@@ -20,11 +20,11 @@ style link  shape: none  text: (color: #6fa8dc)
 // what it *holds*, and the nine marks stamped on it are not held by anything.
 node board ""  fill: theme-fill  border: theme-border
 node board.nw ""  style: spacer
-node board.n  ""  style: spacer  right of board.nw  gap: wide
-node board.ne ""  style: spacer  right of board.n   gap: wide
-node board.sw ""  style: spacer  below board.nw  gap: wide
-node board.s  ""  style: spacer  right of board.sw  below board.n   gap: wide
-node board.se ""  style: spacer  right of board.s   below board.ne  gap: wide
+node board.n  ""  style: spacer  right of board.nw (gap: 10)
+node board.ne ""  style: spacer  right of board.n (gap: 10)
+node board.sw ""  style: spacer  below board.nw (gap: wide)
+node board.s  ""  style: spacer  right of board.sw (gap: 10)  below board.n (gap: wide)
+node board.se ""  style: spacer  right of board.s (gap: 10)   below board.ne (gap: wide)
 
 node p1 "top-left"       inside board top-left       style: mark
 node p2 "top-center"     inside board top-center     style: mark
@@ -38,24 +38,24 @@ node p9 "bottom-right"   inside board bottom-right   style: mark
 
 // The case the design record names: an ordinary box with its text in the middle
 // and, centered at the bottom inside it, a small link.
-node bob "Bob the builder"  below board  gap: normal
+node bob "Bob the builder"  below board
 node bob.card ""  style: spacer
 node bob_link "bob.example.com"  inside bob bottom-center  style: link  url: "https://bob.example.com"
 
 // The inset is a named gap on the placement, and `none` puts the node hard
-// against the edge. It is deliberately not the node's own `gap:`, which says
-// how this node stands off its neighbours rather than how far in a stamp sits.
-node plate "A wide plate to stamp on"  right of bob  gap: wide
+// against the edge, the same as the gap on any other placement.
+node plate "A wide plate to stamp on"  right of bob (gap: wide)
 node flush "flush"  inside plate top-right (gap: none)  style: mark
 
 // `on` is the thing the old dedicated overlay word could not say: the node's
 // center on the point, so it straddles the corner instead of tucking inside.
-node dot "A box with a dot on its corner"  below plate  gap: wide
+node dot "A box with a dot on its corner"  below plate (gap: wide)
 node straddle "*"  on dot top-right  style: mark
 
 // A side is a segment rather than a point, so the axis it does not name is
-// left free — this sits against the right edge and centers down it.
-node column "A tall box"  right of dot  gap: wide
+// left free — this sits against the right edge and centers down it. The box
+// is made wide enough that the mark clears the children.
+node column "A tall box"  right of dot (gap: wide)  layout: column  width: 25
 node column.one "one"
 node column.two "two"
 node column.three "three"
@@ -65,10 +65,11 @@ node column_mark "inside right"  inside column right  style: mark
 // part, which is how a caption sits clear of one edge and no other.
 node under "outside bottom"  outside column bottom  style: mark
 
-// A part target works on a picture as readily as on a box.
-node unit  icon: cube  right of plate  gap: normal
-node tag "x3"  inside unit bottom-right  style: mark
+// A part target works on a picture as readily as on a box. The count is
+// bigger than the small picture, so it sits on the corner rather than inside.
+node unit  icon: cube  right of plate
+node tag "x3"  on unit bottom-right  style: mark
 
-// The overlap exemption is for the pair and nothing else: `flush` is still kept
-// clear of everything in the drawing that is not `plate`.
+// Saying `inside` or `on` says the overlap is meant, for that pair and nothing
+// else: anything else `flush` lands on is still reported.
 edge bob -> plate  from: right  to: left

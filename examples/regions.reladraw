@@ -5,10 +5,10 @@ node two    "second"                 below one
 node three  "third with a longer label"  below two
 
 // A direction clears the furthest of them. This one says nothing about its own
-// vertical position — that comes from the region.
-node spans  "level with all three, and clear of the widest" (wrap: 24)  right of one and three  gap: wide  shape: none
+// vertical position, so it centers on the region, as a lone direction does.
+node spans  "even with all three, and clear of the widest" (wrap: 24)  right of one and three (gap: wide)  shape: none
 
 // An alignment uses the region as a position. "top" is its top edge, not its middle.
-node tops   "top level with the second box" (wrap: 20)                  right of two  top level with two  gap: tight  shape: none
+node tops   "top even with the second box" (wrap: 20)                  right of two (gap: tight)  top even with two  shape: none
 
-node beside  "centered on the top two"  right of spans  level with one and two  gap: wide
+node beside  "centered on the top two"  right of spans (gap: wide)  even with one and two

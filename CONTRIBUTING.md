@@ -21,27 +21,25 @@ the source file is what matters.
 diagram you wanted is far easier to act on than one framed as a syntax proposal,
 because the syntax is the part I can work out and the need is the part I cannot.
 
+**Syntax suggestions.** The syntax is changing quickly. A suggestion about how something should be written may be taken in if it fits where the language is heading, noted for later and perhaps used in some form once it settles, or declined.
+
 **Questions about the design.** If something in [README.md](README.md) or
 [SYNTAX.md](SYNTAX.md) is unconvincing or unclear, that is worth an issue too.
 
 Open all of these as [GitHub issues](https://github.com/reladraw/reladraw/issues).
 
-## About pull requests
+## Pull requests
 
-Please open an issue rather than a pull request, at least for now.
+reladraw does not accept pull requests.
 
-reladraw is changing quickly. The language is still being designed, and the code underneath it gets reorganized often, sometimes several times a week. A patch written against today's code may not fit next week's, and I would rather not put anyone through several rounds of revising a pull request to chase a moving target.
-
-If you do send one, thank you — it will be read. It shows exactly what you wanted and how you thought it should work, and that is useful. But don't be surprised, or feel bad, if the change lands written a different way. That is not a judgment on your code; it usually means it had to fit something else that was changing at the same time.
-
-The problem you hit is the most valuable part. A clear issue describing what you were trying to do will usually get the fix in faster than a pull request would.
+This isn't about the quality of anyone's code. The language is still being designed, I want that design to stay in one head, and the code underneath changes too quickly for an outside patch to keep up. The problem you hit is the valuable part: open an issue describing what you were trying to draw, and I'll take it from there.
 
 ## Getting the code running
 
 ```
 npm install
 npm run build
-node dist/cli.js examples/arch.reladraw -o out.svg
+node dist/cli.js render examples/arch.reladraw -o out.svg
 ```
 
 No runtime dependencies; TypeScript and Node 18+ are all that is needed.

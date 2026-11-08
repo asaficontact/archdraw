@@ -1,0 +1,41 @@
+// Texts on lines. With nothing said a text sits at the middle of its line,
+// on it, and several spread evenly. Its bracket says where else: a fraction
+// along the line, along one named leg or along its longest level piece, a gap from either end, where a way
+// straight out from a box meets the line, a gap off a box, or beside the
+// line on a stated side. The line is drawn first and never moves for a text.
+
+style plain  fill: theme-fill  border: theme-border
+
+// Near each end, clear of the arrowhead, above the line; one in the middle.
+node customer "Customer"  style: plain
+node order "Order"  right of customer (gap: 20)  style: plain
+edge customer -> order  "1" (at: start, above edge)  "places"  "0..*" (at: end, above edge)
+
+// On a named leg, level with a box: the text goes where a way straight right
+// from Confirm meets the climb into Broker, then right of it.
+node accept "Accept order"  below customer (gap: wide)  style: plain
+node broker "Broker"  right of accept (gap: 12)  style: plain
+node confirm "Confirm"  below accept (gap: tight)  left of accept (gap: wide)  style: plain
+edge accept -> broker  "publish message" (on: climb, straight right from confirm, right of edge)
+     from: bottom  to: bottom  line: (corners: rounded)
+     via: 7 below accept bottom, 7 below broker bottom, leg climb
+
+// Resting on a box: the text's bottom a gap above Service, left of the
+// line coming down into it.
+node service "Service"  below confirm (gap: 16)  style: plain
+node queue "Queue"  right of service (gap: 10)  6 above service  style: plain
+edge queue -> service  "ack" (above service, on the line, left of edge)  from: left  to: top  line: (path: square)
+
+// Which way a text reads: turned up beside a tall line, and along a slope.
+node top "Top"  right of queue (gap: wide)  style: plain
+node bottom "Bottom"  below top (gap: 10)  style: plain
+edge top -> bottom  "ten units" (left of edge, reads: up)
+node low "Low"  right of top (gap: wide)  8 below top  style: plain
+node high "High"  right of low (gap: 12)  above low (gap: 4)  style: plain
+edge low -> high  "climbing" (reads: along)
+
+// On the longest level piece: the middle of this line would land by the
+// corner, where the text would stand off in open space.
+node ask "Ask"  below service (gap: 12)  style: plain
+node answer "Answer"  below ask (gap: tight)  right of ask (gap: 10)  style: plain
+edge answer -> ask  "retry" (on: longest level)  from: left  to: left  line: (path: square, corners: rounded)

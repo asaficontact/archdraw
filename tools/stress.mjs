@@ -23,7 +23,13 @@ import { compile } from '../dist/index.js';
 // runs before it rather than only against the limits. Not tracked: the times
 // belong to the machine that took them, which the row names.
 const HISTORY = new URL('../stress-history.tsv', import.meta.url);
-const COLUMNS = ['when', 'commit', 'machine', '5 lines', '10 lines', '20 lines', '30 lines', '48 lines', 'result'];
+// The copies column came later than the rest, so older rows end one short.
+const COLUMNS = ['when', 'commit', 'machine', '5 lines', '10 lines', '20 lines', '30 lines', '48 lines', 'result', '150 copies'];
+
+// 150 copies of one line must draw almost instantly (design.org 6.5): they are
+// found by filing, shaped once and shifted, with no search and no pass over
+// pairs. 0.16.0 took about five seconds.
+const COPIES = { lines: 150, limit: 0.5 };
 
 const LEVELS = [
   { lines: 5, limit: 1 },
@@ -68,12 +74,24 @@ function commit() {
   }
 }
 
-function record(times, result) {
+function record(times, result, copies) {
   const row = [new Date().toISOString().slice(0, 16).replace('T', ' '), commit(), hostname()];
   for (let index = 0; index < LEVELS.length; index += 1) row.push(times[index]?.toFixed(2) ?? '');
-  row.push(result);
+  row.push(result, copies?.toFixed(2) ?? '');
   const header = existsSync(HISTORY) ? '' : `${COLUMNS.join('\t')}\n`;
   appendFileSync(HISTORY, `${header}${row.join('\t')}\n`);
+}
+
+// First, since it is quick and a slow one is the clearest sign fanning grew a search.
+const copySource = ['node a', 'node b  right of a (gap: wide)  6 below a', ...Array.from({ length: COPIES.lines }, () => 'edge a -> b  line: (path: square)')].join('\n');
+const copyBegan = performance.now();
+compile(copySource);
+const copies = (performance.now() - copyBegan) / 1000;
+console.log(`copies   ${COPIES.lines} copies  ${copies.toFixed(2)}s  (limit ${COPIES.limit}s)${copies > COPIES.limit ? '  TOO SLOW' : ''}`);
+if (copies > COPIES.limit) {
+  record([], 'copies too slow', copies);
+  console.log('stopped: copies of one line have become slower than fanning should be');
+  process.exit(1);
 }
 
 const times = [];
@@ -88,11 +106,11 @@ for (const { lines, limit } of full ? LEVELS : LEVELS.slice(0, QUICK)) {
   const over = took > limit;
   console.log(`level ${level}  ${String(lines).padStart(2)} lines  ${took.toFixed(2)}s  (limit ${limit}s)${over ? '  TOO SLOW' : ''}`);
   if (over) {
-    record(times, `too slow at level ${level}`);
+    record(times, `too slow at level ${level}`, copies);
     console.log(`stopped at level ${level}: routing has become slower than it was`);
     process.exit(1);
   }
 }
-record(times, 'ok');
+record(times, 'ok', copies);
 console.log('recorded in stress-history.tsv');
 if (!full) console.log(`levels 1-${QUICK} in time; \`./dev.sh stress full\` runs all ${LEVELS.length}`);
