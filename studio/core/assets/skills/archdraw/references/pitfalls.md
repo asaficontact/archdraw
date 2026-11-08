@@ -1,8 +1,10 @@
 # Pitfalls
 
 Habits from Mermaid, D2, Graphviz and PlantUML that break archdraw, each with the error `check_diagram` returns
-(copied from a real run of engine 0.16.0) and the fix. The command-line tool prints the same message as
-`file.archdraw:N:` in place of `line N:`. Every fix block below renders, with the house style block above it.
+(copied from a real run of engine 0.23.1) and the fix. The command-line tool prints the same message as
+`file.archdraw:N:` in place of `line N:`. Every fix block below checks with no error and no finding, with the house
+style block above it. The last two sections are about 0.23 itself: the old spellings it refuses, and what it draws
+badly without an error.
 
 Read the error literally: it names the line and, almost always, the word to write instead.
 
@@ -54,7 +56,7 @@ node api_note "Remember this." (wrap: 36)  shape: none  style: note  below api (
 **A label after a colon** (`a -> b: label`, Mermaid sequence and D2 style):
 `line 3: edge a -> b:: a name may not contain ":", because a colon makes the word before it a key, with or without a space after it`.
 **A label attribute** (`label: "HTTPS"`):
-`line 3: "a -> b" has label: HTTPS, which is not an attribute. An edge takes style, from, to, from-mark, to-mark, line, text, url`.
+`line 3: "a -> b" has label: HTTPS, which is not an attribute. An edge takes style, from, to, via, from-mark, to-mark, line, text, url, depth`.
 **Graphviz brackets** (`[label="x"]`): `line 3: edge a -> b: "[label=" is not a direction`.
 **An unquoted label** (`edge a -> b HTTPS`): `line 3: edge a -> b: "HTTPS" is not a direction`.
 **Mermaid's pipe label** (`a -->|HTTPS| b`):
@@ -100,10 +102,11 @@ edge b -> c  "y"  from: right  to: left
 **An edge to a node that is not declared** (D2 and Mermaid create it): `line 2: edge to "b", which does not exist`.
 Declare every node with a placement first.
 
-**A url on an edge with no text**:
-`line 3: edge a -> b has a url and no text. A destination needs something to click, and a line is too thin to be it — give the edge a text, or put the url on one of the nodes`.
+**A url on an edge.** Accepted since 0.23, with or without a text, but a drill-down belongs on the node the detail
+diagram expands (`archdraw/references/conventions.md`, Drill-downs).
 
-**A side that is not a side** (`from: east`): `line 3: "from: east" is not a side — use top, bottom, left, right`.
+**A side that is not a side** (`from: east`):
+`line 3: edge a -> b: "from: east" is not a side or a point — write a side (top, bottom, left, right), a point such as bottom-center, a side and how far along it such as left 3/4 down, or center`.
 
 ## Nesting
 
@@ -114,10 +117,11 @@ Declare every node with a placement first.
 line 2: `node` cannot continue the statement above — an indented line continues the one before it, so remove the indentation to start a new statement
 ```
 
-Indentation only continues a statement. Containment is a dotted name, parent first:
+Indentation only continues a statement. Containment is a dotted name, parent first, and the container lays its
+children out (or places all but one of them):
 
 ```archdraw
-node server      "Server"  style: zone
+node server      "Server"  layout: column  style: zone
 node server.api  "API"  style: ours
 node server.db   "Orders"  style: store
 ```
@@ -125,15 +129,18 @@ node server.db   "Orders"  style: store
 **The child before the parent**: `line 1: "server.api" is inside "server", which is not declared yet`. Declare the
 parent above. The same error comes from a dotted id used as a plain name (`node db.main` with no `db`): use `db_main`.
 
-**A child placed against a node in another container**:
-`line 4: "b.y" is placed against "a.x", which is not one of its siblings or its parent`; against a top-level node,
-`line 4: "z.b" is placed against "x", which is not one of its siblings or its parent`.
-Place the containers against each other and each child against its siblings:
+**Two children with no placement and no layout**:
+`line 3: "s" has 2 children that say nothing about where they go ("s.a", "s.b"). One is the anchor and the rest are placed against it — or give the container a layout: such as layout: column to place them in order`.
+Add `layout: column` (or `row`) to the container, as above.
+
+**A child placed against a node in another container** is allowed, but then its container must not place itself on
+the same axis: `line 3: "z" is placed twice across: by its own "right of x" and by "z.b right of x", which is inside it — keep one of the two`.
+The house places the containers against each other and each child against its siblings:
 
 ```archdraw
-node a    "Zone A"  style: zone
+node a    "Zone A"  layout: column  style: zone
 node a.x  "X"  style: ours
-node b    "Zone B"  right of a (gap: wide)  top level with a  style: zone
+node b    "Zone B"  right of a (gap: wide)  top even with a  layout: column  style: zone
 node b.y  "Y"  style: ours
 edge a.x -> b.y  "HTTPS"  from: right  to: left
 ```
@@ -148,19 +155,18 @@ says where it goes. The same error appears when an edit adds a top-level node an
 Remove the placement from the one node everything hangs off.
 
 **Two placements on one axis and none on the other** (`right of a  left of b`):
-`line 4: "m" does not say where it sits vertically: "right of a" and "left of b" would put it in different places`.
-Add the other axis:
+`line 3: "m" says where it goes across ("right of a" and "left of b") but not up and down — add a placement that says how high, such as even with one of them`.
+Add the other axis. `m` is then centered in the space `a` and `b` already leave, which must be wide enough for it:
 
 ```archdraw
 node a  "A"
-node b  "B"  right of a (gap: wide)
-node m  "M"  right of a  left of b  level with a
+node b  "B"  right of a (gap: 12)
+node m  "M"  right of a  left of b  even with a
 ```
 
-**Different placements nothing orders** (one node `right of hub`, another `right of hub  level with hub`):
-`line 3: "a" and "b" overlap, and nothing says which side of the other either one sits on — place one against the other, or say overlap: allow`.
-Identical placements are fine: they form a list in written order. The error comes from placements that differ, so
-the engine cannot stack them. Make them identical, or place one against the other:
+**Two nodes placed on one spot** (both `right of hub`, the way Mermaid lists siblings): no error. Both are drawn
+there, one over the other, and `check_diagram` says `renders`. Identical placements do not form a list. Place one
+against the other, or put them in a container with `layout: column`:
 
 ```archdraw
 node hub  "Hub"  style: ours
@@ -168,38 +174,43 @@ node a    "One"  right of hub (gap: wide)
 node b    "Two"  below a
 ```
 
-**Placements that cannot all hold** (`level with a  level with b` on rows that differ):
-`line 3: "below a" and "level with b" and "level with a" cannot all hold — they leave no room vertically`. Keep one
-alignment per axis.
+**Two placements on one axis** (`even with a  even with b`):
+`line 3: "c" says where it goes up and down more than once: "even with a" and "even with b". Each axis is stated once — keep one, or pin two opposite edges with even with to give it a size`.
+Keep one per axis, even where the two would agree.
 
 **Hyphenated directions** (`right-of a`): `line 2: node "b": "right-of" is not a direction`. Write `right of a`. The
 diagonals are the hyphenated ones: `above-left of a`.
 
-**A gap on an alignment** (`level with a (gap: tight)`):
-`line 3: node "c": "level with a" shares a line rather than leaving a space, so it takes no gap`. Put the gap on a
-direction:
+**A gap on an alignment** (`left even with b (gap: tight)`):
+`line 3: node "c": "left even with b" shares a line rather than leaving a space, so it takes no gap`. Put the gap on
+a direction:
 
 ```archdraw
 node a  "A"
 node b  "B"  right of a
-node c  "C"  below b (gap: tight)  left level with b
+node c  "C"  below b (gap: tight)  left even with b
 ```
 
 **A comma before an attribute** (`right of a, gap: tight`):
 `line 2: node "b": the comma after "a" starts another target, but "gap:" is a key — remove the comma`. No commas
 between attributes; the gap goes in brackets after its placement: `right of a (gap: tight)`.
 
-**Units on a gap** (`gap: 20px`):
-`line 2: "b" asks for gap: 20px, which is not one of none, tight, normal, wide or a number of pixels; write "gap: 20", a gap's number is already in pixels`.
-Prefer the names.
+**A gap on the node** (`right of a  gap: wide`):
+
+```text
+line 2: node "b": a node has no gap:, only a placement does — write it in the placement's bracket, such as `right of a (gap: wide)`
+```
+
+**A gap's number in pixels.** `(gap: 20)` is 20 units, 240 pixels, with no error: a number is in units of 12 pixels
+(`tight` 2, `normal` 4, `wide` 8). Prefer the names; use a number when a text needs the room (below).
 
 ## Attributes
 
 Every attribute is checked by name; an invented one is refused.
 
 ```text
-line 1: "a" has label: Alpha, which is not an attribute. A node takes style, gap, overlap, contents, badge, deck, shape, fill, border, text, url
-line 1: "a" has color: red, which is not an attribute. A node takes style, gap, overlap, contents, badge, deck, shape, fill, border, text, url
+line 1: "a" has label: Alpha, which is not an attribute. A node takes style, overlap, layout, gather-children, padding, padding-top, padding-right, padding-bottom, padding-left, width, height, min-width, max-width, min-height, max-height, heading, join-with, badge, cards, shape, fill, border, corners, text, url, depth, top-edge-order, bottom-edge-order, left-edge-order, right-edge-order
+line 1: "a" has color: red, which is not an attribute. A node takes style, overlap, layout, gather-children, padding, padding-top, padding-right, padding-bottom, padding-left, width, height, min-width, max-width, min-height, max-height, heading, join-with, badge, cards, shape, fill, border, corners, text, url, depth, top-edge-order, bottom-edge-order, left-edge-order, right-edge-order
 line 1: `size:` belongs to the text rather than to the node — write it in the brackets after the text, as in `"…" (size: small)`, or as `text: (size: small)` in a style
 line 1: `wrap:` belongs to the text rather than to the node — write it in the brackets after the text, as in `"…" (wrap: 20)`, or as `text: (wrap: 20)` in a style
 line 1: node "api": a text is quoted — write "API" rather than API
@@ -215,14 +226,15 @@ node a  "Alpha" (wrap: 20)  style: ours
 **An invented theme color** (`fill: theme-blue`): `line 1: node "a": there is no theme color "theme-blue" — the theme colors are theme-page, theme-text, theme-muted, theme-fill, theme-border, theme-line, theme-primary, theme-primary-subtle, theme-on-primary, theme-secondary, theme-secondary-subtle, theme-on-secondary`.
 In a diagram, neither: use a house style.
 
-**A shape from another tool** (`shape: cylinder`) **or an icon outside the set** (`icon: server`):
+**A shape from another tool** (`shape: person`, `shape: cloud`) **or an icon outside the set** (`icon: server`):
 
 ```text
-line 1: there is no shape called "cylinder". The shapes are rectangle, document, circle, none, and a picture is `icon:` rather than `shape:`: disk, desktop, laptop, package, cubes, cube, database
+line 1: there is no shape called "person". The shapes are rectangle, document, circle, diamond, pill, parallelogram, hexagon, trapezoid, triangle, cylinder, flow-subprocess, flow-document, flow-off-page, flow-delay, flow-manual-input, flow-stored-data, flow-loop-start, flow-loop-end, flow-card, flow-display, flow-tape, flow-punched-tape, flow-collate, none, and a picture is `icon:` rather than `shape:`: disk, desktop, laptop, package, cubes, cube, database
 line 1: there is no icon called "server". The icons are disk, desktop, laptop, package, cubes, cube, database
 ```
 
-A database is `style: store`; a person is `icon: laptop`; a server is a box with its name.
+`shape: cylinder` is accepted, but the house draws a database as `style: store`; a person is `icon: laptop`; a server
+is a box with its name.
 
 **Both a shape and an icon**:
 
@@ -238,7 +250,7 @@ Use a built-in. Paste SVG only when the user supplies it; the studio sanitizes i
 then `style: async` on a node give:
 
 ```text
-line 1: node "a": ")" is not a direction
+line 1: a border has no "pattern" — it takes color, thickness
 line 1: "a" is a node and has line: (pattern: dashed). A node is a fill, a border and text, so it has no line — it takes `fill:`, `border:`, `text: (color: …)`
 line 2: style "async" gives "a" nothing. It carries line; a node is a fill, a border and text
 ```
@@ -277,3 +289,70 @@ line 2: the diagram is described twice
 
 The second and third mean the house block was pasted twice or left out: exactly one copy, at the top. Do not write a
 `diagram` statement at all; the studio sets the theme.
+
+## Old reladraw spellings (0.16 and earlier)
+
+A diagram written for engine 0.16 is refused at its first old spelling, and the message names the new one. When
+you change such a file, translate each refused line as the message says; that is a translation, not a change of
+meaning, and you say so in the reply.
+
+```text
+line 2: node "b": "level with" is now "even with" — write `even with …`
+line 2: node "b": "below of" is written "below" — `below a`
+line 1: node "s": contents: is gone — a container's children are arranged with layout:, and its settings go in its bracket: `layout: column (widths: match, align: center)`
+line 4: edge a -> b: "below c" on an edge is gone — it said what the line keeps clear of, and a line now says the places it passes: `via: c bottom`
+line 5: edge a -> b: "between c and d" on an edge is gone — a line says the places it passes, so write `via: between c and d`
+line 1: "a": at: is gone from a node's text — a title says which side it sits against, such as (inside top, align: left), (on top) or (outside bottom)
+line 1: node "drive": deck: is gone — a deck is a container and its cards are its children, the front one first: `node drive ""  layout: deck  cards: "Drive 1" "Drive 2" "Drive 3"`; a card that holds things is written as a child, such as node drive.1
+```
+
+The `contents:` message's own suggestion is refused next (`align:` in a layout is gone): write `layout: column
+(widths: match)`, and `align-children: center` in the bracket only if you need it. A `gap:` on the node moves into
+the placement's bracket (above). Three changes give no error and draw differently: a gap's number is units, not
+pixels (`(gap: 12)` was 12 pixels and is now 144; write `1`), and `size: 22` on a text or `thickness: 3` on a line is
+now a multiple of normal (write `22px`, `3px`). Old files also counted on gaps that widened and lines that went round
+boxes; read the next section before you trust one that checks.
+
+## Drawing in 0.23: what checks clean and still draws badly
+
+The engine draws what the file says and refuses nothing for looking bad. It reports overlaps as findings, both on
+the command line and in `check_diagram`; a line through a container's title is not reported at all. These are the
+usual ways a diagram that `renders` reads badly:
+
+- **A line's text never widens its gap.** Size the gap to the text of the line that runs across it: about 0.7 units
+  per character at normal size and 0.6 at small (the house sets edge texts small), plus a unit or two for the patch
+  behind it. `"HTTPS, session cookie"` is 21 small characters, so `(gap: 14)`; `wide` (8) holds about ten.
+- **A container's title is centered along its top by default**, where a line coming into a child from above or
+  aslant runs through it, and `check_diagram` (or `reladraw check`) does not report a line crossing a container's
+  title. Put the title at the left, or take the line round it with `via:`:
+
+```archdraw
+node user        "Customer"  icon: laptop
+node cloud       "Cloud" (inside top, align: left)  below user (gap: wide)  layout: column  style: zone
+node cloud.api   "Orders API"  style: ours
+node cloud.db    "Orders / [dim]Postgres[/dim]"  style: store
+edge user -> cloud.api  "HTTPS"  from: bottom  to: top
+```
+
+- **A long text on a vertical line** sits across the line and covers what is beside it. Move it off the line:
+  `"SQL over TLS, pooled" (left of edge)` or `(right of edge)`.
+- **A pinned line end** (`straight down`, `to: top 1/4 across`, `from: right, even with x`) splits its side, and the
+  other ends on that side spread on either side of it, so they can cross it or bunch up. Pin them all, or name the
+  pinned line and order the others against it: `edge ord a -> bus  "emit"  to: top 1/4 across`, then
+  `to: top, left of ord` on another. A `straight` line can't be named that way ("no line named ord meets bus's top
+  side"); pin the others. Crossings are not reported by default.
+- **A style on a `layout: deck`** draws a box round the stack instead of colouring the cards. Write the cards as
+  children, each with the style:
+
+```archdraw
+node drives    ""  layout: deck
+node drives.1  "Drive 1"  style: ours
+node drives.2  "Drive 2"  style: ours
+node drives.3  "Drive 3"  style: ours
+```
+
+- **A point waypoint on a square line lies on a leg, not at a corner.** `via: p` with `line: (path: square)` passes
+  through `p` partway along a leg. `line: (path: square, turn: 1)` puts the corner on the point. A named point is
+  drawn as a dot unless declared as `guide point p …`.
+- **A line goes through whatever is between its boxes**, and two boxes placed alike sit on one spot (above). Look at
+  what lies on the straight line between two ends; take the line round with `via: c top` or `line: (path: square)`.

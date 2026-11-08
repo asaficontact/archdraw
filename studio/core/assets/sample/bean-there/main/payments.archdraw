@@ -6,11 +6,11 @@ style ext  border: theme-secondary
 style store  fill: theme-fill  border: theme-border  badge: database
 
 node api "Orders API"  style: ours
-node pay "Payments / Card"  right of api  style: ours
-node psp "Card provider"  right of pay  style: ext
-node receipts "Receipts"  below pay  style: store
+node pay "Payments / Card"  right of api (gap: 9)  style: ours
+node psp "Card provider"  right of pay (gap: 11)  style: ext
+node receipts "Receipts"  below pay (gap: 10)  x even with 1/3 across pay  style: store
 
 edge api -> pay "charge" from: right to: left
 edge pay -> psp "authorize" from: right to: left
-edge psp -> pay "webhook" from: bottom to: bottom
-edge pay -> receipts "store" from: bottom to: top
+edge psp -> pay "webhook" from: bottom to: bottom  line: (path: square, step-out: tight)
+edge pay -> receipts "store" from: bottom 1/3 across  straight down

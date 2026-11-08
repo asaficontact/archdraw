@@ -15,33 +15,39 @@ have not, and keep `archdraw/references/pitfalls.md` for the errors.
 
 - the anchor: the one node with no placement. Everything hangs off it.
 - what each node you will touch is placed against, and what is placed against it (`grep` the id in the source with
-  your eyes: `right of api`, `level with api`, `below api and db`, `between api and x`, edge clauses `below api`).
-- the containers, and which children stack in written order (no placement of their own).
+  your eyes: `right of api`, `even with api`, `below api and db`, `between api and x`, and on edges `via: api bottom`).
+- the containers: one with `layout: column` or `row` puts its children in written order; one without has a single
+  unplaced child and the rest placed against it.
+- whether it is in the current spelling. A file written for engine 0.16 is refused at its first old spelling
+  (`level with`, `contents:`, a `gap:` on a node, `below c` on an edge): translate each refused line as the message
+  says (`archdraw/references/pitfalls.md`, "Old reladraw spellings") and say in the reply that you did.
 - the style names in use. Use them; do not add new ones unless nothing fits.
 
 If the change comes from the code ("the worker moved to Modal"), confirm it in the code first and name the file.
 
 ## 2. Change the fewest lines
 
-- **Never reorder lines.** Order is meaning here: children stack in written order, identical placements form a list
-  in written order, later edges jump earlier ones where they cross, edges sharing sides take lanes by order. Moving a
-  line moves the picture.
+- **Never reorder lines.** Order is meaning here: a laid-out container's children sit in written order, later edges
+  jump earlier ones where they cross, a line's texts run in written order. Moving a line moves the picture.
 - **Add a child at the end of its container's children**, after the last line that starts with `<container>.`, so
-  the existing stack does not shift. A child with no placement joins the bottom of the stack.
+  the existing ones do not shift. In a container with `layout:` a child with no placement joins the end of the column
+  or row; in one without, place it against a sibling (a second unplaced child is an error).
 - **Add a top-level node with a placement.** Without one it is a second unplaced node:
   `line 2: exactly one node may say nothing about where it goes, but 2 do: "a", "b"`.
-- **Place it against a sibling** (same container, or both top level). Against a node in another container:
-  `line 4: "b.y" is placed against "a.x", which is not one of its siblings or its parent`.
+- **Place it against a sibling** (same container, or both top level), the house rule, so it moves with its zone.
+- **Make room yourself.** Nothing moves an existing box: a new node placed where another already sits is drawn over
+  it, and a gap too narrow for a new edge's text is covered by it, with no error from `check_diagram`. Pick a spot
+  nothing else is placed at, and a gap sized for the text (`archdraw/references/pitfalls.md`, "Drawing in 0.23").
 - **Add edges with the other edges**, at the end of the group they belong to, with text and sides.
 - **Edit in place**: change the text inside the quotes, or one attribute; leave alignment spaces as they are.
 - **Restyle by changing `style:`**, never by adding a color.
 
 ## 3. Removing
 
-Delete the node's line, then every line that names it: its children (`id.`), its edges, and **every placement against
-it**. A placement against a deleted node fails with the node's name; a node whose only placement was against it
-becomes unplaced (the error above). Re-anchor those nodes on a neighbour that stays, with the same direction, so they
-land near where they were.
+Delete the node's line, then every line that names it: its children (`id.`), its edges, every `via:` through it, and
+**every placement against it**. A placement against a deleted node fails with the node's name; a node whose only
+placement was against it becomes unplaced (the error above). Re-anchor those nodes on a neighbour that stays, with
+the same direction, so they land near where they were.
 
 ## 4. Renaming
 
@@ -53,7 +59,7 @@ checklist:
 2. every child: `old.x` becomes `new.x`;
 3. every edge end: `old ->`, `-> old`, `old.x`;
 4. every placement: `of old`, `with old`, `and old`, `between old and`;
-5. every edge clause: `below old`, `left of old`;
+5. every waypoint: `via: old bottom`, `via: between old and x`;
 6. in other diagrams, `url: "#/<project>/<old-file>"` when it is a file you are renaming. You can only propose one
    file at a time: tell the user which others link to it.
 
@@ -62,9 +68,9 @@ checklist:
 ## 5. Check, then propose
 
 1. `check_diagram` the complete file. Fix only the line named; check again (`archdraw/SKILL.md`, the loop).
-2. An overlap error after adding a node (`"a" and "b" overlap, and nothing says which side of the other either one
-   sits on`) means your node and an existing one now claim the same spot: place yours against the other one, or give
-   it the identical placement so they form a list. Do not move the existing node.
+2. No error tells you a node you added landed on an existing one: two nodes placed alike are drawn on one spot, and
+   `check_diagram` still says `renders`. Check that no other node has your node's placement; if one does, place
+   yours against it (`below cache`), not against the shared target. Do not move the existing node.
 3. Re-read your diff against the original: only the lines you meant changed.
 4. `propose_diagram` with the same name and the complete file. Pass the explanation too when the meaning changed:
    a new or removed part, a changed flow, a broken invariant. The explanation you pass replaces the whole `.md`, so

@@ -105,10 +105,13 @@ and disappears on the other. A new meaning gets a new style built from theme col
 
 ## Zones and layout
 
-- Zones (containers) first, then their contents, then edges, then notes. Order matters to the engine: children stack
-  in written order, and later edges jump earlier ones where they cross.
-- Place zones against zones, with `(gap: wide)` between them and `top level with` to line their tops up. Place a
-  zone's children against siblings in the same zone, never against a node in another zone.
+- Zones (containers) first, then their contents, then edges, then notes. Order matters to the engine: a laid-out
+  zone's children sit in written order, and later edges jump earlier ones where they cross.
+- Place zones against zones, with `(gap: wide)` between them (wider when an edge text crosses the gap) and
+  `top even with` to line their tops up. Give a zone `layout: column` (or `row`) to put its children in written
+  order, or place all but one of them against a sibling in the same zone, never against a node in another zone.
+- A zone's title is centered along its top. When a line comes into a child from above or aslant, write the title
+  `"AWS" (inside top, align: left)` so the line misses it.
 - One level of zones; two at most (a machine inside a cloud account).
 - Pick one main direction and keep it: requests flow left to right, callers above callees, time down the page.
 
@@ -116,7 +119,7 @@ and disappears on the other. A new meaning gets a new style built from theme col
 
 `node <id>_note "<one sentence>" (wrap: 36)  shape: none  style: note  <placement>`. Write `shape: none` on the
 node, not in a style: the studio's outline lists a node as a note only when the node itself says it. Wrap 34 to 44.
-Anchor it to the node it explains (`below api (gap: tight)  left level with api`). At most two per diagram; a third
+Anchor it to the node it explains (`below api (gap: tight)  left even with api`). At most two per diagram; a third
 belongs in the explanation.
 
 ## Drill-downs

@@ -3,7 +3,7 @@
 // a file. Diagrams are capped at 200 KB and the engine refuses ambiguity instead of searching, so a check is fast
 // (0.1–0.4 s for the largest house diagrams).
 
-import { compile, parse, resolve, THEMES } from "../../../src/index.js"
+import { compile, draw, parse, resolve, THEMES } from "../../../src/index.js"
 
 export { parse, resolve }
 
@@ -16,6 +16,14 @@ export function check(source: string): string | null {
     const line = e && typeof (e as { line?: number }).line === "number" && (e as { line: number }).line > 0 ? `line ${(e as { line: number }).line}: ` : ""
     return (line + String(e instanceof Error ? e.message : e)).slice(0, 2000)
   }
+}
+
+/** The engine's error, or else its findings: places where the picture, drawn as written, may not read as meant
+ * ("line N: warning(kind): …"). Since engine 0.17 nothing moves to make room, so an overlap is a finding, not an error. */
+export function lint(source: string): { error: string | null; findings: string[] } {
+  const error = check(source)
+  if (error) return { error, findings: [] }
+  return { error: null, findings: draw(source).findings.map((f) => f.format()) }
 }
 
 /** The SVG for a source, light or dark (export and server-side previews). Throws the engine's error. */

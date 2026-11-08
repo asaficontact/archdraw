@@ -5,10 +5,10 @@ style ours  fill: theme-primary-subtle  border: theme-primary
 style store  fill: theme-fill  border: theme-border  badge: database
 
 node app "Customer app"  style: ours
-node api "Orders API"  right of app  style: ours
-node orders "Orders"  right of api  style: store
-node queue "Barista queue"  below api  style: ours
-node tablet "Barista tablet"  below queue  style: ours
+node api "Orders API"  right of app (gap: 13)  style: ours
+node orders "Orders"  right of api (gap: 9)  style: store
+node queue "Barista queue"  below api (gap: 6)  style: ours
+node tablet "Barista tablet"  below queue (gap: 6)  style: ours
 node push "Push service"  below app  even with tablet
 
 edge app -> api "place order" from: right to: left

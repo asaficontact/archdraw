@@ -11,7 +11,7 @@ import { join, relative, resolve, sep } from "node:path"
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core"
 import { type Static, type TSchema, Type } from "@earendil-works/pi-ai"
 import { git } from "./git.js"
-import { check } from "./engine.js"
+import { check, lint } from "./engine.js"
 import { graph, outline } from "./graph.js"
 
 const CAP = 32_000
@@ -210,9 +210,15 @@ export function makeTools(ctx: ToolContext): AgentTool[] {
   const checkTool = defineTool({
     name: "check_diagram",
     label: "Check",
-    description: "Check a diagram source with the engine without proposing it: 'renders' or the engine's error with its line.",
+    description:
+      "Check a diagram source with the engine without proposing it: the engine's error with its line, or its findings (overlaps, lines through boxes, texts on boxes), or 'renders, no findings'.",
     parameters: Type.Object({ source: Type.String() }),
-    execute: async (_id, p) => text(check(p.source) ?? "renders"),
+    execute: async (_id, p) => {
+      const r = lint(p.source)
+      if (r.error) return text(r.error)
+      if (!r.findings.length) return text("renders, no findings")
+      return text(`renders, with ${r.findings.length} finding(s). Each is a place the picture may not read as meant; fix it by placing things (gaps, via:, where a text sits):\n${r.findings.join("\n")}`)
+    },
   })
 
   const readSkill = defineTool({
@@ -243,7 +249,10 @@ export function makeTools(ctx: ToolContext): AgentTool[] {
       const error = check(source)
       if (error) return { content: [{ type: "text", text: `The engine refused it: ${error}\nFix that line and propose the complete file again.` }], details: { error }, isError: true }
       ctx.onProposal({ name: p.name, source, doc: p.explanation ?? null, error: null })
-      return text(`Proposed ${p.name}. It renders; the user now sees it beside the current diagram.`)
+      const { findings } = lint(source)
+      if (findings.length)
+        return text(`Proposed ${p.name}; the user now sees it. It renders, but with ${findings.length} finding(s) where the picture may not read as meant. Fix them and propose the complete file again:\n${findings.join("\n")}`)
+      return text(`Proposed ${p.name}. It renders with no findings; the user now sees it beside the current diagram.`)
     },
   })
 

@@ -38,9 +38,11 @@ the data owner and the hosts are known; a reasonable assumption beats a fifth qu
 1. **Header**: `// title: <Product>, the whole system` and a one-sentence `// summary:`; then the house block verbatim.
 2. **The anchor and the main direction**: the person or entry point is the one unplaced node; the scenario flows left
    to right (callers left of callees), async and jobs below.
-3. **Zones first**, placed against each other with `(gap: wide)` and `top level with`; one per place things run.
+3. **Zones first**, placed against each other with `(gap: wide)` and `top even with`; one per place things run.
+   A zone holding several boxes takes `layout: column`, or has one unplaced child with the rest placed against it.
 4. **Nodes**, each in its zone, two to four words plus a `[dim]` qualifier (technology, cadence, route), styled by
-   role: `ours`, `job`, `store`, `ext`. Children stack in written order: write them in scenario order.
+   role: `ours`, `job`, `store`, `ext`. Write children in scenario order; a laid-out zone draws them in that order. Nothing moves to make room, so size each gap for the edge text that crosses it
+   (`archdraw/references/pitfalls.md`, "Drawing in 0.23").
 5. **Edges**, the scenario's first, each with the mechanism as text, sides (`from:`/`to:`) matching the layout, and
    `style: async` where the sender does not wait. Arrow = who initiates.
 6. **One note** for the thing a reader would get wrong (the only writer, the trust boundary, the cost cap).
@@ -112,17 +114,17 @@ node customer  "Customer / [dim]phone[/dim]"  icon: laptop
 
 node cloud         "Cloud  [dim]one region[/dim]"  right of customer (gap: wide)  style: zone
 node cloud.api     "Orders API / [dim]Node[/dim]"  style: ours  url: "#/bean-there/ordering"
-node cloud.db      "Orders, menu / [dim]Postgres[/dim]"  style: store
+node cloud.db      "Orders, menu / [dim]Postgres[/dim]"  above cloud.api  style: store
 
-node shop          "Shop"  below customer (gap: wide)  style: zone
+node shop          "Shop"  below cloud (gap: wide)  style: zone
 node shop.tablet   "Barista queue / [dim]tablet app[/dim]"  style: ours
 
-node stripe  "Stripe / [dim]cards[/dim]"  right of cloud (gap: wide)  style: ext
+node stripe  "Stripe / [dim]cards[/dim]"  right of cloud (gap: 14)  even with cloud.api  style: ext
 
 edge customer -> cloud.api      "HTTPS"  from: right  to: left
 edge cloud.api -> cloud.db      "SQL"
 edge cloud.api -> stripe        "charge, HTTPS"  from: right  to: left
-edge shop.tablet -> cloud.api   "poll orders"  from: right  to: left
+edge shop.tablet -> cloud.api   "poll orders"  from: top  to: bottom
 
-node pay_note "An order reaches the barista only after the card is authorized." (wrap: 36)  shape: none  style: note  below shop (gap: tight)  left level with shop
+node pay_note "An order reaches the barista only after the card is authorized." (wrap: 36)  shape: none  style: note  below shop (gap: tight)  left even with shop
 ```
