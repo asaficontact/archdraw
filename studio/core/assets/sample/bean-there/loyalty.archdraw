@@ -21,6 +21,6 @@ edge api -> menu "SQL" from: right to: left
 edge api -> pay "charge" from: top to: bottom
 edge fax -> queue "manual entry" from: right to: left
 node loyalty "Loyalty service"  below menu  style: ours
-node points "Points DB"  right of loyalty  level with loyalty  style: store
+node points "Points DB"  right of loyalty  even with loyalty  style: store
 edge api -> loyalty "order paid" from: right to: left
 edge loyalty -> points "add points" from: right to: left

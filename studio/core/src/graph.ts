@@ -33,7 +33,8 @@ export function graph(source: string): Graph {
       const a = s.attrs
       nodes.push({ id: s.name, label, detail, parent: dot > 0 ? s.name.slice(0, dot) : null, style: a.style ?? "", shape: a.shape ?? "", icon: a.icon ?? "", badge: a.badge ?? "", url: a.url ?? "", line: s.line })
     } else if (s.kind === "edge") {
-      const label = s.text ? plain(s.text).label : ""
+      // Since engine 0.17 a line carries a list of texts; the graph names it by all of them, in order.
+      const label = s.texts.map((t) => plain(t.text).label).filter(Boolean).join(" · ")
       const base = `${s.from}->${s.to}:${label}`
       const n = (seen.get(base) ?? 0) + 1
       seen.set(base, n)

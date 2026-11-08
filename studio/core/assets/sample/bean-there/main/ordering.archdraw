@@ -9,7 +9,7 @@ node api "Orders API"  right of app  style: ours
 node orders "Orders"  right of api  style: store
 node queue "Barista queue"  below api  style: ours
 node tablet "Barista tablet"  below queue  style: ours
-node push "Push service"  below app  level with tablet
+node push "Push service"  below app  even with tablet
 
 edge app -> api "place order" from: right to: left
 edge api -> orders "insert" from: right to: left
