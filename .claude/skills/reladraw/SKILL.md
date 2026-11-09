@@ -15,7 +15,7 @@ That matters here specifically. You can't see the SVG you produced. With auto-la
 
 ## Check it is installed, and the same version as this skill
 
-This skill teaches reladraw 0.23.1. Once per session, before the first render, run:
+This skill teaches reladraw 0.24.0. Once per session, before the first render, run:
 
 ```
 reladraw --version
@@ -23,7 +23,7 @@ reladraw --version
 
 - **The same:** say nothing.
 - **Older, or `--version` isn't recognized** (it arrived in 0.17.1): the tool is older than this page and will refuse some of what it teaches. Tell the user, and give them `npm install -g reladraw@latest`.
-- **Newer:** this skill is out of date. Tell the user, and give them `reladraw install-skill -g`, which replaces it with the skill that came with their reladraw. Carry on meanwhile; where an error names a replacement spelling, trust the error over this page.
+- **Newer:** this skill is out of date. Tell the user, and give them `reladraw install-skill`, which asks which agents to install for and replaces it with the skill that came with their reladraw. Carry on meanwhile; where an error names a replacement spelling, trust the error over this page.
 
 If `reladraw` isn't installed, `npx reladraw` works without installing, and `npm install -g reladraw` installs it.
 
