@@ -1,4 +1,4 @@
-# Syntax reference — 0.24.0
+# Syntax reference — 0.25.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -38,6 +38,7 @@ An indented line with nothing to continue, at the top of the file or after a bla
 | `default` | appearance every thing of one kind wears ([Defaults](#defaults)) |
 | `diagram` | settings for the whole drawing ([The diagram](#the-diagram)) |
 | `icon` | a picture of your own ([Your own icons](#your-own-icons)) |
+| `description` | text about a box or a line, for the page's panel ([Descriptions](#descriptions)) |
 
 `box`, `link`, `note`, `deck`, `rect` and `arrow` at the start of a statement are refused by name, each quoting what to write instead.
 
@@ -71,7 +72,7 @@ A text is quoted. ` / `, a slash with whitespace on both sides, breaks the line,
 
 A node with no text shows its name, and a dotted name shows only its last part: `node server.docker` reads "docker". The name is never prettified. `""` says a node deliberately has none. A node drawn as a picture shows no text unless one is written.
 
-A `"""` string takes everything between its marks as written, quotes and line breaks included. It is accepted only for an icon's SVG.
+A `"""` string takes everything between its marks as written, quotes and line breaks included. It is accepted only for an icon's SVG and a description's text ([Descriptions](#descriptions)).
 
 ### Numbers and the file's unit
 
@@ -258,7 +259,7 @@ node notes "notes"  below resolver (gap: tight)  shape: none
 
 ### Several targets at once
 
-A placement may name several targets, joined by `and` or commas: `right of a, b and c`. It places against the box bounding them all, a region nobody had to declare. A lone direction centers on that region, which is how one row is offset against another:
+A placement may name several targets, joined by `and` or commas: `right of a, b and c`. It places against the box bounding them all, a region nobody had to declare. A distance and a direction after the `and` or comma start another placement instead: `right of a and 2 above c top` is `right of a  2 above c top`. To place against a point and a box together, name the point first: `point p  2 above c top-center`, then `right of a and p`. A lone direction centers on that region, which is how one row is offset against another:
 
 ```
 node a  icon: cube
@@ -291,7 +292,7 @@ A fraction of the way across a box is written fraction first: `top even with 3/4
 
 `center 12 right of a center` puts the two centers exactly 12 apart, the even steps of a timeline whose boxes differ in width. `top 3 below a bottom` is the same for edges. The direction means what it always means, so with nothing else said the box also sits level with `a`'s center. A placement naming parts must give its distance: `center right of a center` is refused ("say how far").
 
-Two distances, one per axis, are accepted in any placement: `3 below and 2 right of a`, or `top-left 3 below and 2 right of a bottom-right`.
+Two distances, one per axis, are accepted in any placement: `3 below and 2 right of a`, or `top-left 3 below and 2 right of a bottom-right`. A `left` or `right` that comes first may keep its `of`: `2 right of and 3 below a` is `2 right and 3 below a`.
 
 **How far along the side it faces.** `right of server 3/4 down` puts the box the usual gap right of `server`, its middle level with a spot three quarters of the way down `server`'s right side. `down` and `up` run along a left or right side, `across` along a top or bottom one. A word that doesn't run along the side the direction faces is refused, listing the words that do.
 
@@ -684,14 +685,16 @@ node rack.b "web-2"
 
 ### Markup
 
-A stretch of text can borrow a style's look:
+A stretch of text can borrow a style's text color and size:
 
 ```
-style dim  text: (color: theme-muted)
+style dim  text: (color: theme-muted, size: small)
 node files "shared folder / [dim]synced[/dim]"
 ```
 
-The opener names a style, never a color, so the marked words borrow a meaning the file already has. A name no style answers to is refused, and so is a style that says nothing about text. The closer repeats the name, so a mismatched close is refused by name. Marks don't nest, and a mark may cross a line break. A bare `[` is an error; write `\[` for a literal one.
+The opener names a style, never a color, so the marked words borrow a meaning the file already has. A name no style answers to is refused, and so is a style that gives text neither a color nor a size.
+
+**A line is as tall as its largest text.** A line that is all small is spaced as a small line, so the box is shorter. A small stretch mid-line, `"3 [dim]files[/dim] waiting"`, sits on the same baseline as the words around it, and the line keeps the normal spacing. With `wrap:`, a small character counts as less than a whole one, by the ratio of the two sizes. The closer repeats the name, so a mismatched close is refused by name. Marks don't nest, and a mark may cross a line break. A bare `[` is an error; write `\[` for a literal one.
 
 ## Lines
 
@@ -974,11 +977,19 @@ A line may carry several texts, one after another, each with its own bracket. **
 
 **Beside the line:** `(right of edge)`, `(left of edge)`, `(above edge)`, `(below edge)` move the text out the stated way until it is clear of the part of the line it landed on.
 
+How far it moves can be said in front:
+
+- `(at: 4/5, 1 above edge)`: one unit up from where it would sit on the line. If that is short of clear, the text still crosses the line and hides it there.
+- `(at: 4/5, 1/2 clear above edge)`: half of the move that would clear the line. Any fraction or number works, `3/4 clear` or `1.5 clear`.
+- `(at: 4/5, clear above edge)`: all the way clear, the same as `above edge`.
+
+A distance is a number, `0.5 above edge`; `1/2 above edge` is refused, naming both forms. `edge-gap:` beside a distance is refused as said twice.
+
 **Lined up with a box on one axis:** `(left even with a right)` puts the left edge of the patch behind the text at `a`'s right side, and leaves its height where it would otherwise sit; `(x even with mid1)` centers the text across on `mid1`. Any `even with` a box takes works, one per axis, and the other axis comes from the line. On a level stretch it slides the text along the line; on an upright one, it moves the text off the line sideways. With a relation that already says the same axis, such as `right of edge`, it is refused. Separate it from the bracket's next item with a comma.
 
 **Which way it reads:** `reads: up` and `reads: down` turn it a quarter turn; `reads: along` takes the line's angle where it sits, never upside down.
 
-`gap:` is the distance from the box for `at: start`, `at: end` and the box relations; `edge-gap:` the distance off the line for a text beside it. Each defaults to half a unit, written in the text's own bracket.
+`gap:` is the distance from the box for `at: start`, `at: end` and the box relations; `edge-gap:` the distance past clear for a text beside it, and part of the move that `1/2 clear` takes a fraction of. Each defaults to half a unit, written in the text's own bracket.
 
 ```
 node a
@@ -1052,7 +1063,7 @@ node nas "NAS"  right of mirror
 edge mirror -> nas  style: backup
 ```
 
-A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:` or a deck's `cards:`.
+A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:`, a `description:` or a deck's `cards:`.
 
 - **A style may span kinds.** It gives each thing only the keys that thing has, so the style above gives nodes their border and lines their color.
 - **A style must give a thing at least one key it has.** A style that dresses a thing in nothing is on the wrong thing.
@@ -1118,7 +1129,7 @@ A default is a style every thing of one kind wears without naming it: `node`, `l
 
 A container inside another container is filled a shade further from the page than the one it sits in, so the two read as two backdrops. An invisible container (`shape: none`) doesn't count, and a stated `fill:` wins as always.
 
-A default takes the words a style does and may wear a style of its own (`default edge  style: quiet`), laid beneath its own words. It is strict about kind, since it names its kind: `default edge  fill: red` is refused, pointing to `line:`. `icon:` is a leaf's alone. A default carries no `url:`. Each kind is written once, and `default leaf node` is refused, naming `default leaf`.
+A default takes the words a style does and may wear a style of its own (`default edge  style: quiet`), laid beneath its own words. It is strict about kind, since it names its kind: `default edge  fill: red` is refused, pointing to `line:`. `icon:` is a leaf's alone. A default carries no `url:` or `description:`. Each kind is written once, and `default leaf node` is refused, naming `default leaf`.
 
 ### The diagram
 
@@ -1155,6 +1166,70 @@ node api "Orders API"
 - **In an SVG**, a click follows the first link, and the browser's tooltip lists them all. **On a page** made with `--page`, a click selects the thing and the panel beside the drawing lists its links; a link is followed from there ([A page for looking at a diagram](#a-page-for-looking-at-a-diagram)).
 
 The same address twice in one `url:` is refused.
+
+A link can be declared once, with its name and badge, and used by name. A quoted value after `url:` is an address and an unquoted one is a declared link, and the two mix in one list in the order written:
+
+```
+url orders-docs  "https://docs.example.com/orders/v2/reference" (name: "Docs", icon: "D" (fill: #3a6ea5, text: white))
+url orders-code  "https://github.com/example/orders/tree/main/services/api" (name: "Code")
+
+node api "Orders API"  url: orders-docs  orders-code
+node worker "Worker"   url: orders-docs  "https://example.com/runbooks/worker" (name: "Runbook")
+```
+
+A declaration may list several links, each a quoted address or another declared name, and a use gives all of them in order:
+
+```
+url orders-links  orders-docs  orders-code  "https://wiki.example.com/orders" (name: "Wiki")
+
+node api "Orders API"  url: orders-links
+```
+
+A declared link's name and badge are its own, so a bracket after its name in a `url:` is refused; to show it differently, declare another. A declaration may come before or after its use. Refused, each with a message: a name used but never declared, a name declared twice, a declaration that reaches itself through its own list, and a name that starts a placement, such as `below`, since a placement may follow a `url:` on the same statement.
+
+### Descriptions
+
+A box or a line can carry a description: text a reader asks for, shown in the panel when it is selected on a page made with `--page`, and never drawn. It can be written three ways.
+
+On the thing's own statement, quoted:
+
+```
+node proxy "Proxy"  description: "Forwards each request by its path."
+```
+
+At a distance, for things already named, so a long text doesn't crowd the diagram's statements:
+
+```
+node proxy "Proxy"
+node orders "Orders"  right of proxy
+edge to-orders proxy -> orders
+
+description for orders and to-orders """
+Owns the order records.
+
+- `/orders` lands here
+- see [the docs](https://example.com/orders)
+"""
+```
+
+Or named, for any box or line to take by that name:
+
+```
+description replica """
+One of three identical replicas behind the proxy.
+"""
+
+node r1 "Replica 1"  description: replica
+node r2 "Replica 2"  description: replica  below r1
+```
+
+`description:` takes the text quoted, or a description's name unquoted, as `icon:` takes letters quoted and a picture's name bare. `description for` names boxes and named lines, separated by commas or `and`; a name that is neither is refused. A long text goes between `"""` marks, where line breaks are kept and the indentation every line shares is taken off.
+
+The text is Markdown, in part: paragraphs, lists (`-`, `*` or `1.`), `**bold**`, `*italic*` or `_italic_`, `` `code` `` and links, `[text](https://…)`. Anything else shows as written. A link goes to an `https:`, `http:` or `mailto:` address or a path; any other is refused.
+
+**In an SVG**, the description is the thing's hover text, with the marks taken out and each link's address after its text. Writing one never moves anything in the drawing.
+
+A thing has one description: two on one statement, or one there and another from `description for`, are refused. So is a name declared twice. A style and a default carry none.
 
 ## Errors and findings
 
@@ -1215,7 +1290,7 @@ reladraw render arch.reladraw --page
 
 `--page` writes `arch.html`: one self-contained file, for opening in a browser, attaching or committing, that needs nothing running and fetches nothing. The page is in the diagram's own colors, so a dark diagram doesn't sit on a white page, and it is headed with `diagram title:`, or the file's name when there is none. Under the title it says which file it was drawn from and when, such as "drawn from arch.reladraw, 2026-11-05 14:32": the page is a snapshot of the file, and is behind it once the file is edited, until it is rendered again. Drag to pan; scroll, pinch or double-click to zoom; Fit shows the whole diagram and 100% returns it to its own scale. The zoom is always shown, with "Fit" beside it while the whole diagram is in view. There is a full-screen button. The Save menu saves the page itself, as it was written rather than at its current zoom; the `.reladraw` source it was drawn from; or the picture as an SVG or a PNG, as `render` would draw it; or copies the SVG. Each is named after the source file: `arch.html`, `arch.reladraw`, `arch.svg`, `arch.png`. In Chrome and Edge it asks where to save; other browsers put the file with their downloads. The findings are listed beside it in a panel that folds away, and clicking one lights up what its line drew. A box's or a line's name shows under the pointer.
 
-**A click on a box or a line selects it**, and never follows a link. The selection is amber; what feeds it is green and what it feeds is red, the lines dashed and moving the way they run; the rest dims. A line runs from the end without an arrowhead when only one end has one, and otherwise from the end written first. The panel beside the drawing names the selection and lists its links, each with its badge, and the boxes it comes from and goes to; a link opens in a new tab, and a box selects it. One line out lights by default, and the panel's button lights everything upstream and downstream. A box with links underlines its text under the pointer. A click on the background or Escape clears the selection.
+**A click on a box or a line selects it**, and never follows a link. The selection is amber; what feeds it is green and what it feeds is red, the lines dashed and moving the way they run; the rest dims. A line runs from the end without an arrowhead when only one end has one, and otherwise from the end written first. The panel beside the drawing names the selection and lists its links, each with its badge, and the boxes it comes from and goes to; a link opens in a new tab, and a box selects it. One line out lights by default, and the panel's button lights everything upstream and downstream. Its description, if it has one, comes last ([Descriptions](#descriptions)). A box with links underlines its text under the pointer. A click on the background or Escape clears the selection.
 
 Keys: `+` and `-` zoom, `0` fits, `1` is actual size, `f` is full screen, Escape clears the selection.
 
@@ -1290,6 +1365,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `gather-children` | ✓ | | ✓ | | where the children sit in spare room |
 | `heading` | ✓ | | ✓ | | the child that is the title |
 | `join-with` | ✓ | ✓ | ✓ | | the thing this moves with |
+| `description` | ✓ | ✓ | ✓ | ✓ | text for the page's panel ([Descriptions](#descriptions)) |
 | `padding` | ✓ | | ✓ | | room inside the edge |
 | `padding-top`, `-right`, `-bottom`, `-left` | ✓ | | ✓ | | one side's room, over `padding` |
 | `width`, `height`, `min-…`, `max-…` | ✓ | | ✓ | | a stated size |
@@ -1337,6 +1413,20 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.25.0**
+
+- **A link can be declared once and used by name**: `url orders-docs "https://…" (name: "Docs", icon: "D")`, then `url: orders-docs`, so long addresses stay out of the statements that link to them. A declaration may list several links, declared names among them, and a `url:` mixes names and quoted addresses. See [Destinations](#destinations).
+
+- **Marked text takes its style's size**: with `style dim  text: (size: small)`, `"Some Node / [dim]something[/dim]"` draws the second line small, and a line that is all small is spaced as one. Markup used to take only a style's color, and a style with only a size was refused as saying nothing about text. See [Markup](#markup).
+
+- **`2 right of and 3 below a`** is accepted, the same as `2 right and 3 below a`. It used to be refused with a message that took `and` for the name of a box.
+
+- **`right of a and 2 above c top` is two placements**: `b` right of `a`, and its bottom 2 above `c`'s top. A distance and a direction after `and` or a comma used to add a point to the targets, so `b` was placed right of the region round `a` and that point, with no warning, and the second half looked ignored. A point meant as a target is named first with `point`.
+
+- **A box or a line can have a description**, shown in the panel when it is selected on a `--page` page, and as hover text in an SVG. It is written on the thing, `description: "Forwards each request by its path."`; at a distance, `description for orders and to-orders """…"""`; or named, `description replica """…"""`, and taken with `description: replica`. The text is a small part of Markdown: paragraphs, lists, bold, italic, code and links.
+
+- **A line's text can rise a stated amount off its line, or part of the way clear.** `above edge` and its kin always moved a text all the way clear, which on a slanted line can be well away from it. `(1 above edge)` now raises it one unit from its spot on the line, still crossing the line if that is short of clear, and `(1/2 clear above edge)` moves it half the way. `(1 above edge)` used to be refused, pointing to `edge-gap:`.
 
 **0.24.0**
 

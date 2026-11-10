@@ -18,6 +18,7 @@ import type {
   EdgeTextStmt,
   TextSide,
   IconStmt,
+  DescriptionStmt,
   Mark,
   MarkText,
   Part,
@@ -28,12 +29,15 @@ import type {
   RegionStmt,
   Stmt,
   StyleStmt,
+  UrlStmt,
   Way,
   ViaEntry,
   ViaStop,
 } from './ast.js';
 import {
   BUNDLE_KEYS,
+  DESCRIPTION_NAME_KEY,
+  LINK_NAMES_KEY,
   COLOR_KEYS,
   POINT_KEYS,
   REGION_KEYS,
@@ -72,7 +76,7 @@ import { CHECK_DEFAULTS, CHECK_KINDS, setCheck } from './checks.js';
 import { SourceError } from './errors.js';
 import { STATEMENT_KEYWORDS } from './grammar.js';
 import { isAttrKey, nameMark, OpenString, tokenizeLine, type Token } from './lexer.js';
-import { LINKS_KEY, type Link, type LinkIcon } from './links.js';
+import { LINKS_KEY, type Link, type LinkEntry, type LinkIcon } from './links.js';
 import { SHAPE_SETTINGS } from './outline.js';
 import { checkOpacity } from './place.js';
 
@@ -263,10 +267,12 @@ function parseStatement(tokens: Token[], line: number): Stmt {
 
   // What a line break inside a node's or an edge's text should mean has not
   // been decided, so until it is a `"""` string is refused anywhere but the one
-  // place it was made for, rather than drawn in some way that might change.
-  if (keyword.text !== 'icon' && tokens.some((token) => token.triple)) {
+  // places it was made for, rather than drawn in some way that might change:
+  // an icon's SVG and a description's text.
+  const holdsTriple = keyword.text === 'icon' || keyword.text === 'description';
+  if (!holdsTriple && tokens.some((token, index) => token.triple && tokens[index - 1]?.text !== 'description:')) {
     throw new SourceError(
-      'a """ string holds the SVG of an `icon` declaration and is not accepted anywhere else yet — ' +
+      'a """ string holds an `icon` declaration\'s SVG or a description\'s text, and is not accepted anywhere else yet — ' +
         'use ordinary quotes here',
       line,
     );
@@ -275,6 +281,10 @@ function parseStatement(tokens: Token[], line: number): Stmt {
   switch (keyword.text) {
     case 'icon':
       return parseIcon(tokens, line);
+    case 'description':
+      return parseDescription(tokens, line);
+    case 'url':
+      return parseUrl(tokens, line);
     case 'node':
       return parseNode(tokens, line);
     case 'edge':
@@ -839,12 +849,34 @@ function readAttr(
     // its cards, each named in a bracket after it. The first stays under `url`,
     // so whatever follows one link follows the first of several; the whole
     // list is kept beside it only when there is more than a bare address.
+    // A declared link's name is kept with the list until `resolve` knows what
+    // it declares; `url` holds the first entry meanwhile, so a style's or a
+    // default's refusal of a destination sees one either way.
     const read = readLinks(tokens, at + 1, subject, line);
-    setOnce(attrs, key, read.links[0]!.href, subject, line, { key, value: quoteOf });
-    if (read.links.length > 1 || read.links.some((link) => link.name !== undefined || link.icon !== undefined)) {
+    const first = read.links[0]!;
+    setOnce(attrs, key, 'href' in first ? first.href : first.ref, subject, line, { key, value: quoteOf });
+    if (read.links.some((link) => 'ref' in link)) {
+      attrs[LINK_NAMES_KEY] = JSON.stringify(read.links);
+    } else if (read.links.length > 1 || read.links.some((link) => 'href' in link && (link.name !== undefined || link.icon !== undefined))) {
       attrs[LINKS_KEY] = JSON.stringify(read.links);
     }
     return read.next;
+  }
+  if (key === 'description') {
+    // Quoted, the text itself; unquoted, the name of a `description` statement,
+    // as `icon:` takes letters quoted and a picture's name bare.
+    const value = tokens[at + 1];
+    if (!value || isAttrKey(value) || value.text === '(' || value.text === ')') {
+      throw new SourceError(
+        `${subject}: description: takes its text in quotes, \`description: "What this does"\`, or the name of a \`description\` statement`,
+        line,
+      );
+    }
+    const had = attrs[DESCRIPTION_NAME_KEY] ?? attrs[key];
+    if (had !== undefined) throw new SourceError(`${subject}: "description" is written twice — keep one`, line);
+    if (value.quoted) attrs[key] = descriptionText(value.text);
+    else attrs[DESCRIPTION_NAME_KEY] = value.text;
+    return at + 2;
   }
   if (key === 'title') {
     // A title is a text, and every text is quoted. Unquoted, its first word
@@ -1177,14 +1209,33 @@ function readEdgeTextBracket(
       continue;
     }
     // `2 above s1`: the distance from the box, written in front as a box writes it.
-    const distance = /^\d*\.?\d+$/.test(word) && /^(above|below|left|right)$/.test(plain(tokens[i + 1]) ?? '') ? word : undefined;
-    if (distance !== undefined) {
-      if (place.gap !== undefined) throw new SourceError(`${about} says its distance from the box twice (gap: ${place.gap}, ${distance} in front) — keep one`, line);
-      place.gap = distance;
-      seen.add('gap');
+    // `2 above edge`: how far the text rises from its spot on the line.
+    // `clear above edge`, `1/2 clear above edge`: the rise that clears the line, or a fraction of it.
+    const isDirection = (token: Token | undefined): boolean => /^(above|below|left|right)$/.test(plain(token) ?? '');
+    const distance = /^\d*\.?\d+$/.test(word) && isDirection(tokens[i + 1]) ? word : undefined;
+    let clear: { fraction: number; written: string } | undefined;
+    if (word === 'clear' && isDirection(tokens[i + 1])) {
+      clear = { fraction: 1, written: 'clear' };
       i += 1;
+    } else if (plain(tokens[i + 1]) === 'clear' && isDirection(tokens[i + 2]) && fractionValue(word) !== undefined) {
+      const fraction = fractionValue(word)!;
+      if (fraction <= 0) throw new SourceError(`${about}: "${word} clear" — say how much of the way clear, more than none, such as 1/2 clear`, line);
+      clear = { fraction, written: `${word} clear` };
+      i += 2;
+    } else if (/^\d+\/\d+$/.test(word) && isDirection(tokens[i + 1])) {
+      const value = fractionValue(word);
+      const decimal = value === undefined ? word : String(Math.round(value * 1000) / 1000);
+      const way = plain(tokens[i + 1])!;
+      const two = way === 'left' || way === 'right';
+      const onEdge = plain(tokens[i + (two ? 3 : 2)]) === 'edge';
+      throw new SourceError(
+        `${about}: "${word} ${way}" — a distance is a number, \`${decimal} ${way}${two ? ' of' : ''}\`` +
+          (onEdge ? `; for part of the way clear of the line, write \`${word} clear ${way}${two ? ' of' : ''} edge\`` : ''),
+        line,
+      );
     }
-    const said = distance === undefined ? word : plain(tokens[i])!;
+    if (distance !== undefined) i += 1;
+    const said = distance === undefined && clear === undefined ? word : plain(tokens[i])!;
     let relation: 'straight' | TextSide;
     if (said === 'straight') {
       const way = plain(tokens[i + 1]);
@@ -1207,12 +1258,23 @@ function readEdgeTextBracket(
       );
     }
     const besideIt = relation !== 'straight' && plain(tokens[i]) === 'edge';
-    if (besideIt && distance !== undefined) {
-      throw new SourceError(`${about}: "${distance} ${relation} edge" — the distance off the line is written \`edge-gap: ${distance}\``, line);
+    if (clear !== undefined && !besideIt) {
+      throw new SourceError(
+        `${about}: "${clear.written}" says how far off its own line a text moves, so it goes with \`${relation} edge\`` +
+          (relation === 'straight' ? '' : `, not a box — for a distance from the box, write it in front, \`2 ${relation} …\``),
+        line,
+      );
+    }
+    if (distance !== undefined && !besideIt) {
+      if (place.gap !== undefined) throw new SourceError(`${about} says its distance from the box twice (gap: ${place.gap}, ${distance} in front) — keep one`, line);
+      place.gap = distance;
+      seen.add('gap');
     }
     if (besideIt) {
       once('a side of the line', `${relation} edge`);
       place.beside = relation as TextSide;
+      if (distance !== undefined) place.rise = { distance, written: `${distance} ${relation} edge` };
+      if (clear !== undefined) place.rise = { clear: clear.fraction, written: `${clear.written} ${relation} edge` };
       i += 1;
     } else {
       if (!tokens[i] || plain(tokens[i]) === ')' || isAttrKey(tokens[i]!)) {
@@ -1280,6 +1342,12 @@ function readEdgeTextBracket(
     if (other) {
       throw new SourceError(`${about}: "${written}" and "${other.said}" both say where it sits ${placement.axis === 'x' ? 'across' : 'up and down'} — keep one`, line);
     }
+  }
+  if (place.edgeGap !== undefined && place.rise?.distance !== undefined) {
+    throw new SourceError(
+      `${about}: "${place.rise.written}" and "edge-gap: ${place.edgeGap}" both say how far off the line it sits — keep one`,
+      line,
+    );
   }
   if (place.edgeGap !== undefined && !place.beside) {
     throw new SourceError(`${about}: edge-gap: is the distance off the line for a text beside it, and it says no side — add \`right of edge\` or another`, line);
@@ -2228,6 +2296,69 @@ function parseIcon(head: Token[], line: number): IconStmt {
 }
 
 /**
+ * A description's text as written between `"""` marks, without the line break
+ * after the opening marks, the blank lines at either end, or the indentation
+ * every line shares, so a description indented under its statement reads as
+ * Markdown from the left margin.
+ */
+export function descriptionText(raw: string): string {
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n');
+  while (lines.length > 0 && lines[0]!.trim() === '') lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
+  const indents = lines.filter((one) => one.trim() !== '').map((one) => one.match(/^[ \t]*/)![0].length);
+  const shared = indents.length === 0 ? 0 : Math.min(...indents);
+  return lines.map((one) => one.slice(shared).trimEnd()).join('\n');
+}
+
+/**
+ * `description for proxy, cache and api """…"""` or `description notes """…"""`.
+ * `for` keeps the two apart: without it a misspelled box name would silently
+ * declare a description nothing uses.
+ */
+function parseDescription(head: Token[], line: number): DescriptionStmt {
+  const textAt = head.findIndex((token, index) => index > 0 && token.quoted);
+  const textToken = textAt === -1 ? undefined : head[textAt]!;
+  const shape = 'write `description for proxy """…"""` to describe things already named, or `description notes """…"""` to declare one for `description: notes`';
+  if (head[1] === undefined) throw new SourceError(`description needs a name or \`for\` — ${shape}`, line);
+  if (textToken === undefined) {
+    throw new SourceError('a description needs its text, between """ marks or in quotes, after what it names', line);
+  }
+  if (textAt + 1 < head.length) {
+    throw new SourceError(`a description ends with its text — "${head[textAt + 1]!.text}" is left over`, line);
+  }
+  const text = descriptionText(textToken.text);
+  if (text.trim() === '') throw new SourceError('a description\'s text is empty', line);
+  if (follows(head, 1, 'for')) {
+    const targets: string[] = [];
+    for (let next = 2; next < textAt; next++) {
+      const token = head[next]!;
+      if (token.text === 'and' && targets.length > 0) continue;
+      if (isAttrKey(token) || token.text === '(' || token.text === ')') {
+        throw new SourceError(`description for: expected the names of boxes or lines, found "${token.text}"`, line);
+      }
+      const name = token.text.replace(/,$/, '');
+      if (name === '') continue;
+      if (targets.includes(name)) throw new SourceError(`description for: "${name}" is named twice — keep one`, line);
+      targets.push(name);
+    }
+    if (targets.length === 0) throw new SourceError(`description for names nothing — ${shape}`, line);
+    return { kind: 'description', targets, text, line };
+  }
+  const name = requireName(head[1], 'description', line, head[2]);
+  if (textAt !== 2) {
+    throw new SourceError(
+      `description "${name}" takes one name — to describe several things at once, write \`description for ${head
+        .slice(1, textAt)
+        .map((token) => token.text.replace(/,$/, ''))
+        .filter((one) => one !== 'and')
+        .join(', ')} """…"""\``,
+      line,
+    );
+  }
+  return { kind: 'description', name, text, line };
+}
+
+/**
  * `diagram <attributes>` — no name, because a file holds one diagram. Unknown
  * keys are refused rather than ignored: a misspelt diagram-wide setting that
  * silently does nothing is the kind of thing an author stares at for a while.
@@ -2335,6 +2466,9 @@ function parseDefault(head: Token[], line: number): DefaultStmt {
 function defaultRefusal(kind: DefaultTarget, key: string): string {
   const takes = `it takes ${DEFAULT_KEYS[kind].map((k) => `${k}:`).join(', ')}`;
   if (key === 'url') return `and a destination belongs to one thing rather than to every one of a kind`;
+  if (key === 'description') {
+    return 'and a description belongs to the things it describes — to give several one text, write `description for a, b and c """…"""`';
+  }
   if (key === 'heading') {
     return "and a heading names one node's own child, so it is written on that node";
   }
@@ -2444,11 +2578,13 @@ function readPlacement(
         line,
       );
     }
-    // `3 below and 2 right of a`: a different distance on each axis.
-    const other = tokens[at + 3];
-    if (follows(tokens, at + 2, 'and') && other && !other.quoted && /^\d*\.?\d+(px)?$/.test(other.text) && tokens[at + 4] && isDirection(tokens[at + 4]!.text)) {
+    // `3 below and 2 right of a`: a different distance on each axis. The first
+    // half may keep its `of`, `2 right of and 3 below a`.
+    const of = follows(tokens, at + 2, 'of') && /left|right/.test(tokens[at + 1]!.text) ? 1 : 0;
+    const other = tokens[at + 3 + of];
+    if (follows(tokens, at + 2 + of, 'and') && other && !other.quoted && /^\d*\.?\d+(px)?$/.test(other.text) && tokens[at + 4 + of] && isDirection(tokens[at + 4 + of]!.text)) {
       const first = tokens[at + 1]!.text as Direction;
-      const second = tokens[at + 4]!.text as Direction;
+      const second = tokens[at + 4 + of]!.text as Direction;
       const vertical = (d: Direction) => d === 'above' || d === 'below';
       const horizontal = (d: Direction) => d === 'left' || d === 'right';
       if (!((vertical(first) && horizontal(second)) || (horizontal(first) && vertical(second)))) {
@@ -2458,7 +2594,7 @@ function readPlacement(
           line,
         );
       }
-      const read = readPlacement(tokens, at + 3, line, subject, true);
+      const read = readPlacement(tokens, at + 3 + of, line, subject, true);
       if (read.placement.kind !== 'offset') return read;
       const y = vertical(first) ? first : second;
       const x = vertical(first) ? second : first;
@@ -2886,37 +3022,107 @@ function checkColorWord(value: string, subject: string, line: number): void {
 }
 
 const URL_QUOTES =
-  'a url is written in quotes — `url: "https://example.com"`. Without them everything from the `//` onwards is read as a comment';
+  'a url is written in quotes — `url: "https://example.com"`. Without them everything from the `//` onwards is read as a comment. ' +
+  'An unquoted word is the name of a `url` statement';
 
 /**
- * `url: "https://a" (name: "A", icon: "A" (fill: red))  "https://b"`: one or
- * more quoted addresses, each with an optional bracket after it. The values in
+ * `url: "https://a" (name: "A", icon: "A" (fill: red))  "https://b"  docs`: one
+ * or more quoted addresses, each with an optional bracket after it, and the
+ * bare names of `url` statements, which take no bracket. The values in
  * a link's bracket are a name (a text, so quoted) and a badge, which is quoted
  * letters or the unquoted name of a picture. `readBracket` takes only unquoted
  * values and no bracket inside a bracket, so links are read here.
  */
-function readLinks(tokens: Token[], start: number, subject: string, line: number): { links: Link[]; next: number } {
+function readLinks(tokens: Token[], start: number, subject: string, line: number): { links: LinkEntry[]; next: number } {
   // `url: https://example.com` loses everything from the `//` onwards, because
   // `//` opens a comment — so the value is either missing entirely or is the
   // bare scheme, which reads as another attribute key. Neither report says
   // what is wrong, and the remedy is punctuation rather than a missing word.
-  if (!tokens[start]?.quoted) throw new SourceError(`${subject}: ${URL_QUOTES}`, line);
-  const links: Link[] = [];
+  if (!tokens[start] || !(tokens[start]!.quoted || isLinkName(tokens, start))) {
+    throw new SourceError(`${subject}: ${URL_QUOTES}`, line);
+  }
+  const links: LinkEntry[] = [];
   let i = start;
-  while (tokens[i]?.quoted) {
-    const link: Link = { href: tokens[i]!.text };
+  while (tokens[i]?.quoted || isLinkName(tokens, i)) {
+    const token = tokens[i]!;
     i += 1;
+    if (!token.quoted) {
+      // A declared link's name and badge belong to the destination, so the
+      // same link can't be shown one way on one box and another way on the next.
+      if (follows(tokens, i, '(')) {
+        throw new SourceError(
+          `${subject}: the link "${token.text}" is declared with its own name and badge, so a bracket after it here is refused — ` +
+            'to show it differently, declare another `url` with the bracket you want',
+          line,
+        );
+      }
+      if (token.text.endsWith(',')) {
+        throw new SourceError(`${subject}: links are written one after another, without commas — \`url: ${token.text.slice(0, -1)} …\``, line);
+      }
+      if (links.some((had) => 'ref' in had && had.ref === token.text)) {
+        throw new SourceError(`${subject}: "${token.text}" is linked twice in one \`url:\` — keep one`, line);
+      }
+      links.push({ ref: token.text });
+      continue;
+    }
+    const link: Link = { href: token.text };
     if (follows(tokens, i, '(')) {
       const read = readLinkBracket(tokens, i, link.href, subject, line);
       Object.assign(link, read.link);
       i = read.next;
     }
-    if (links.some((had) => had.href === link.href)) {
+    if (links.some((had) => 'href' in had && had.href === link.href)) {
       throw new SourceError(`${subject}: "${link.href}" is linked twice in one \`url:\` — keep one`, line);
     }
     links.push(link);
   }
   return { links, next: i };
+}
+
+/**
+ * A bare word in a list of links is a declared link's name, unless it opens a
+ * placement, which may follow a `url:` on the same statement. A `url`
+ * declaration refuses those words as names, so the two never meet.
+ */
+function isLinkName(tokens: Token[], at: number): boolean {
+  const token = tokens[at];
+  if (!token || token.quoted || isAttrKey(token)) return false;
+  if (token.text === '(' || token.text === ')' || token.text === ',') return false;
+  return !startsPlacement(token, tokens[at + 1]) && !PLACEMENT_LEADS.includes(token.text);
+}
+
+/** Words that open a clause after a statement's attributes without `startsPlacement` knowing them. */
+const PLACEMENT_LEADS = ['stays', 'and', 'x', 'y'];
+
+/**
+ * `url orders-docs "https://…" (name: "Docs", icon: "D")`, or a bundle:
+ * `url orders-links orders-docs orders-code "https://…" (name: "Wiki")`.
+ */
+function parseUrl(head: Token[], line: number): UrlStmt {
+  const shape = 'write `url orders-docs "https://…" (name: "Docs")`, then `url: orders-docs` on whatever links to it';
+  const nameToken = head[1];
+  if (nameToken === undefined || nameToken.quoted) throw new SourceError(`url needs a name — ${shape}`, line);
+  if (isAttrKey(nameToken)) {
+    throw new SourceError(`\`url\` starts a statement that declares a link; to link this, \`${nameToken.text}\` goes on a box or a line as \`url:\` — ${shape}`, line);
+  }
+  const name = requireName(nameToken, 'url', line, head[2]);
+  if (startsPlacement(nameToken, head[2]) || PLACEMENT_LEADS.includes(name)) {
+    throw new SourceError(`url "${name}": "${name}" can't name a link, because after \`url:\` it would start a placement — choose another name`, line);
+  }
+  const subject = `url "${name}"`;
+  if (head[2] === undefined) throw new SourceError(`${subject} links to nothing — ${shape}`, line);
+  // The links are one clause to the formatter, so a bundle's names stay
+  // together after its own name instead of lining up as part of it.
+  clauseStarts?.add(head[2]);
+  const read = readLinks(head, 2, subject, line);
+  const stray = head[read.next];
+  if (stray !== undefined) {
+    throw new SourceError(
+      `${subject}: "${stray.text}" is not a link — a \`url\` statement holds quoted addresses, each with an optional bracket, and the names of other \`url\` statements`,
+      line,
+    );
+  }
+  return { kind: 'url', name, entries: read.links, line };
 }
 
 function readLinkBracket(
@@ -3084,14 +3290,31 @@ function readTargets(
     targets.push(read.target);
     i = read.next;
 
+    // `right of a and 2 above c top`: a distance and a direction after the
+    // joiner start the next placement, not a point as another target. A point
+    // meant as a target is named first (design.org 4.5).
     if (follows(tokens, i, 'and')) {
+      if (opensMeasuredPlacement(tokens, i + 1)) return { targets, next: i + 1 };
       i += 1;
       continue;
     }
+    if (read.listed && opensMeasuredPlacement(tokens, i)) return { targets, next: i };
     comma = read.listed ? nameTarget(read.target) : undefined;
     if (read.listed) continue;
     return { targets, next: i };
   }
+}
+
+/**
+ * Whether a placement written with its distance starts at `at`: `2 above c
+ * top`, or measured from this box's part, `center 2 above c center`.
+ */
+function opensMeasuredPlacement(tokens: Token[], at: number): boolean {
+  const word = tokens[at];
+  if (!word || word.quoted) return false;
+  if (isPart(word.text)) return opensPartPlacement(tokens, at);
+  const direction = tokens[at + 1];
+  return /^-?\d*\.?\d+(px)?$/.test(word.text) && direction !== undefined && !direction.quoted && isDirection(direction.text);
 }
 
 /**

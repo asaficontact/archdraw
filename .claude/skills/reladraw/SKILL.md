@@ -15,7 +15,7 @@ That matters here specifically. You can't see the SVG you produced. With auto-la
 
 ## Check it is installed, and the same version as this skill
 
-This skill teaches reladraw 0.24.0. Once per session, before the first render, run:
+This skill teaches reladraw 0.25.0. Once per session, before the first render, run:
 
 ```
 reladraw --version
@@ -117,7 +117,7 @@ node grinder "Grinder / [dim]medium-fine[/dim]"
 node note "a longer remark that folds" (size: small, wrap: 30)  shape: none  below grinder (gap: tight)
 ```
 
-`[dim]…[/dim]` borrows a style's look for a stretch of text. A style hangs the bracket off a key: `style aside  text: (size: small, color: theme-muted)`. **Always give bare text a `(wrap: n)`**, or a sentence is one long line across whatever is beside it.
+`[dim]…[/dim]` borrows a style's text color and size for a stretch of text; a line that is all small is spaced as a small line. A style hangs the bracket off a key: `style aside  text: (size: small, color: theme-muted)`. **Always give bare text a `(wrap: n)`**, or a sentence is one long line across whatever is beside it.
 
 ### Lines
 
@@ -170,7 +170,30 @@ node api_link "github.com/acme/api"  shape: none  right of api
 node api "API server"  url: "https://github.com/acme/api"
 ```
 
-The address is never drawn; a reader follows it by clicking. A line with no text can't carry one, and neither can a style. Quote the value, since an unquoted `//` starts a comment.
+The address is never drawn; a reader follows it by clicking. A line with no text can carry one too, but a style can't. Quote the value, since an unquoted `//` starts a comment.
+
+When addresses are long, or one is used on several things, declare each once with its name and badge and use it by name, so the statements stay readable. A declaration can also list several links for things that share them:
+
+```
+url orders-docs   "https://docs.example.com/orders/v2/reference" (name: "Docs")
+url orders-code   "https://github.com/example/orders/tree/main/services/api" (name: "Code")
+url orders-links  orders-docs  orders-code
+
+node api "Orders API"  url: orders-links
+node worker "Worker"   url: orders-docs
+```
+
+### Descriptions
+
+```
+node proxy "Proxy"  description: "Forwards each request by its path."
+
+description for orders and to-orders """
+Owns the order records. See [the docs](https://example.com/orders).
+"""
+```
+
+**Notes about a thing go in its description, not in a box beside it.** A description is shown when the thing is selected on the `--page` page, and as hover text in an SVG; it is never drawn, so it can run to paragraphs and lists in Markdown. Write a short one on the statement, and a long one with `description for`, after the diagram's statements, so it doesn't crowd them. When several things share one text, name them all after `for`.
 
 **Offer links; don't add them unasked.** When the things in a diagram have real web addresses, such as the files of a pull request on GitHub, end your reply with one line offering to link each node to its file. Never guess an address, and don't link to files on the local machine.
 
