@@ -1,4 +1,4 @@
-# Syntax reference — 0.27.0
+# Syntax reference — 0.28.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1021,7 +1021,7 @@ guide node column ""  below a  width: 10  height: 20
 
 **A guide does everything its kind does except draw.** It places things, holds children, is placed against, and shapes the lines through it. A `guide node` container's children are drawn; only its box and title aren't. That gives a reserved empty space, a column to align against, or a group with no outline.
 
-Guides are shown by whoever renders the file, not by the file: `--guides` on the command line, the Guides box in the playground. A file that explains its own construction, such as a tutorial, may say `diagram  guides: show`. Shown guides are dashed, in the theme's secondary color, and unfilled. Their look changes per kind with `default guide node`, `default guide edge`, `default guide point` and `default guide region`; a bare `default guide` is refused, listing the four.
+Guides are shown by whoever renders the file, not by the file: `--guides` on the command line, the Guides switch in View on the page and in the playground. A file that explains its own construction, such as a tutorial, may say `diagram  guides: show`. Shown guides are dashed, in the theme's secondary color, and unfilled. Their look changes per kind with `default guide node`, `default guide edge`, `default guide point` and `default guide region`; a bare `default guide` is refused, listing the four.
 
 A container styled with no border is different: the same picture with guides hidden, but showing guides never reveals it. A guide box draws nothing, so it is left out of the overlap and overflow findings.
 
@@ -1257,7 +1257,7 @@ The file and line of the statement at fault, `warning` in a fixed spot, the kind
 
 Kinds are turned on or off by name, in the file or on the command line: `diagram  checks: (edge-crossings: on, crowded-edge-ends: off)`, or `--checks "edge-crossings: on"`. A kind not mentioned keeps its default. A deliberate overlap is stated on the thing itself (`overlap: allow`), not turned off for the whole file.
 
-In the playground, where you are looking at the picture, checks run only when you press Check. The findings are listed under the diagram, apart from errors, and clicking one selects its line.
+On the page and in the playground, the findings are listed in the side panel and redone as you type; an error that stops the diagram drawing heads the list. Clicking a finding lights what its statement drew, and, with the source shown, selects its line.
 
 ## The command line
 
@@ -1278,6 +1278,8 @@ reladraw check diagram.reladraw
 | `--no-checks` | print no findings; errors still print |
 | `-v`, `--version` | print the version |
 
+`reladraw serve diagram.reladraw` opens a page for the diagram that redraws whenever the file changes and can edit and save it, `reladraw serve` with no file opens the playground on this machine, and `reladraw note` describes a change made to a served file; see [A page that follows its file](#a-page-that-follows-its-file).
+
 `reladraw install-skill` installs the agent skill that came with this version of reladraw, for every project, by running `npx skills add` on it with `--copy`. `--claude` installs it in `~/.claude/skills`, `--agents` in `~/.agents/skills` (Codex and others), and both may be given; with neither, it asks, or, with no terminal to ask in, refuses and names them. For any other agent it prints the `skills` command to run.
 
 The output is a standalone SVG: every picture is drawn into it as path data, never from a font or a linked file. A web page can draw a diagram in place with `<reladraw-diagram>`; see "In a web page" in the README.
@@ -1288,17 +1290,47 @@ The output is a standalone SVG: every picture is drawn into it as path data, nev
 reladraw render arch.reladraw --page
 ```
 
-`--page` writes `arch.html`: one self-contained file, for opening in a browser, attaching or committing, that needs nothing running and fetches nothing. The page is in the diagram's own colors, so a dark diagram doesn't sit on a white page, and it is headed with `diagram title:`, or the file's name when there is none. Under the title it says which file it was drawn from and when, such as "drawn from arch.reladraw, 2026-11-05 14:32": the page is a snapshot of the file, and is behind it once the file is edited, until it is rendered again. Drag to pan, or press `g` to grab the diagram and pan it with the arrow keys or `h` `j` `k` `l` (Shift for bigger steps, `g` or Escape to let go); scroll, pinch or double-click to zoom; Fit shows the whole diagram and 100% returns it to its own scale. The zoom is always shown, with "Fit" beside it while the whole diagram is in view. There is a full-screen button. The Save menu saves the page itself, as it was written rather than at its current zoom; the `.reladraw` source it was drawn from; or the picture as an SVG or a PNG, as `render` would draw it; or copies the SVG. Each is named after the source file: `arch.html`, `arch.reladraw`, `arch.svg`, `arch.png`. In Chrome and Edge it asks where to save; other browsers put the file with their downloads. The findings are listed beside it, and clicking one lights up what its line drew. A box's or a line's name shows under the pointer.
+`--page` writes `arch.html`: one self-contained file, for opening in a browser, attaching or committing, that needs nothing running and fetches nothing. The page is in the diagram's own colors, so a dark diagram doesn't sit on a white page, and it is headed with `diagram title:`, or the file's name when there is none. Under the title it says which file it was drawn from and when, such as "drawn from arch.reladraw, 2026-11-05 14:32": the page is a snapshot of the file, and is behind it once the file is edited, until it is rendered again. Drag to pan, or press `g` to grab the diagram and pan it with the arrow keys or `h` `j` `k` `l` (Shift for bigger steps, `g` or Escape to let go); scroll, pinch or double-click to zoom; Fit shows the whole diagram and 100% returns it to its own scale. The zoom is always shown, with "Fit" beside it while the whole diagram is in view. There is a full-screen button. The Export menu saves the page itself, as it was written rather than at its current zoom; the `.reladraw` source it was drawn from; or the picture as an SVG or a PNG, as `render` would draw it; or copies the SVG. Each is named after the source file: `arch.html`, `arch.reladraw`, `arch.svg`, `arch.png`. In Chrome and Edge it asks where to save; other browsers put the file with their downloads. The findings are listed beside it, and clicking one lights up what its line drew. A box's or a line's name shows under the pointer.
 
 **The View menu** holds the page's settings, each row a switch that says on or off. **Theme** opens a list of themes, and draws the diagram in the one picked, as `--theme` would, keeping the view and the selection; a page or text color the file states holds in every theme. It starts on "Diagram's theme", the one the file names (or dark), which follows the file when it is rendered again. A theme picked by name is the reader's: it holds on every reladraw page in that browser, whatever the file says, until "Diagram's theme" is picked again. **Side panel** shows or hides the panel beside the drawing, which then stays hidden whatever is selected. **Auto-hide panel** shows it only while something is selected or the findings are open, and the findings start folded. Both are remembered by the browser for every page. **Findings**, with their count, open or fold the findings in the panel. **Guides**, with their count, draws the [guides](#guides) as `--guides` does; it starts as the file or `--guides` says, and a change lasts for that page only. Save SVG, PNG and Copy SVG take the theme and the guides as shown.
 
-**From the keyboard**, `m` reaches the bar: it is ringed, each control shows its letter, and a strip under it names where the keys are and which keys work there. `v` opens View, `s` opens Save, and `f` goes full screen. In a menu a row's letter does what the row does, and the menu stays open, so several can be changed in turn: in View, `t` theme, `p` side panel, `a` auto-hide, `f` findings and `g` guides; in Save, `p` this page, `r` the source, `s` SVG, `n` PNG and `c` Copy SVG. The arrow keys and Enter work too. In the theme list the arrows draw the diagram in each theme as they reach it, and Enter keeps the one reached. Backspace steps back one level at a time: from the theme list to View, from a menu to the bar, from the bar to the diagram, and then lets go of a grab, a lit finding and the selection in turn. Escape goes straight back to the plain diagram from anywhere: every menu closes, a theme tried and not kept is dropped, and a grab, a lit finding and the selection are all cleared. With the menus closed, `p` shows or hides the side panel and `f` goes full screen; `+` `-` `0` `1` zoom at every level.
+**From the keyboard**, `m` reaches the bar: it is ringed, each control shows its letter, and a strip under it names where the keys are and which keys work there. `v` opens View, `x` opens Export, and `f` goes full screen. In a menu a row's letter does what the row does, and the menu stays open, so several can be changed in turn: in View, `t` theme, `p` side panel, `a` auto-hide, `f` findings and `g` guides; in Export, `p` this page, `r` the source, `s` SVG, `n` PNG and `c` Copy SVG. The arrow keys and Enter work too. In the theme list the arrows draw the diagram in each theme as they reach it, and Enter keeps the one reached. Backspace steps back one level at a time: from the theme list to View, from a menu to the bar, from the bar to the diagram, and then lets go of a grab, a lit finding and the selection in turn. Escape goes straight back to the plain diagram from anywhere: every menu closes, a theme tried and not kept is dropped, and a grab, a lit finding and the selection are all cleared. With the menus closed, `p` shows or hides the side panel and `f` goes full screen; `+` `-` `0` `1` zoom at every level.
 
 **A click on a box or a line selects it**, and never follows a link. The selection is amber; what feeds it is green and what it feeds is red, the lines dashed and moving the way they run; the rest dims. A line runs from the end without an arrowhead when only one end has one, and otherwise from the end written first. The panel beside the drawing names the selection and lists its links, each with its badge, and the boxes it comes from and goes to; a link opens in a new tab, and a box selects it. One line out lights by default, and the panel's button lights everything upstream and downstream. Its description, if it has one, comes last ([Descriptions](#descriptions)). A box with links underlines its text under the pointer. A click on the background, Escape or Backspace clears the selection.
 
 **Selecting from the keyboard**: `s` puts a letter on every box and line, and typing a letter selects that thing. Things in view get the one-letter labels; past 26, the rest take two letters. `/` starts a filter that narrows what gets a letter, live as it is typed: a plain word matches a box's or a line's text, `is:node`, `is:edge` and `is:container` match a kind, and `style:synced` matches what wears that style. Words combine, so `/is:edge rclone` letters only the lines whose text says rclone. Enter ends the filter and the letters pick again, or selects the match at once when there is only one. With something selected, `n` letters what is one line away (from a box, its lines and the boxes at their other ends; from a line, its two ends), `i` letters the boxes inside the selected box and the box it sits in, and `l` letters its links, which a letter opens in a new tab: on the side panel's rows when the panel is shown, and in a small list beside the selection when it is hidden. Backspace steps back a letter, then out of the filter, then out; Escape clears everything. A picked thing out of view is brought into it.
 
 Keys: `+` and `-` zoom, `0` fits, `1` is actual size, `f` is full screen, `p` shows or hides the side panel, `s` and `/` select, `n` `i` `l` step from the selection, Escape clears the selection.
+
+### A page that follows its file
+
+```
+reladraw serve arch.reladraw
+```
+
+`serve` opens the same page in the browser, served from this machine and tied to the file: whenever the file changes on disk, whoever changed it, the page draws it again, keeping the view, the theme and the selection. Under the title it says the page is live, and when the file was last read or changed. A file that stops drawing keeps the last picture that drew, with the error at the head of the findings, and draws again as soon as the file does.
+
+**Edit** (or `e`) shows the source beside the picture, colored as in the playground, with the cheatsheet under it, and the picture redraws as you type. The divider between them can be dragged. **Save** (or ⌘S, Ctrl+S) writes the file, and nothing else does; a dot beside the file's name means there is text the file doesn't have. **Format** lays the source out as `reladraw format` would, with the nearest `.reladraw-format`.
+
+If the file changes on disk while the editor holds unsaved text, the text stays, and a strip says the file changed, by whom when that is known, with **Load it** to replace the text with the file's and **Keep mine** to carry on. Saving over a change made since you started editing asks first.
+
+**Versions** (or `o` from the bar) lists the file's versions since the server started, newest first: each one saved from the page, each change on disk, and each change an agent described with `reladraw note`, with its note. Picking one puts it in the editor as unsaved text, to save if you want it back. They are kept only while the server runs.
+
+One server serves the folder it was started in, and only `.reladraw` files inside it, to this machine only. Serving another file from that folder opens its page on the server already running and returns at once. Ctrl-C stops the server, and an open page then says so; it follows the file again when a server is started in the same folder. `--no-open` prints the page's address instead of opening it.
+
+**Export ▾ ▸ This page** saves the diagram as `reladraw render --page` would write it: a page to send, not one tied to the file.
+
+```
+reladraw serve
+```
+
+With no file, `serve` opens the playground, served from this machine: the source shown, the examples, Open…, and the format settings, with your text kept in the browser. Its first **Save** asks for a path inside the folder, such as `docs/flow.reladraw`, and asks before replacing a file already there. From then on the page is tied to that file, as if `serve` had been given it.
+
+```
+reladraw note arch.reladraw "moved the cache under the API"
+```
+
+`note` describes the change just made to a served file, for its Versions list, which shows it as an agent's. With no server serving the folder, it notes nothing, says so, and succeeds.
 
 ### Formatting
 
@@ -1419,6 +1451,13 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.28.0**
+
+- **`reladraw serve` opens a page that follows its file.** The page redraws whenever the file changes on disk, edits it beside the picture, and writes it on Save or ⌘S. Unsaved text is never replaced by a change on disk without asking, and a Versions menu keeps the file's recent versions, saved from the page, changed on disk, or described by an agent with **`reladraw note`**. One server serves a folder. See [A page that follows its file](#a-page-that-follows-its-file).
+- **`reladraw serve` with no file opens the playground** on this machine; its first Save names a file in the folder, and the page then follows that file.
+- **The playground is the page.** It gains selection, the side panel, View and the keys. The Guides box and the theme picker are now in View, and the theme picked there no longer writes a `diagram theme:` line into the source. Check is gone: the findings are in the side panel and redone as you type. Examples, Open…, Save…, Format settings, the cheatsheet and the text kept in your browser are as they were.
+- **The page's Save menu is now Export**, opened by `x` from the bar, so that Save can mean writing the file on a served page. On a page with an editor, Export's This page saves a snapshot, as `render --page` writes it.
 
 **0.27.0**
 

@@ -47,7 +47,7 @@ npm install -g reladraw
 reladraw render diagram.reladraw -o diagram.svg
 ```
 
-`reladraw check diagram.reladraw` prints the warnings without writing a picture, and `reladraw format diagram.reladraw` lines its statements up in columns. `reladraw render diagram.reladraw --page` writes a page for looking at it in a browser, with pan, zoom, full screen and the warnings beside it.
+`reladraw check diagram.reladraw` prints the warnings without writing a picture, and `reladraw format diagram.reladraw` lines its statements up in columns. `reladraw serve diagram.reladraw` opens it in a browser on a page with pan, zoom, full screen and the warnings beside it, which redraws whenever the file changes and can edit and save it, so you and an agent can work on the one file. `reladraw serve` with no file opens the playground on your machine, and its first Save makes the file. `reladraw render diagram.reladraw --page` writes the same page as one file to send to someone.
 
 Or from a clone, which also gets you the examples:
 
@@ -94,7 +94,7 @@ To install the skill from the main branch instead, which can run ahead of the re
 
 ## Status
 
-Version 0.27.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
+Version 0.28.0. Early stage, but works. The parser, layout engine, and SVG renderer are written in TypeScript, with zero runtime dependencies. There is a command-line tool that turns a .reladraw text file into an SVG, and an element that does the same inside a web page.
 
 ## License
 
