@@ -1,4 +1,4 @@
-# Syntax reference — 0.23.1
+# Syntax reference — 0.30.1
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -38,6 +38,7 @@ An indented line with nothing to continue, at the top of the file or after a bla
 | `default` | appearance every thing of one kind wears ([Defaults](#defaults)) |
 | `diagram` | settings for the whole drawing ([The diagram](#the-diagram)) |
 | `icon` | a picture of your own ([Your own icons](#your-own-icons)) |
+| `description` | text about a box or a line, for the page's panel ([Descriptions](#descriptions)) |
 
 `box`, `link`, `note`, `deck`, `rect` and `arrow` at the start of a statement are refused by name, each quoting what to write instead.
 
@@ -71,7 +72,7 @@ A text is quoted. ` / `, a slash with whitespace on both sides, breaks the line,
 
 A node with no text shows its name, and a dotted name shows only its last part: `node server.docker` reads "docker". The name is never prettified. `""` says a node deliberately has none. A node drawn as a picture shows no text unless one is written.
 
-A `"""` string takes everything between its marks as written, quotes and line breaks included. It is accepted only for an icon's SVG.
+A `"""` string takes everything between its marks as written, quotes and line breaks included. It is accepted only for an icon's SVG and a description's text ([Descriptions](#descriptions)).
 
 ### Numbers and the file's unit
 
@@ -258,7 +259,7 @@ node notes "notes"  below resolver (gap: tight)  shape: none
 
 ### Several targets at once
 
-A placement may name several targets, joined by `and` or commas: `right of a, b and c`. It places against the box bounding them all, a region nobody had to declare. A lone direction centers on that region, which is how one row is offset against another:
+A placement may name several targets, joined by `and` or commas: `right of a, b and c`. It places against the box bounding them all, a region nobody had to declare. A distance and a direction after the `and` or comma start another placement instead: `right of a and 2 above c top` is `right of a  2 above c top`. To place against a point and a box together, name the point first: `point p  2 above c top-center`, then `right of a and p`. A lone direction centers on that region, which is how one row is offset against another:
 
 ```
 node a  icon: cube
@@ -291,7 +292,7 @@ A fraction of the way across a box is written fraction first: `top even with 3/4
 
 `center 12 right of a center` puts the two centers exactly 12 apart, the even steps of a timeline whose boxes differ in width. `top 3 below a bottom` is the same for edges. The direction means what it always means, so with nothing else said the box also sits level with `a`'s center. A placement naming parts must give its distance: `center right of a center` is refused ("say how far").
 
-Two distances, one per axis, are accepted in any placement: `3 below and 2 right of a`, or `top-left 3 below and 2 right of a bottom-right`.
+Two distances, one per axis, are accepted in any placement: `3 below and 2 right of a`, or `top-left 3 below and 2 right of a bottom-right`. A `left` or `right` that comes first may keep its `of`: `2 right of and 3 below a` is `2 right and 3 below a`.
 
 **How far along the side it faces.** `right of server 3/4 down` puts the box the usual gap right of `server`, its middle level with a spot three quarters of the way down `server`'s right side. `down` and `up` run along a left or right side, `across` along a top or bottom one. A word that doesn't run along the side the direction faces is refused, listing the words that do.
 
@@ -684,14 +685,16 @@ node rack.b "web-2"
 
 ### Markup
 
-A stretch of text can borrow a style's look:
+A stretch of text can borrow a style's text color and size:
 
 ```
-style dim  text: (color: theme-muted)
+style dim  text: (color: theme-muted, size: small)
 node files "shared folder / [dim]synced[/dim]"
 ```
 
-The opener names a style, never a color, so the marked words borrow a meaning the file already has. A name no style answers to is refused, and so is a style that says nothing about text. The closer repeats the name, so a mismatched close is refused by name. Marks don't nest, and a mark may cross a line break. A bare `[` is an error; write `\[` for a literal one.
+The opener names a style, never a color, so the marked words borrow a meaning the file already has. A name no style answers to is refused, and so is a style that gives text neither a color nor a size.
+
+**A line is as tall as its largest text.** A line that is all small is spaced as a small line, so the box is shorter. A small stretch mid-line, `"3 [dim]files[/dim] waiting"`, sits on the same baseline as the words around it, and the line keeps the normal spacing. With `wrap:`, a small character counts as less than a whole one, by the ratio of the two sizes. The closer repeats the name, so a mismatched close is refused by name. Marks don't nest, and a mark may cross a line break. A bare `[` is an error; write `\[` for a literal one.
 
 ## Lines
 
@@ -974,11 +977,19 @@ A line may carry several texts, one after another, each with its own bracket. **
 
 **Beside the line:** `(right of edge)`, `(left of edge)`, `(above edge)`, `(below edge)` move the text out the stated way until it is clear of the part of the line it landed on.
 
+How far it moves can be said in front:
+
+- `(at: 4/5, 1 above edge)`: one unit up from where it would sit on the line. If that is short of clear, the text still crosses the line and hides it there.
+- `(at: 4/5, 1/2 clear above edge)`: half of the move that would clear the line. Any fraction or number works, `3/4 clear` or `1.5 clear`.
+- `(at: 4/5, clear above edge)`: all the way clear, the same as `above edge`.
+
+A distance is a number, `0.5 above edge`; `1/2 above edge` is refused, naming both forms. `edge-gap:` beside a distance is refused as said twice.
+
 **Lined up with a box on one axis:** `(left even with a right)` puts the left edge of the patch behind the text at `a`'s right side, and leaves its height where it would otherwise sit; `(x even with mid1)` centers the text across on `mid1`. Any `even with` a box takes works, one per axis, and the other axis comes from the line. On a level stretch it slides the text along the line; on an upright one, it moves the text off the line sideways. With a relation that already says the same axis, such as `right of edge`, it is refused. Separate it from the bracket's next item with a comma.
 
 **Which way it reads:** `reads: up` and `reads: down` turn it a quarter turn; `reads: along` takes the line's angle where it sits, never upside down.
 
-`gap:` is the distance from the box for `at: start`, `at: end` and the box relations; `edge-gap:` the distance off the line for a text beside it. Each defaults to half a unit, written in the text's own bracket.
+`gap:` is the distance from the box for `at: start`, `at: end` and the box relations; `edge-gap:` the distance past clear for a text beside it, and part of the move that `1/2 clear` takes a fraction of. Each defaults to half a unit, written in the text's own bracket.
 
 ```
 node a
@@ -1010,7 +1021,7 @@ guide node column ""  below a  width: 10  height: 20
 
 **A guide does everything its kind does except draw.** It places things, holds children, is placed against, and shapes the lines through it. A `guide node` container's children are drawn; only its box and title aren't. That gives a reserved empty space, a column to align against, or a group with no outline.
 
-Guides are shown by whoever renders the file, not by the file: `--guides` on the command line, the Guides box in the playground. A file that explains its own construction, such as a tutorial, may say `diagram  guides: show`. Shown guides are dashed, in the theme's secondary color, and unfilled. Their look changes per kind with `default guide node`, `default guide edge`, `default guide point` and `default guide region`; a bare `default guide` is refused, listing the four.
+Guides are shown by whoever renders the file, not by the file: `--guides` on the command line, the Guides switch in Settings on the page and in the playground. A file that explains its own construction, such as a tutorial, may say `diagram  guides: show`. Shown guides are dashed, in the theme's secondary color, and unfilled. Their look changes per kind with `default guide node`, `default guide edge`, `default guide point` and `default guide region`; a bare `default guide` is refused, listing the four.
 
 A container styled with no border is different: the same picture with guides hidden, but showing guides never reveals it. A guide box draws nothing, so it is left out of the overlap and overflow findings.
 
@@ -1052,7 +1063,7 @@ node nas "NAS"  right of mirror
 edge mirror -> nas  style: backup
 ```
 
-A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:` or a deck's `cards:`.
+A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:`, a `description:` or a deck's `cards:`.
 
 - **A style may span kinds.** It gives each thing only the keys that thing has, so the style above gives nodes their border and lines their color.
 - **A style must give a thing at least one key it has.** A style that dresses a thing in nothing is on the wrong thing.
@@ -1118,7 +1129,7 @@ A default is a style every thing of one kind wears without naming it: `node`, `l
 
 A container inside another container is filled a shade further from the page than the one it sits in, so the two read as two backdrops. An invisible container (`shape: none`) doesn't count, and a stated `fill:` wins as always.
 
-A default takes the words a style does and may wear a style of its own (`default edge  style: quiet`), laid beneath its own words. It is strict about kind, since it names its kind: `default edge  fill: red` is refused, pointing to `line:`. `icon:` is a leaf's alone. A default carries no `url:`. Each kind is written once, and `default leaf node` is refused, naming `default leaf`.
+A default takes the words a style does and may wear a style of its own (`default edge  style: quiet`), laid beneath its own words. It is strict about kind, since it names its kind: `default edge  fill: red` is refused, pointing to `line:`. `icon:` is a leaf's alone. A default carries no `url:` or `description:`. Each kind is written once, and `default leaf node` is refused, naming `default leaf`.
 
 ### The diagram
 
@@ -1156,6 +1167,70 @@ node api "Orders API"
 
 The same address twice in one `url:` is refused.
 
+A link can be declared once, with its name and badge, and used by name. A quoted value after `url:` is an address and an unquoted one is a declared link, and the two mix in one list in the order written:
+
+```
+url orders-docs  "https://docs.example.com/orders/v2/reference" (name: "Docs", icon: "D" (fill: #3a6ea5, text: white))
+url orders-code  "https://github.com/example/orders/tree/main/services/api" (name: "Code")
+
+node api "Orders API"  url: orders-docs  orders-code
+node worker "Worker"   url: orders-docs  "https://example.com/runbooks/worker" (name: "Runbook")
+```
+
+A declaration may list several links, each a quoted address or another declared name, and a use gives all of them in order:
+
+```
+url orders-links  orders-docs  orders-code  "https://wiki.example.com/orders" (name: "Wiki")
+
+node api "Orders API"  url: orders-links
+```
+
+A declared link's name and badge are its own, so a bracket after its name in a `url:` is refused; to show it differently, declare another. A declaration may come before or after its use. Refused, each with a message: a name used but never declared, a name declared twice, a declaration that reaches itself through its own list, and a name that starts a placement, such as `below`, since a placement may follow a `url:` on the same statement.
+
+### Descriptions
+
+A box or a line can carry a description: text a reader asks for, shown in the panel when it is selected on a page made with `--page`, and never drawn. It can be written three ways.
+
+On the thing's own statement, quoted:
+
+```
+node proxy "Proxy"  description: "Forwards each request by its path."
+```
+
+At a distance, for things already named, so a long text doesn't crowd the diagram's statements:
+
+```
+node proxy "Proxy"
+node orders "Orders"  right of proxy
+edge to-orders proxy -> orders
+
+description for orders and to-orders """
+Owns the order records.
+
+- `/orders` lands here
+- see [the docs](https://example.com/orders)
+"""
+```
+
+Or named, for any box or line to take by that name:
+
+```
+description replica """
+One of three identical replicas behind the proxy.
+"""
+
+node r1 "Replica 1"  description: replica
+node r2 "Replica 2"  description: replica  below r1
+```
+
+`description:` takes the text quoted, or a description's name unquoted, as `icon:` takes letters quoted and a picture's name bare. `description for` names boxes and named lines, separated by commas or `and`; a name that is neither is refused. A long text goes between `"""` marks, where line breaks are kept and the indentation every line shares is taken off.
+
+The text is Markdown, in part: paragraphs, lists (`-`, `*` or `1.`), `**bold**`, `*italic*` or `_italic_`, `` `code` `` and links, `[text](https://…)`. Anything else shows as written. A link goes to an `https:`, `http:` or `mailto:` address or a path; any other is refused.
+
+**In an SVG**, the description is the thing's hover text, with the marks taken out and each link's address after its text. Writing one never moves anything in the drawing.
+
+A thing has one description: two on one statement, or one there and another from `description for`, are refused. So is a name declared twice. A style and a default carry none.
+
 ## Errors and findings
 
 An **error** means the file can't be drawn: an unknown key, two placements on one axis, a cycle. Nothing is drawn, and the message names what to write instead. A **finding** is about a picture that was drawn and may not read as meant. A render with findings succeeds.
@@ -1182,7 +1257,7 @@ The file and line of the statement at fault, `warning` in a fixed spot, the kind
 
 Kinds are turned on or off by name, in the file or on the command line: `diagram  checks: (edge-crossings: on, crowded-edge-ends: off)`, or `--checks "edge-crossings: on"`. A kind not mentioned keeps its default. A deliberate overlap is stated on the thing itself (`overlap: allow`), not turned off for the whole file.
 
-In the playground, where you are looking at the picture, checks run only when you press Check. The findings are listed under the diagram, apart from errors, and clicking one selects its line.
+On a page written by `render --page`, the findings are listed in the side panel. On a page that edits, the playground and `serve`'s page, nothing is checked until **Check** (or `c`) is pressed, unless **Check as I type** is on in the Settings menu; an edit after a check dims the findings rather than clearing them. While the source is shown, they appear in a band under the picture, the first three of them, with **View all** to open the side panel; × closes the band until the next check. An error that stops the diagram drawing heads the list in the side panel. Clicking a finding lights what its statement drew, and, with the source shown, selects its line.
 
 ## The command line
 
@@ -1203,7 +1278,9 @@ reladraw check diagram.reladraw
 | `--no-checks` | print no findings; errors still print |
 | `-v`, `--version` | print the version |
 
-`reladraw install-skill` installs the agent skill that came with this version of reladraw, by running `npx skills add` on it with `--copy`. What follows it goes to `skills`: `-g` to install for every project, `-a claude-code` for one agent.
+`reladraw serve diagram.reladraw` opens a page for the diagram that redraws whenever the file changes and can edit and save it, `reladraw serve` with no file opens the playground on this machine, and `reladraw note` describes a change made to a served file; see [A page that follows its file](#a-page-that-follows-its-file).
+
+`reladraw install-skill` installs the agent skill that came with this version of reladraw, for every project, by running `npx skills add` on it with `--copy`. `--claude` installs it in `~/.claude/skills`, `--agents` in `~/.agents/skills` (Codex and others), and both may be given; with neither, it asks, or, with no terminal to ask in, refuses and names them. For any other agent it prints the `skills` command to run.
 
 The output is a standalone SVG: every picture is drawn into it as path data, never from a font or a linked file. A web page can draw a diagram in place with `<reladraw-diagram>`; see "In a web page" in the README.
 
@@ -1213,11 +1290,47 @@ The output is a standalone SVG: every picture is drawn into it as path data, nev
 reladraw render arch.reladraw --page
 ```
 
-`--page` writes `arch.html`: one self-contained file, for opening in a browser, attaching or committing, that needs nothing running and fetches nothing. The page is in the diagram's own colors, so a dark diagram doesn't sit on a white page, and it is headed with `diagram title:`, or the file's name when there is none. Under the title it says which file it was drawn from and when, such as "drawn from arch.reladraw, 2026-11-05 14:32": the page is a snapshot of the file, and is behind it once the file is edited, until it is rendered again. Drag to pan; scroll, pinch or double-click to zoom; Fit shows the whole diagram and 100% returns it to its own scale. The zoom is always shown, with "Fit" beside it while the whole diagram is in view. There is a full-screen button. The Save menu saves the page itself, as it was written rather than at its current zoom; the `.reladraw` source it was drawn from; or the picture as an SVG or a PNG, as `render` would draw it; or copies the SVG. Each is named after the source file: `arch.html`, `arch.reladraw`, `arch.svg`, `arch.png`. In Chrome and Edge it asks where to save; other browsers put the file with their downloads. The findings are listed beside it in a panel that folds away, and clicking one lights up what its line drew. A box's or a line's name shows under the pointer.
+`--page` writes `arch.html`: one self-contained file, for opening in a browser, attaching or committing, that needs nothing running and fetches nothing. The page is in the diagram's own colors, so a dark diagram doesn't sit on a white page, and it is headed with `diagram title:`, or the file's name when there is none. Under the title it says which file it was drawn from and when, such as "drawn from arch.reladraw, 2026-11-05 14:32": the page is a snapshot of the file, and is behind it once the file is edited, until it is rendered again. Drag to pan, or press `g` to grab the diagram and pan it with the arrow keys or `h` `j` `k` `l` (Shift for bigger steps, `g` or Escape to let go); scroll, pinch or double-click to zoom; Fit shows the whole diagram and 100% returns it to its own scale. The zoom is always shown, with "Fit" beside it while the whole diagram is in view. There is a full-screen button. The Export menu saves the page itself, as it was written rather than at its current zoom; the `.reladraw` source it was drawn from; or the picture as an SVG or a PNG, as `render` would draw it; or copies the SVG. Each is named after the source file: `arch.html`, `arch.reladraw`, `arch.svg`, `arch.png`. In Chrome and Edge it asks where to save; other browsers put the file with their downloads. The findings are listed beside it, and clicking one lights up what its line drew. A box's or a line's name shows under the pointer.
 
-**A click on a box or a line selects it**, and never follows a link. The selection is amber; what feeds it is green and what it feeds is red, the lines dashed and moving the way they run; the rest dims. A line runs from the end without an arrowhead when only one end has one, and otherwise from the end written first. The panel beside the drawing names the selection and lists its links, each with its badge, and the boxes it comes from and goes to; a link opens in a new tab, and a box selects it. One line out lights by default, and the panel's button lights everything upstream and downstream. A box with links underlines its text under the pointer. A click on the background or Escape clears the selection.
+**The Settings menu** holds the page's settings, each row a switch that says on or off. **Theme** opens a list of themes, and draws the diagram in the one picked, as `--theme` would, keeping the view and the selection; a page or text color the file states holds in every theme. It starts on "Diagram's theme", the one the file names (or dark), which follows the file when it is rendered again. A theme picked by name is the reader's: it holds on every reladraw page in that browser, whatever the file says, until "Diagram's theme" is picked again. **Side panel** shows or hides the panel beside the drawing, which then stays hidden whatever is selected. **Auto-hide panel** shows it only while something is selected or the findings are open, and the findings start folded. Both are remembered by the browser for every page. **Findings**, with their count, open or fold the findings in the panel. **Guides**, with their count, draws the [guides](#guides) as `--guides` does; it starts as the file or `--guides` says, and a change lasts for that page only. Save SVG, PNG and Copy SVG take the theme and the guides as shown.
 
-Keys: `+` and `-` zoom, `0` fits, `1` is actual size, `f` is full screen, Escape clears the selection.
+**From the keyboard**, `m` reaches the bar: it is ringed, each control shows its letter, and a strip under it names where the keys are and which keys work there. `s` opens Settings, `x` opens Export, and `f` goes full screen. In a menu a row's letter does what the row does, and the menu stays open, so several can be changed in turn: in Settings, `t` theme, `p` side panel, `a` auto-hide, `f` findings and `g` guides; in Export, `p` this page, `r` the source, `s` SVG, `n` PNG and `c` Copy SVG. The arrow keys and Enter work too. In the theme list the arrows draw the diagram in each theme as they reach it, and Enter keeps the one reached. Backspace steps back one level at a time: from the theme list to Settings, from a menu to the bar, from the bar to the diagram, and then lets go of a grab, a lit finding and the selection in turn. Escape goes straight back to the plain diagram from anywhere: every menu closes, a theme tried and not kept is dropped, and a grab, a lit finding and the selection are all cleared. With the menus closed, `p` shows or hides the side panel and `f` goes full screen; `+` `-` `0` `1` zoom at every level.
+
+**A click on a box or a line selects it**, and never follows a link. The selection is amber; what feeds it is green and what it feeds is red, the lines dashed and moving the way they run; the rest dims. A line runs from the end without an arrowhead when only one end has one, and otherwise from the end written first. The panel beside the drawing names the selection and lists its links, each with its badge, and the boxes it comes from and goes to; a link opens in a new tab, and a box selects it. One line out lights by default, and the panel's button lights everything upstream and downstream. Its description, if it has one, comes last ([Descriptions](#descriptions)). A box with links underlines its text under the pointer. A click on the background, Escape or Backspace clears the selection.
+
+**Selecting from the keyboard**: `s` puts a letter on every box and line, and typing a letter selects that thing. Things in view get the one-letter labels; past 26, the rest take two letters. `/` starts a filter that narrows what gets a letter, live as it is typed: a plain word matches a box's or a line's text, `is:node`, `is:edge` and `is:container` match a kind, and `style:synced` matches what wears that style. Words combine, so `/is:edge rclone` letters only the lines whose text says rclone. Enter ends the filter and the letters pick again, or selects the match at once when there is only one. With something selected, `n` letters what is one line away (from a box, its lines and the boxes at their other ends; from a line, its two ends), `i` letters the boxes inside the selected box and the box it sits in, and `l` letters its links, which a letter opens in a new tab: on the side panel's rows when the panel is shown, and in a small list beside the selection when it is hidden. Backspace steps back a letter, then out of the filter, then out; Escape clears everything. A picked thing out of view is brought into it.
+
+Keys: `+` and `-` zoom, `0` fits, `1` is actual size, `f` is full screen, `p` shows or hides the side panel, `s` and `/` select, `n` `i` `l` step from the selection, Escape clears the selection.
+
+### A page that follows its file
+
+```
+reladraw serve arch.reladraw
+```
+
+`serve` opens the same page in the browser, served from this machine and tied to the file: whenever the file changes on disk, whoever changed it, the page draws it again, keeping the view, the theme and the selection. Under the title it says the page is live, and when the file was last read or changed. A file that stops drawing keeps the last picture that drew, with the error at the head of the findings, and draws again as soon as the file does.
+
+The **Edit | View** switch beside the title (or `e`) shows the source beside the picture, colored as in the playground, and the picture redraws as you type. The source's **Help** menu holds the syntax reference and the **Cheatsheet** (or `?`), the language on one screen: a card per topic, each example colored as in the editor beside what it does, with a filter that keeps the rows holding every word typed. While the source is shown, the side panel stays out of the way unless something is selected, the source has an error, or the findings are opened from Settings. The divider between them can be dragged. **Save** (or ⌘S, Ctrl+S) writes the file, and nothing else does; a dot beside the file's name means there is text the file doesn't have. **Format** lays the source out as `reladraw format` would, with the nearest `.reladraw-format`.
+
+If the file changes on disk while the editor holds unsaved text, the text stays, and a strip says the file changed, by whom when that is known, with **Load it** to replace the text with the file's and **Keep mine** to carry on. Saving over a change made since you started editing asks first.
+
+**Versions** (or `o` from the bar) lists the file's versions since the server started, newest first: each one saved from the page, each change on disk, and each change an agent described with `reladraw note`, with its note. Picking one puts it in the editor as unsaved text, to save if you want it back. They are kept only while the server runs.
+
+One server serves the folder it was started in, and only `.reladraw` files inside it, to this machine only. Serving another file from that folder opens its page on the server already running and returns at once. Ctrl-C stops the server, and an open page then says so; it follows the file again when a server is started in the same folder. `--no-open` prints the page's address instead of opening it.
+
+**Export ▾ ▸ This page** saves the diagram as `reladraw render --page` would write it: a page to send, not one tied to the file.
+
+```
+reladraw serve
+```
+
+With no file, `serve` opens the playground, served from this machine: the source shown, with a **File** menu holding Examples…, Open… and Save…, and the format settings, with your text kept in the browser. Its first Save asks for a path inside the folder, such as `docs/flow.reladraw`, and asks before replacing a file already there. From then on the page is tied to that file, as if `serve` had been given it.
+
+```
+reladraw note arch.reladraw "moved the cache under the API"
+```
+
+`note` describes the change just made to a served file, for its Versions list, which shows it as an agent's. With no server serving the folder, it notes nothing, says so, and succeeds.
 
 ### Formatting
 
@@ -1290,6 +1403,7 @@ Every attribute, and what takes one. A node's kind is what its body is: a box (`
 | `gather-children` | ✓ | | ✓ | | where the children sit in spare room |
 | `heading` | ✓ | | ✓ | | the child that is the title |
 | `join-with` | ✓ | ✓ | ✓ | | the thing this moves with |
+| `description` | ✓ | ✓ | ✓ | ✓ | text for the page's panel ([Descriptions](#descriptions)) |
 | `padding` | ✓ | | ✓ | | room inside the edge |
 | `padding-top`, `-right`, `-bottom`, `-left` | ✓ | | ✓ | | one side's room, over `padding` |
 | `width`, `height`, `min-…`, `max-…` | ✓ | | ✓ | | a stated size |
@@ -1337,6 +1451,75 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.30.1**
+
+- Selecting something whose statement runs over several lines marks every line of it in the source, not just the first.
+
+**0.30.0**
+
+- **Selecting a box or a line with the source open marks the line that states it**, scrolled into view, while the keyboard stays with the picture.
+- **`serve`'s page has Format settings**, read from the nearest `.reladraw-format`. Its Save writes them back to that file, keeping its comments, or makes one beside the diagram when there is none in the served folder.
+- **Hovering on the page shows only the name** of what is under the pointer; a description or a list of links is in the side panel. The SVG itself still carries them as hover text.
+- **The side panel can be made wider or narrower** by dragging its left edge, or with the arrows once it has the focus; a double-click puts it back. The width is kept in the browser.
+- **The strip that `s`, `m` and the other keys bring up floats over the foot of the picture**, so it no longer moves the drawing down.
+- `reladraw serve` for a folder already served says plainly that it used the server already running and that nothing else needs starting.
+
+**0.29.0**
+
+- **The playground and `serve`'s page check only when Check is pressed**, as the playground did before 0.28.0, with **Check as I type** in Settings to check on every redraw. While the source is shown, the findings appear in a band under the picture, with View all to open the side panel. See [Errors and findings](#errors-and-findings).
+- **Edit is now an Edit | View switch** beside the title, and the side panel stays out of the way while the source is shown.
+- **The View menu is now Settings**, opened by `s` from the bar.
+- **The picture's controls float over it**: Check at its top left, and the zoom at its bottom right. The page's bar keeps Export, Settings and Full screen. Fit leaves room above and below for them.
+- **The cheatsheet opens as a large window**, from the source's Help menu or `?`: a card per topic, examples in the editor's colors, and a filter. Help also links the syntax reference.
+- The hosted playground's bar is one line: its name, with GitHub's mark linking to the repository.
+- **In the playground, Examples, Open… and Save… are in a File menu** in the source's bar. A page tied to a file keeps its Save button.
+- The source's buttons wrap onto a second row when the source is narrow, instead of running under the picture.
+
+**0.28.0**
+
+- **`reladraw serve` opens a page that follows its file.** The page redraws whenever the file changes on disk, edits it beside the picture, and writes it on Save or ⌘S. Unsaved text is never replaced by a change on disk without asking, and a Versions menu keeps the file's recent versions, saved from the page, changed on disk, or described by an agent with **`reladraw note`**. One server serves a folder. See [A page that follows its file](#a-page-that-follows-its-file).
+- **`reladraw serve` with no file opens the playground** on this machine; its first Save names a file in the folder, and the page then follows that file.
+- **The playground is the page.** It gains selection, the side panel, View and the keys. The Guides box and the theme picker are now in View, and the theme picked there no longer writes a `diagram theme:` line into the source. Check is gone: the findings are in the side panel and redone as you type. Examples, Open…, Save…, Format settings, the cheatsheet and the text kept in your browser are as they were.
+- **The page's Save menu is now Export**, opened by `x` from the bar, so that Save can mean writing the file on a served page. On a page with an editor, Export's This page saves a snapshot, as `render --page` writes it.
+
+**0.27.0**
+
+- **The `--page` page selects from the keyboard.** `s` puts a letter on every box and line and a letter selects it; `/` filters what gets a letter by text, `is:node`, `is:edge`, `is:container` or `style:`; with something selected, `n` letters what is one line away, `i` what is inside it and the box it sits in, and `l` its links. See [A page for looking at a diagram](#a-page-for-looking-at-a-diagram).
+- **The `--page` page has a View menu**, and its bar keeps only the zoom, Full screen, Save and View. The theme, the side panel, auto-hide and the findings moved into View, each a switch that says on or off, and View gained **Guides**, which draws the diagram's guides as `--guides` does. **`m` reaches the menus from the keyboard**: each control shows its letter, a strip names where the keys are, Backspace steps back one level and Escape goes straight back to the plain diagram, clearing the selection too. In the theme list the arrow keys try each theme on the diagram, and Enter keeps one. See [A page for looking at a diagram](#a-page-for-looking-at-a-diagram).
+
+**0.26.1**
+
+- `h` `j` `k` `l` now pan only while the diagram is grabbed with `g`, as the arrow keys do, on the `--page` page and in the playground. In 0.26.0 they panned without a grab.
+
+**0.26.0**
+
+- **The arrow keys pan a diagram**, on the `--page` page and in the playground. Press `g` to grab the diagram: a border and a hint show it is held, the arrows pan it a step at a time, and Shift makes the steps bigger. `g` again or Escape lets go, and the arrows go back to whatever else uses them. Clicking into a text field lets go too. `h` `j` `k` `l` pan the same way without a grab.
+- **The `--page` page has a theme picker**, which draws the diagram in any theme without moving anything, and Save SVG and PNG save the theme shown. It starts on the diagram's own theme, which follows the file; a theme the reader picks holds on every page in that browser until they pick the diagram's theme again.
+- **The `--page` page's side panel can be hidden**, with the Panel button or `p`, or set to Auto-hide, showing only while something is selected or the findings are open. A long description now fills the panel's height instead of scrolling in the top part of it. Closing the findings clears the highlight a finding lit.
+- The agent skill now leaves out `diagram theme:` unless the user asks for a theme.
+
+**0.25.1**
+
+- The agent skill now says that a distance and a direction after `and` start a second placement, and how to name a point to use as a target. No change to what the tool accepts or draws.
+
+**0.25.0**
+
+- **A link can be declared once and used by name**: `url orders-docs "https://…" (name: "Docs", icon: "D")`, then `url: orders-docs`, so long addresses stay out of the statements that link to them. A declaration may list several links, declared names among them, and a `url:` mixes names and quoted addresses. See [Destinations](#destinations).
+
+- **Marked text takes its style's size**: with `style dim  text: (size: small)`, `"Some Node / [dim]something[/dim]"` draws the second line small, and a line that is all small is spaced as one. Markup used to take only a style's color, and a style with only a size was refused as saying nothing about text. See [Markup](#markup).
+
+- **`2 right of and 3 below a`** is accepted, the same as `2 right and 3 below a`. It used to be refused with a message that took `and` for the name of a box.
+
+- **A distance and a direction after `and` or a comma start a second placement**: `node b  right of a and 2 above c top` puts `b` right of `a`, with its bottom 2 above `c`'s top. It used to take `2 above c top` as a point added to the targets, so `b` was placed right of the region covering `a` and that point, with no warning, and the second half looked ignored. To get that reading, name the point first: `point p  2 above c top-center`, then `node b  right of a and p`.
+
+- **A box or a line can have a description**, shown in the panel when it is selected on a `--page` page, and as hover text in an SVG. It is written on the thing, `description: "Forwards each request by its path."`; at a distance, `description for orders and to-orders """…"""`; or named, `description replica """…"""`, and taken with `description: replica`. The text is a small part of Markdown: paragraphs, lists, bold, italic, code and links.
+
+- **A line's text can rise a stated amount off its line, or part of the way clear.** `above edge` and its kin always moved a text all the way clear, which on a slanted line can be well away from it. `(1 above edge)` now raises it one unit from its spot on the line, still crossing the line if that is short of clear, and `(1/2 clear above edge)` moves it half the way. `(1 above edge)` used to be refused, pointing to `edge-gap:`.
+
+**0.24.0**
+
+- **`reladraw install-skill` installs for Claude Code, the `~/.agents` folder, or both, and asks which.** It used to pass everything on to `skills`, which, given no agent, put a copy in the folder of every agent it knows, more than fifty of them, and in the current project unless `-g` was written. It now always installs for every project, in the places `--claude` and `--agents` name; `-a` and the other `skills` options are refused with the `skills` command that does the same, and `-g` is still accepted.
 
 **0.23.1**
 

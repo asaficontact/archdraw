@@ -1,6 +1,6 @@
 {
   "name": "reladraw",
-  "version": "0.23.1",
+  "version": "0.30.1",
   "description": "A diagram language where you say where things go.",
   "type": "module",
   "bin": {
@@ -11,6 +11,7 @@
   "files": [
     ".claude/skills",
     "dist",
+    "examples/*.reladraw",
     "NOTICE",
     "SYNTAX.md"
   ],
@@ -35,7 +36,6 @@
   "scripts": {
     "build": "tsc && tsc -p tsconfig.element.json",
     "prepublishOnly": "npm run build",
-    "preversion": "./dev.sh check-version \"$npm_new_version\"",
     "dev": "tsc --watch",
     "example": "npm run build && node dist/cli.js render examples/arch.reladraw -o examples/out/arch.svg"
   },

@@ -1,6 +1,8 @@
-import type { Attrs, Kind, DefaultTarget, Document, EdgeStmt, Mark, NodeStmt, PlacementTarget, POINT_TEXT_SIDES, PointStmt, RegionStmt, Stmt } from './ast.js';
+import type { Attrs, Kind, DefaultTarget, DescriptionStmt, Document, EdgeStmt, Mark, NodeStmt, PlacementTarget, POINT_TEXT_SIDES, PointStmt, RegionStmt, Stmt, UrlStmt } from './ast.js';
 import { TEXT_GAP } from './linetexts.js';
 import {
+  DESCRIPTION_NAME_KEY,
+  LINK_NAMES_KEY,
   POINT_KEYS,
   REGION_KEYS,
   ALL_ATTR_KEYS,
@@ -32,11 +34,13 @@ import {
   BORDER_THICKNESS,
   BORDER_WIDTH,
   fontSizeFor,
+  linesTall,
   widestLine,
 } from './constants.js';
 import { SourceError } from './errors.js';
 import { type Body, bodyFor, type Icon, iconNamed, pastedIcon } from './icons.js';
-import { linksOf } from './links.js';
+import { LINKS_KEY, linksOf, type Link, type LinkEntry } from './links.js';
+import { unsafeLinks } from './markdown.js';
 import { monospaceMeasurer, type Measurer } from './measure.js';
 import { isBoxy, middleOf, sizeFor, SUBPROCESS_INSET } from './outline.js';
 import { markupStyles, parseMarkup, plain, splitRuns, wrapLine, type Line } from './text.js';
@@ -54,7 +58,7 @@ function factsFor(node: LayoutNode, measurer: Measurer, fontSize: number): NodeF
   const lineHeight = measurer.lineHeight(textSize);
   const hasText = node.lines.some((line) => plain(line).length > 0);
   const across = hasText ? widestLine(node.lines, measurer, textSize) : 0;
-  const tall = hasText ? node.lines.length * lineHeight : 0;
+  const tall = hasText ? linesTall(node.lines, measurer, textSize) : 0;
   // A turned text (design.org 7.2) takes the room of its turned ink: as wide
   // as its lines are tall, as tall as its widest line.
   const turned = node.textAttrs['reads'] !== undefined;
@@ -399,6 +403,11 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   const fontSize = options.fontSize ?? DEFAULT_FONT_SIZE;
   const margin = options.margin ?? DEFAULT_MARGIN;
 
+  // `description: notes` becomes the text it names, and `description for …`
+  // waits until the boxes and lines it names exist. Nothing else reads them.
+  const described = nameDescriptions(doc.statements);
+  doc = { statements: nameLinks(described.statements) };
+
   const styles = collectStyles(doc.statements);
   checkStyleKeys(doc.statements);
   const defaults = collectDefaults(doc.statements, styles);
@@ -414,7 +423,7 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
       }
     }
   }
-  const { nodes, byName, roots } = buildTree(writeOutCards(doc.statements), styles, defaults, icons);
+  const { nodes, byName, roots } = buildTree(writeOutCards(doc.statements), styles, defaults, icons, fontSize);
   // From here on, `edge each child of a -> b` and `edge a -> b, c` are the lines they stand for.
   const statements = expandEach(doc.statements, byName);
 
@@ -423,9 +432,10 @@ export function resolve(doc: Document, options: ResolveOptions = {}): Layout {
   // gaps are being worked out. Nothing here reads geometry.
   const named = collectNamed(doc.statements, byName);
   const edges = buildEdges(statements, byName, named, styles, defaults, measurer, fontSize);
+  attachDescriptions(described.attached, byName, edges);
 
   const facts = new Map(nodes.map((node) => [node, factsFor(node, measurer, fontSize)]));
-  const markTexts = measureMarkTexts(named, measurer, fontSize);
+  const markTexts = measureMarkTexts(named, measurer, fontSize, styles);
   const regionTexts = new Map([...markTexts].flatMap(([name, text]) => (text.region ? [[name, text.region] as const] : [])));
   const placer = new Placer(roots, byName, facts, named, regionTexts);
   placer.run();
@@ -548,17 +558,22 @@ interface MeasuredMarkText {
  * an inside text grows its region (design.org 7.4). Set small, as an aside is:
  * it labels a spot or an area rather than being a thing in the diagram.
  */
-function measureMarkTexts(named: Map<string, PointStmt | RegionStmt>, measurer: Measurer, fontSize: number): Map<string, MeasuredMarkText> {
+function measureMarkTexts(
+  named: Map<string, PointStmt | RegionStmt>,
+  measurer: Measurer,
+  fontSize: number,
+  styles: Map<string, Attrs>,
+): Map<string, MeasuredMarkText> {
   const measured = new Map<string, MeasuredMarkText>();
   for (const [name, stmt] of named) {
     if (!stmt.text) continue;
     const { text, textAttrs } = stmt.text;
     const subject = `${stmt.kind} "${name}"`;
-    const lines = linesFor(text, textAttrs, subject, stmt.line);
     const size = fontSizeFor('none', textAttrs, fontSize, stmt.line);
+    const lines = linesFor(text, textAttrs, subject, stmt.line, { styles, fontSize, base: size });
     const lineHeight = measurer.lineHeight(size);
     const across = widestLine(lines, measurer, size);
-    const tall = lines.length * lineHeight;
+    const tall = linesTall(lines, measurer, size);
     const turned = textAttrs['reads'] !== undefined;
     const width = turned ? tall : across;
     const height = turned ? across : tall;
@@ -719,6 +734,149 @@ function collectStyles(statements: Stmt[]): Map<string, Attrs> {
 }
 
 /** The file's own icons, by name, each pasted in or read from its file. */
+/**
+ * Swaps each `description: notes` for the text `description notes` declares,
+ * and sets aside the `description for …` statements, which name boxes and
+ * lines that don't exist until the tree is built. Every description's links
+ * are checked here, inline ones included.
+ */
+function nameDescriptions(statements: Stmt[]): { statements: Stmt[]; attached: DescriptionStmt[] } {
+  const declared = new Map<string, DescriptionStmt>();
+  const attached: DescriptionStmt[] = [];
+  const checkLinks = (text: string, line: number): void => {
+    const bad = unsafeLinks(text)[0];
+    if (bad !== undefined) {
+      throw new SourceError(`a description links to "${bad}" — a link goes to a web or mail address (https:, http:, mailto:) or a path`, line);
+    }
+  };
+  for (const stmt of statements) {
+    if (stmt.kind !== 'description') continue;
+    checkLinks(stmt.text, stmt.line);
+    if (stmt.targets !== undefined) {
+      attached.push(stmt);
+      continue;
+    }
+    const before = declared.get(stmt.name!);
+    if (before !== undefined) {
+      throw new SourceError(`description "${stmt.name}" is declared twice, on lines ${before.line} and ${stmt.line} — keep one`, stmt.line);
+    }
+    declared.set(stmt.name!, stmt);
+  }
+  const rest = statements.flatMap((stmt): Stmt[] => {
+    if (stmt.kind === 'description') return [];
+    if (!('attrs' in stmt) || stmt.attrs === undefined) return [stmt];
+    if (stmt.attrs['description'] !== undefined) checkLinks(stmt.attrs['description'], stmt.line);
+    const name = stmt.attrs[DESCRIPTION_NAME_KEY];
+    if (name === undefined) return [stmt];
+    const found = declared.get(name);
+    if (found === undefined) {
+      const known = [...declared.keys()];
+      throw new SourceError(
+        `there is no description named "${name}" — ` +
+          (known.length === 0
+            ? 'declare it with `description ' + name + ' """…"""`, or quote the text to write it here'
+            : `the file declares ${known.map((one) => `"${one}"`).join(', ')}; quote the text to write it here`),
+        stmt.line,
+      );
+    }
+    const { [DESCRIPTION_NAME_KEY]: _, ...attrs } = stmt.attrs;
+    return [{ ...stmt, attrs: { ...attrs, description: found.text } } as Stmt];
+  });
+  return { statements: rest, attached };
+}
+
+/**
+ * Takes out the `url` statements and swaps each declared name in a `url:` for
+ * the links it declares, a bundle's in order, so nothing after this sees a name.
+ */
+function nameLinks(statements: Stmt[]): Stmt[] {
+  const declared = new Map<string, UrlStmt>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'url') continue;
+    const before = declared.get(stmt.name);
+    if (before !== undefined) {
+      throw new SourceError(`url "${stmt.name}" is declared twice, on lines ${before.line} and ${stmt.line} — keep one`, stmt.line);
+    }
+    declared.set(stmt.name, stmt);
+  }
+  const unknown = (name: string, line: number): SourceError => {
+    const known = [...declared.keys()];
+    return new SourceError(
+      `there is no link named "${name}" — ` +
+        (known.length === 0
+          ? 'declare it with `url ' + name + ' "https://…"`, or quote an address to write it here'
+          : `the file declares ${known.map((one) => `"${one}"`).join(', ')}; quote an address to write it here`),
+      line,
+    );
+  };
+  const expanded = new Map<string, Link[]>();
+  const expand = (stmt: UrlStmt, path: string[]): Link[] => {
+    const done = expanded.get(stmt.name);
+    if (done !== undefined) return done;
+    if (path.includes(stmt.name)) {
+      const loop = [...path.slice(path.indexOf(stmt.name)), stmt.name];
+      throw new SourceError(`url "${stmt.name}" reaches itself (${loop.join(' → ')}), so it never says where it goes — take one of them out`, stmt.line);
+    }
+    const links = flatten(stmt.entries, `url "${stmt.name}"`, stmt.line, [...path, stmt.name]);
+    expanded.set(stmt.name, links);
+    return links;
+  };
+  const flatten = (entries: LinkEntry[], subject: string, line: number, path: string[]): Link[] => {
+    const links: Link[] = [];
+    for (const entry of entries) {
+      let more: Link[];
+      if ('href' in entry) more = [entry];
+      else {
+        const found = declared.get(entry.ref);
+        if (found === undefined) throw unknown(entry.ref, line);
+        more = expand(found, path);
+      }
+      for (const link of more) {
+        if (links.some((had) => had.href === link.href)) {
+          const via = 'ref' in entry ? ` (through "${entry.ref}")` : '';
+          throw new SourceError(`${subject}: "${link.href}" is linked twice${via} — keep one`, line);
+        }
+        links.push(link);
+      }
+    }
+    return links;
+  };
+  for (const stmt of declared.values()) expand(stmt, []);
+  return statements.flatMap((stmt): Stmt[] => {
+    if (stmt.kind === 'url') return [];
+    if (!('attrs' in stmt) || stmt.attrs === undefined) return [stmt];
+    const listed = stmt.attrs[LINK_NAMES_KEY];
+    if (listed === undefined) return [stmt];
+    const subject = stmt.kind === 'node' ? `node "${stmt.name}"` : stmt.kind;
+    const links = flatten(JSON.parse(listed) as LinkEntry[], subject, stmt.line, []);
+    const { [LINK_NAMES_KEY]: _, ...attrs } = stmt.attrs;
+    attrs['url'] = links[0]!.href;
+    // As the parser does: the list is kept only when there is more than one bare address.
+    if (links.length > 1 || links.some((link) => link.name !== undefined || link.icon !== undefined)) attrs[LINKS_KEY] = JSON.stringify(links);
+    return [{ ...stmt, attrs } as Stmt];
+  });
+}
+
+/** `description for proxy, cache`: each name a box, or a named line, that has no description yet. */
+function attachDescriptions(attached: DescriptionStmt[], byName: Map<string, LayoutNode>, edges: LayoutEdge[]): void {
+  for (const stmt of attached) {
+    for (const target of stmt.targets!) {
+      const node = byName.get(target);
+      const lines = node ? [] : edges.filter((edge) => edge.name === target);
+      const things: { attrs: Attrs }[] = node ? [node] : lines;
+      if (things.length === 0) {
+        throw new SourceError(`description for "${target}": there is no box or named line called "${target}"`, stmt.line);
+      }
+      for (const thing of things) {
+        if (thing.attrs['description'] !== undefined) {
+          throw new SourceError(`description for "${target}": "${target}" already has a description — keep one`, stmt.line);
+        }
+        thing.attrs['description'] = stmt.text;
+      }
+    }
+  }
+}
+
 function collectIcons(statements: Stmt[], readIconFile: ((path: string) => string) | undefined): Map<string, Icon> {
   const icons = new Map<string, Icon>();
   for (const stmt of statements) {
@@ -809,6 +967,7 @@ function buildTree(
   styles: Map<string, Attrs>,
   defaults: Map<DefaultTarget, Attrs>,
   icons: ReadonlyMap<string, Icon>,
+  fontSize: number,
 ) {
   const nodes: LayoutNode[] = [];
   const byName = new Map<string, LayoutNode>();
@@ -921,7 +1080,11 @@ function buildTree(
       body,
       corners: 'rounded',
       text,
-      lines: linesFor(text, textAttrs, `"${stmt.name}"`, stmt.line),
+      lines: linesFor(text, textAttrs, `"${stmt.name}"`, stmt.line, {
+        styles,
+        fontSize,
+        base: fontSizeFor(kind, textAttrs, fontSize, stmt.line),
+      }),
       children: [],
       x: 0,
       y: 0,
@@ -1489,6 +1652,13 @@ function checkStyleKeys(statements: Stmt[]): void {
           stmt.line,
         );
       }
+      if (topKey(key) === 'description') {
+        throw new SourceError(
+          `style "${stmt.name}" has description:, which is about the things it describes rather than how they look — ` +
+            'to give several one text, write `description for a, b and c """…"""`',
+          stmt.line,
+        );
+      }
       if (topKey(key) === 'from' || topKey(key) === 'to') {
         throw new SourceError(
           `style "${stmt.name}" has ${key}:, which says where one line ends, so it is written on that edge`,
@@ -1695,8 +1865,8 @@ function buildEdges(
     // page selects a line by the same, so it is accepted.
     const texts = stmt.texts.map(({ text, textAttrs: own, place }) => {
       const textAttrs = { ...bracketOf('text', appearance), ...own };
-      const lines = linesFor(text, textAttrs, `edge ${what}`, stmt.line);
       const size = fontSizeFor('edge', textAttrs, fontSize, stmt.line);
+      const lines = linesFor(text, textAttrs, `edge ${what}`, stmt.line, { styles, fontSize, base: size });
       return {
         text,
         lines,
@@ -1704,7 +1874,7 @@ function buildEdges(
         place,
         size,
         width: widestLine(lines, measurer, size),
-        height: lines.length * measurer.lineHeight(size),
+        height: linesTall(lines, measurer, size),
       };
     });
     edges.push({
@@ -2062,13 +2232,15 @@ function bracketOf(key: string, attrs: Attrs): Attrs {
 }
 
 /**
- * Every style the markup in this file names, resolved to the color it lends.
+ * Every style the markup in this file names that lends a color, resolved to
+ * that color. A style may lend a size instead or as well; the runs carry that
+ * themselves, from `sizeRuns`.
  *
  * A style is the only thing markup may name — never a color — so that a marked
  * word borrows a meaning the file already has instead of restating a value that
  * goes stale the day the thing it means is recolored. Both ways that can fail
- * are refused by name: a style nobody declared, and one that says nothing about
- * text and so would lend nothing.
+ * are refused by name: a style nobody declared, and one that gives text neither
+ * a color nor a size and so would lend nothing.
  */
 function markupColors(
   nodes: LayoutNode[],
@@ -2094,14 +2266,14 @@ function markupColors(
         );
       }
       const color = style['text.color'];
-      if (color === undefined) {
+      if (color === undefined && style['text.size'] === undefined) {
         throw new SourceError(
-          `${what}: its text marks [${name}], and style "${name}" says nothing about text — ` +
-            `write \`style ${name}  text: (color: …)\``,
+          `${what}: its text marks [${name}], and style "${name}" gives text no color or size — ` +
+            `write \`style ${name}  text: (color: …)\` or \`text: (size: …)\``,
           line,
         );
       }
-      colors[name] = color;
+      if (color !== undefined) colors[name] = color;
     }
   }
   return colors;
@@ -2121,8 +2293,9 @@ function markupColors(
  * what makes markup general where the `subtext:` slice it replaced could only
  * ever reach the tail of a text.
  */
-function linesFor(text: string, textAttrs: Attrs, subject: string, line: number): Line[] {
+function linesFor(text: string, textAttrs: Attrs, subject: string, line: number, sizes?: TextSizes): Line[] {
   const lines = splitRuns(parseMarkup(text, subject, line));
+  if (sizes) sizeRuns(lines, sizes, line);
   const stated = textAttrs['wrap'];
   if (stated === undefined) return lines;
 
@@ -2130,7 +2303,34 @@ function linesFor(text: string, textAttrs: Attrs, subject: string, line: number)
   if (!Number.isInteger(columns) || columns < 1) {
     throw new SourceError(`wrap must be a whole number of characters, not "${stated}"`, line);
   }
-  return lines.flatMap((part) => wrapLine(part, columns));
+  return lines.flatMap((part) => wrapLine(part, columns, sizes?.base));
+}
+
+/**
+ * What a text's marked runs need to know their size: the file's styles, the
+ * document's size that `small` and `1.2` are measured from, and the size of the
+ * text the runs sit in.
+ */
+interface TextSizes {
+  styles: Map<string, Attrs>;
+  fontSize: number;
+  base: number;
+}
+
+/**
+ * Give each marked run the size its style states (design.org 7.1). A run whose
+ * style states no size, or the same size as the text it sits in, keeps none,
+ * so a text marked only for color measures exactly as it always did. A style
+ * that doesn't exist is left for `markupColors` to refuse by name.
+ */
+function sizeRuns(lines: Line[], sizes: TextSizes, line: number): void {
+  for (const run of lines.flat()) {
+    if (run.style === undefined) continue;
+    const stated = sizes.styles.get(run.style)?.['text.size'];
+    if (stated === undefined) continue;
+    const size = fontSizeFor('node', { size: stated }, sizes.fontSize, line);
+    if (size !== sizes.base) run.size = size;
+  }
 }
 
 function bounds(nodes: LayoutNode[], marks: LayoutMark[]) {

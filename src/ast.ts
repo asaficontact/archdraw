@@ -3,6 +3,8 @@
  * these types are a faithful record of what the author wrote, and no more.
  */
 
+import type { LinkEntry } from './links.js';
+
 export const DIRECTIONS = [
   'above',
   'below',
@@ -614,6 +616,13 @@ export interface EdgeTextPlace {
   /** `right of edge`: moved clear of the part of the line it landed on. */
   beside?: TextSide;
   /**
+   * How far a text beside its line moves, from its spot on the line, the stated way:
+   * `2 above edge` a distance; `clear above edge` (1) or `1/2 clear above edge` a
+   * fraction of the move that clears the line, `edge-gap:` included. Unstated, it is
+   * `clear`. Either may leave the text across its line, and that is meant.
+   */
+  rise?: { distance?: string; clear?: number; written: string };
+  /**
    * `left even with x right`: one axis set by a box, at most one per axis; the
    * other stays where the text would otherwise sit (design.org 7.3).
    */
@@ -965,10 +974,10 @@ export const PADDING_SIDE_KEYS = PADDING_SIDES.map((side) => `padding-${side}`);
 export const EDGE_ORDER_KEYS = ['top-edge-order', 'bottom-edge-order', 'left-edge-order', 'right-edge-order'] as const;
 
 export const ATTR_KEYS: Record<Kind, readonly string[]> = {
-  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...PADDING_SIDE_KEYS, ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
-  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
-  none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'depth', ...EDGE_ORDER_KEYS],
-  edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'depth'],
+  shape: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...PADDING_SIDE_KEYS, ...SIZE_KEY_NAMES, 'heading', 'join-with', 'badge', 'cards', 'shape', 'fill', 'border', 'corners', 'text', 'url', 'description', 'depth', ...EDGE_ORDER_KEYS],
+  icon: ['style', 'overlap', 'icon', 'join-with', 'text', 'url', 'description', 'depth', ...EDGE_ORDER_KEYS],
+  none: ['style', 'overlap', 'layout', 'gather-children', 'padding', ...SIZE_KEY_NAMES, 'heading', 'join-with', 'shape', 'text', 'url', 'description', 'depth', ...EDGE_ORDER_KEYS],
+  edge: ['style', 'from', 'to', 'via', 'from-mark', 'to-mark', 'line', 'text', 'url', 'description', 'depth'],
 };
 
 /**
@@ -1021,7 +1030,45 @@ export interface IconStmt {
   line: number;
 }
 
-export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt | PointStmt | RegionStmt | BundleStmt;
+/** Where `description: notes` keeps the name until `resolve` swaps in the text. */
+export const DESCRIPTION_NAME_KEY = 'description.name';
+
+/**
+ * `description for proxy, cache """…"""` attaches one text to things already
+ * named; `description notes """…"""` declares a named one, which a box or a
+ * line takes with `description: notes`. The text is a small Markdown subset,
+ * shown in the page's panel and, marks stripped, as an SVG's hover text.
+ */
+export interface DescriptionStmt {
+  kind: 'description';
+  /** The declared name, for the named form. */
+  name?: string;
+  /** The boxes and lines named after `for`, for the at-a-distance form. */
+  targets?: string[];
+  text: string;
+  line: number;
+}
+
+/**
+ * Where a `url:` that names declared links keeps its list, declared names and
+ * quoted addresses in the order written, until `resolve` swaps each name for
+ * the links it declares.
+ */
+export const LINK_NAMES_KEY = 'url.names';
+
+/**
+ * `url orders-docs "https://…" (name: "Docs", icon: "D")` declares a link once,
+ * with its name and badge, for `url: orders-docs`. A declaration may hold
+ * several links, each a quoted address or another declared name: a bundle.
+ */
+export interface UrlStmt {
+  kind: 'url';
+  name: string;
+  entries: LinkEntry[];
+  line: number;
+}
+
+export type Stmt = NodeStmt | EdgeStmt | StyleStmt | DiagramStmt | DefaultStmt | IconStmt | PointStmt | RegionStmt | BundleStmt | DescriptionStmt | UrlStmt;
 
 export interface Document {
   statements: Stmt[];
