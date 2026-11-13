@@ -1,4 +1,4 @@
-# Syntax reference — 0.30.0
+# Syntax reference — 0.30.1
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -1451,6 +1451,10 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.30.1**
+
+- Selecting something whose statement runs over several lines marks every line of it in the source, not just the first.
 
 **0.30.0**
 
