@@ -1,6 +1,8 @@
 import type { Finding } from './checks.js';
+import { SourceError } from './errors.js';
 import type { DrawOptions } from './index.js';
-import { dataOf, partsOf, type PageParts } from './page-data.js';
+import { dataOf, palettes, partsOf, type PageParts } from './page-data.js';
+import { DEFAULT_THEME } from './themes.js';
 import { PAN_ZOOM } from './viewer.js';
 
 /**
@@ -25,6 +27,115 @@ export function drawPage(
   return { html: page(parts, editing ?? null), findings: parts.findings };
 }
 
+/** One diagram on a page of several: its source, its file's name, and the label the page picks it by. */
+/** A grid's rows and columns, in order, each with its label, and what each axis is. */
+export interface PageGrid {
+  rowsName?: string;
+  columnsName?: string;
+  rows: { name: string; label: string }[];
+  columns: { name: string; label: string }[];
+}
+
+/** A spec's grid as the page carries it: names and labels, without the lines they were stated on. */
+export function pageGrid(grid: { rowsName?: string; columnsName?: string; rows: { name: string; label: string }[]; columns: { name: string; label: string }[] }): PageGrid {
+  return {
+    ...(grid.rowsName !== undefined ? { rowsName: grid.rowsName } : {}),
+    ...(grid.columnsName !== undefined ? { columnsName: grid.columnsName } : {}),
+    rows: grid.rows.map(({ name, label }) => ({ name, label })),
+    columns: grid.columns.map(({ name, label }) => ({ name, label })),
+  };
+}
+
+export interface ListedDiagram {
+  source: string;
+  file: string;
+  label?: string;
+  /** The group it is listed under, one of the page's `groups`; none before the first. */
+  group?: string;
+  /** In a grid, its cell, by its row's and its column's names. */
+  cell?: { row: string; column: string };
+  options?: DrawOptions;
+  /** Served: the diagram's path inside the folder served, which the page follows it by. */
+  path?: string;
+}
+
+/**
+ * `reladraw render --page` of a page spec, several files or a folder: one
+ * page holding every diagram. It opens on an overview of them all, each under
+ * its label; a diagram opened from there fills the page as a page of one
+ * does, with a drop-down in the bar to switch to another and the page's title
+ * to go back. `title` heads the page. The overview is in `theme`, whatever
+ * theme the diagram last open was in. Findings come back with the file each
+ * belongs to. Served (`editing`), it is the page `reladraw serve` follows its
+ * files on, and a diagram that doesn't draw yet is drawn empty, not refused.
+ * `groups` are the spec's groups in order, empty ones included: each heads
+ * the diagrams listed under it, after those listed before any group.
+ */
+export function drawListPage(
+  title: string,
+  diagrams: ListedDiagram[],
+  at: Date = new Date(),
+  theme: string = DEFAULT_THEME,
+  editing?: Extract<Editing, { kind: 'list' }>,
+  groups: string[] = [],
+  grid?: PageGrid,
+): { html: string; findings: { file: string; findings: Finding[] }[] } {
+  const axisLabel = (axis: { name: string; label: string }[], name: string) => axis.find((one) => one.name === name)?.label ?? name;
+  const all = diagrams.map((one, index) => {
+    try {
+      return { one, parts: partsOf(one.source, one.file, one.options ?? {}, at) };
+    } catch (error) {
+      if (!(error instanceof SourceError)) throw error;
+      // Served, a diagram that doesn't draw yet gets an empty drawing; its
+      // text arrives with the page's first events, fails there too, and the
+      // page says why, then draws it as soon as its file does.
+      if (editing) return { one, parts: partsOf('', one.file, {}, at) };
+      throw new ListedDiagramError(index, error);
+    }
+  });
+  // Served, a page may list nothing yet, as a spec whose diagrams aren't written.
+  const first = all[0]?.parts ?? partsOf('', 'diagram.reladraw', {}, at);
+  const list = {
+    title,
+    theme,
+    palettes: palettes(),
+    groups,
+    ...(grid ? { grid } : {}),
+    items: all.map(({ one, parts }, i) => ({
+      // A cell is labeled by its row and its column.
+      label: grid && one.cell ? `${axisLabel(grid.rows, one.cell.row)} · ${axisLabel(grid.columns, one.cell.column)}` : one.label ?? parts.title,
+      ...(one.group !== undefined ? { group: one.group } : {}),
+      ...(one.cell ? { cell: one.cell } : {}),
+      // The label as the spec states it, apart from the title it falls back to.
+      ...(editing ? { file: one.path ?? one.file, ...(one.label !== undefined ? { stated: one.label } : {}) } : {}),
+      title: parts.title,
+      drawn: parts.drawn,
+      // The first is the page's own data, so it isn't carried twice.
+      data: i === 0 ? null : dataOf(parts),
+    })),
+  };
+  const html = page(first, editing ?? null, undefined, list);
+  return { html, findings: all.map(({ one, parts }) => ({ file: one.file, findings: parts.findings })) };
+}
+
+/** A diagram on a page of several that doesn't draw: which one, by its place in the list, and why. */
+export class ListedDiagramError extends Error {
+  constructor(
+    readonly index: number,
+    override readonly cause: SourceError,
+  ) {
+    super(cause.message);
+  }
+}
+
+type ListData = {
+  title: string;
+  theme: string;
+  palettes: Record<string, { colors: Record<string, string>; scheme: string }>;
+  groups: string[];
+  items: { label: string; group?: string; file?: string; stated?: string; title: string; drawn: string; data: unknown }[];
+};
+
 /**
  * How a page's source can be edited, when it can: served by `reladraw serve`
  * tied to a file, by its path inside the folder served, which the page asks
@@ -36,7 +147,17 @@ export function drawPage(
 export type Editing =
   | { kind: 'file'; file: string }
   | { kind: 'local'; folder: string; examples: Example[] }
-  | { kind: 'hosted'; examples: Example[] };
+  | { kind: 'hosted'; examples: Example[] }
+  | { kind: 'list'; from: ListFrom; folder: string };
+
+/**
+ * What a served page of several diagrams lists: a spec's diagrams, a folder's
+ * `.reladraw` files, or the files given, each by its path inside the folder
+ * served. The page follows the spec and each diagram, and edits whichever is
+ * in view: the spec on the overview, which a folder or files imply until the
+ * first Save writes one.
+ */
+export type ListFrom = { spec: string } | { folder: string } | { files: string[] };
 
 /** An example a page with no file offers: what it is called, one line about it, and its source. */
 export interface Example {
@@ -87,26 +208,31 @@ interface Framing {
   library: string;
 }
 
-function page(parts: PageParts, editing: Editing | null, framing?: Framing): string {
+function page(parts: PageParts, editing: Editing | null, framing?: Framing, list?: ListData): string {
   const { themes, current } = parts;
   const shown = themes[current]!;
-  const data = { ...dataOf(parts), edit: editing };
-  const title = framing?.title ?? parts.title;
-  const noFile = editing !== null && editing.kind !== 'file';
+  // A list opens on its overview, in the page's own colors.
+  const opening = list ? list.palettes[list.theme]! : shown;
+  const data ={ ...dataOf(parts), edit: editing, ...(list ? { list } : {}) };
+  const title = list?.title ?? framing?.title ?? parts.title;
+  const noFile = editing !== null && (editing.kind === 'local' || editing.kind === 'hosted');
+  // A served list's spec may be implied, and its first Save names a file.
+  const savesAs = noFile || editing?.kind === 'list';
   const filled: Record<string, string> = {
     panzoom: PAN_ZOOM,
-    scheme: shown.scheme,
+    scheme: opening.scheme,
     title: escapeMarkup(title),
     head: framing?.head ?? '',
-    heading: escapeMarkup(framing?.heading ?? parts.title),
-    drawn: escapeMarkup(framing?.drawn ?? parts.drawn),
+    heading: escapeMarkup(list?.title ?? framing?.heading ?? parts.title),
+    drawn: escapeMarkup(list ? `${list.items.length} diagrams` : (framing?.drawn ?? parts.drawn)),
     links: noFile ? LINKS : '',
+    pick: list ? PICK : '',
     colors: [
-      ...Object.entries(shown.colors).map(([key, value]) => `${key}: ${value};`),
+      ...Object.entries(opening.colors).map(([key, value]) => `${key}: ${value};`),
       '--sel: #e0b25a; --up: #22b98c; --down: #e5484d;',
     ].join(' '),
     cheatsheet: editing ? CHEATSHEET : '',
-    dialogs: (editing ? FORMAT_DIALOG : '') + (noFile ? DIALOGS : ''),
+    dialogs: (editing ? FORMAT_DIALOG : '') + (savesAs ? DIALOGS : ''),
     drawing: shown.tagged,
     // A literal </script> in the library's text would end its tag early.
     library: framing?.library ? `<script>\n${framing.library.replace(/<\/script/gi, '<\\/script')}\n</script>` : '',
@@ -315,6 +441,12 @@ const PAGE = `<!doctype html>
   #view g[data-node].up > a > :is(rect, path, circle, ellipse, polygon)[stroke]:not([stroke="none"]) { stroke: var(--up); stroke-width: 2; }
   #view g[data-node].down > :is(rect, path, circle, ellipse, polygon)[stroke]:not([stroke="none"]),
   #view g[data-node].down > a > :is(rect, path, circle, ellipse, polygon)[stroke]:not([stroke="none"]) { stroke: var(--down); stroke-width: 2; }
+  /* Bare text has no outline for the glow to follow, and a glow round each
+     letter only blurs them, so its text takes the color instead. */
+  #view g[data-node].bare { filter: none; }
+  #view g[data-node].bare.sel text { fill: var(--sel); }
+  #view g[data-node].bare.up text { fill: var(--up); }
+  #view g[data-node].bare.down text { fill: var(--down); }
   #view g[data-edge].sel :is(line, path[fill="none"], polyline):not(.target) { stroke: var(--sel); stroke-width: 2; }
   #view g[data-edge].up :is(line, path[fill="none"], polyline):not(.target) { stroke: var(--up); stroke-dasharray: 8 5; animation: run .9s linear infinite; }
   #view g[data-edge].down :is(line, path[fill="none"], polyline):not(.target) { stroke: var(--down); stroke-dasharray: 8 5; animation: run .9s linear infinite; }
@@ -382,16 +514,18 @@ const PAGE = `<!doctype html>
     background: color-mix(in srgb, var(--ink) 4%, var(--page));
   }
   #editor[hidden] { display: none; }
-  /* The picture's controls float over it: Check at its top left, the zoom
-     on a card at its bottom right. They sit beside the view, not in it, so a
-     press on them never starts a pan. */
+  /* The picture's controls float over its foot: Check at the bottom left, the
+     zoom on a card at the bottom right. They sit beside the view, not in it,
+     so a press on them never starts a pan. */
   #canvas { position: relative; flex: 1; display: flex; min-height: 0; }
   .floating { position: absolute; z-index: 4;
     background: color-mix(in srgb, var(--ink) 7%, var(--page));
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); }
   .floating[hidden] { display: none; }
-  #check { left: 12px; top: 12px; padding: 5px 14px; }
+  #check { left: 12px; bottom: 12px; padding: 5px 14px; }
   #check:hover { background: color-mix(in srgb, var(--ink) 14%, var(--page)); }
+  /* The keys' strip shares the bottom left: it starts after Check. */
+  #canvas:has(#check:not([hidden])) #strip { left: 92px; max-width: calc(100% - 370px); }
   #zoom-card { right: 12px; bottom: 12px; display: flex; align-items: center; gap: 5px; padding: 4px 5px; border-radius: 9px;
     border: 1px solid color-mix(in srgb, var(--rule) 55%, transparent); }
   /* The card a shade darker than its buttons, so each reads as a button. */
@@ -466,6 +600,140 @@ const PAGE = `<!doctype html>
   /* ---- a page with no file: the playground ---- */
   /* GitHub, as its mark beside the name. */
   .heading h1 { display: inline; vertical-align: middle; }
+  /* A page of several diagrams: its title goes back to the overview, and the drop-down switches. */
+  .heading h1.back { cursor: pointer; border-radius: 4px; }
+  .heading h1.back::before { content: '← '; color: var(--muted); }
+  .heading h1.back:hover { color: var(--accent); }
+  .heading h1.back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .menu.pick { display: inline-block; vertical-align: middle; margin-left: 10px; }
+  .menu.pick[hidden] { display: none; }
+  .menu.pick > button { font-size: 13px; padding: 3px 8px; white-space: nowrap; }
+  .menu.pick > button .name { display: inline-block; max-width: 14em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+  .menu.pick > .menu-list { left: 0; right: auto; max-height: 70vh; max-width: calc(100vw - 32px); overflow: auto; }
+  #pick-rows .line { display: flex; align-items: center; gap: 8px; width: 100%; }
+  #pick-rows .name { flex: 1; }
+  #pick-rows .row[aria-checked="true"] .name { font-weight: 600; }
+  #pick-rows .title { font-size: 11px; color: var(--muted); }
+  #pick-rows.tiles:not([hidden]) { display: grid; grid-template-columns: repeat(var(--across), 11rem); gap: 8px; }
+  #pick-rows.tiles .row {
+    flex-direction: column; align-items: stretch; gap: 4px; padding: 6px;
+    border: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); border-radius: 6px;
+  }
+  #pick-rows.tiles .row[aria-checked="true"] { border-color: var(--sel); box-shadow: inset 0 0 0 1px var(--sel); }
+  #pick-rows.tiles .mark { display: none; }
+  #pick-rows.tiles .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pick-rows .thumb {
+    height: 6rem; display: flex; align-items: center; justify-content: center; overflow: hidden;
+    border-radius: 4px;
+  }
+  #pick-rows .thumb svg { width: 100%; height: 100%; }
+  #pick-rows.columns:not([hidden]) {
+    display: grid; grid-auto-flow: column; gap: 2px 10px;
+    grid-template-rows: repeat(var(--down), auto); grid-template-columns: repeat(var(--across), 18rem);
+  }
+  /* Grouped, each group is a box, sized to what is in it; the boxes run in
+     order and wrap, every box on a line as tall as the tallest. */
+  #pick-rows.boxed:not([hidden]) {
+    display: flex; flex-direction: row; flex-wrap: wrap; align-items: stretch; gap: 8px;
+    width: max-content; max-width: min(calc(100vw - 32px), 60rem);
+  }
+  /* A group's box and the cards in it: blue-grays, the box a step from the
+     page and the cards a step further (picked 2026-11-14 from a mock-up). */
+  :root { --group-bg: #161b24; --group-line: #283042; --card-bg: #1f2633; --card-line: #36405a; --card-over: #283042; }
+  :root[data-scheme="light"] { --group-bg: #e8edf5; --group-line: #cdd6e4; --card-bg: #f7f9fc; --card-line: #b8c4d8; --card-over: #ffffff; }
+  #pick-rows .group-box {
+    display: flex; flex-direction: column; padding: 4px 6px 6px; border-radius: 8px;
+    border: 1px solid var(--group-line); background: var(--group-bg);
+  }
+  #pick-rows .group-box .row { background: var(--card-bg); border-color: var(--card-line); }
+  #pick-rows .group-box .row:hover, #pick-rows .group-box .row.cur { background: var(--card-over); }
+  #pick-rows .group-box > .group { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+  #pick-rows .group-box > .group { border-bottom: 0; padding: 2px 2px 5px; margin: 0; }
+  #pick-rows .group-box .inside { display: grid; grid-template-columns: repeat(var(--across), 11rem); gap: 8px; }
+  #pick-rows .group-box.empty { min-width: 8rem; }
+  .group-box .group.ungrouped { opacity: 0.7; }
+  .group-box .none { margin: auto; padding: 8px; font-size: 12px; font-style: italic; color: var(--muted); }
+  #pick-rows.flow:not([hidden]) { display: flex; flex-direction: row; gap: 10px; align-items: flex-start; }
+  #pick-rows.flow > .column { width: 18rem; display: flex; flex-direction: column; gap: 2px; }
+  #pick-rows .group {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+    padding: 8px 6px 3px; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); margin-bottom: 2px;
+  }
+  #pick-rows .group:first-child { padding-top: 2px; }
+  #pick-rows.flow .text, #pick-rows.columns .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  #pick-rows .name, #pick-rows.columns .title, #pick-rows.flow .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header:has(.tools.keyed) .menu.pick kbd.tag { display: inline; }
+  header:has(.tools.keyed) .menu.pick { outline: 2px solid var(--sel); outline-offset: 4px; border-radius: 6px; }
+  #overview .card { position: relative; }
+  #overview.keyed .card kbd.tag { display: inline; top: -8px; right: -7px; font-size: 13px; padding: 1px 6px; }
+  #overview { flex: 1; overflow: auto; padding: 20px; }
+  /* On the overview the picture and its panel give way to the cards; the
+     source, when a served page shows it, is the spec, beside them. */
+  main.on-overview > #picture, main.on-overview > #side { display: none; }
+  #overview .problems { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  #overview .problems li { padding: 6px 10px; border-radius: 6px; border-left: 3px solid var(--down); background: color-mix(in srgb, var(--down) 10%, transparent); }
+  #overview .problems .where { color: var(--muted); margin-right: 6px; }
+  #overview .problems .where.goto { cursor: pointer; text-decoration: underline; }
+  #overview .card .why { font-size: 12px; color: var(--down); white-space: pre-wrap; }
+  #overview .card:disabled { opacity: 0.6; cursor: default; }
+  #overview .card .dirty, #pick-rows .dirty { color: var(--sel); margin-left: 4px; }
+  #overview .group-boxes { display: flex; flex-wrap: wrap; align-items: stretch; gap: 16px; }
+  #overview .group-box {
+    flex: 0 0 auto; max-width: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px;
+    border: 1px solid var(--group-line); border-radius: 12px; background: var(--group-bg);
+  }
+  #overview .group-box .card { background: var(--card-bg); border-color: var(--card-line); }
+  #overview .group-box .card:hover { background: var(--card-over); }
+  #overview h2.group { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+  #overview .group-box.empty { min-width: 12rem; }
+  #overview h2.group { font-size: 15px; font-weight: 600; margin: 0; }
+  /* As many cards across as the overview holds, set by fitGroups(). */
+  #overview .group-box .inside { display: grid; grid-template-columns: repeat(var(--across, 1), min(300px, calc(100vw - 100px))); gap: 16px; }
+  #overview .group-box .card { min-width: 0; }
+  #overview .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+  #overview .card {
+    display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); border-radius: 10px; background: transparent;
+  }
+  #overview .card:hover { border-color: var(--accent); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  #overview .card .label { font-size: 15px; font-weight: 600; }
+  #overview .card .title { font-size: 12px; color: var(--muted); }
+  #overview .card .key { font-size: 11px; color: var(--muted); margin-left: auto; }
+  #overview .card .top { display: flex; align-items: baseline; gap: 8px; }
+  #overview .thumb { height: 200px; margin-top: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 6px; }
+  /* Scaled to fill its card either way, keeping its shape: a wide diagram isn't left a sliver. */
+  #overview .thumb svg { width: 100%; height: 100%; }
+  /* A grid: the columns' labels across the top, the rows' down the left, the
+     axis names in the corner, and each cell a drawing with no label of its
+     own. A cell with no diagram is a dashed outline. The same table is the
+     drop-down, the open diagram's row and column tinted. */
+  .grid-table:not([hidden]) { display: grid; grid-template-columns: auto repeat(var(--across), var(--cell)); gap: var(--gap); align-items: stretch; justify-content: start; }
+  #overview .grid-table { --cell: minmax(140px, 260px); --gap: 12px; }
+  .grid-table .corner { white-space: nowrap; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); padding: 0 10px 6px 0; }
+  .grid-table .column-head { align-self: end; text-align: center; font-weight: 600; color: color-mix(in srgb, var(--accent) 70%, var(--ink)); padding: 0 4px 6px; border-bottom: 1px solid var(--group-line); }
+  .grid-table .row-head { display: flex; align-items: center; justify-content: flex-end; text-align: right; font-weight: 600; color: color-mix(in srgb, var(--accent) 70%, var(--ink)); padding: 0 12px 0 0; border-right: 1px solid var(--group-line); }
+  #overview .grid-table .column-head, #overview .grid-table .row-head { font-size: 14px; }
+  .grid-table .empty-cell { border: 1px dashed color-mix(in srgb, var(--rule) 80%, transparent); border-radius: 8px; min-height: 2rem; }
+  #overview .grid-table .card { background: var(--card-bg); border-color: var(--card-line); padding: 8px; }
+  #overview .grid-table .card:hover { background: var(--card-over); border-color: var(--accent); }
+  #overview .grid-table .thumb { height: 150px; margin-top: 0; }
+  #overview .grid-table .empty-cell { min-height: 150px; }
+  #pick-rows.gridded:not([hidden]) { --cell: 9rem; --gap: 6px; width: max-content; max-width: calc(100vw - 32px); }
+  #pick-rows.gridded.plain:not([hidden]) { --cell: minmax(2.2rem, 6rem); }
+  #pick-rows.gridded .column-head, #pick-rows.gridded .row-head { font-size: 12px; }
+  #pick-rows.gridded .row {
+    flex-direction: column; align-items: stretch; justify-content: center; gap: 0; padding: 7px; position: relative;
+    background: var(--card-bg); border: 1px solid var(--card-line); border-radius: 6px;
+  }
+  #pick-rows.gridded .row:hover, #pick-rows.gridded .row.cur { background: var(--card-over); }
+  #pick-rows.gridded .row.tint, #pick-rows.gridded .empty-cell.tint { background: color-mix(in srgb, var(--accent) 30%, var(--card-bg)); }
+  #pick-rows.gridded .row.tint.cur, #pick-rows.gridded .row.tint:hover { background: color-mix(in srgb, var(--accent) 40%, var(--card-bg)); }
+  #pick-rows.gridded .row-head.tint, #pick-rows.gridded .column-head.tint { color: var(--ink); }
+  #pick-rows.gridded .row[aria-checked="true"] { border-color: var(--sel); box-shadow: inset 0 0 0 1px var(--sel); }
+  #pick-rows.gridded .thumb { height: 4.5rem; }
+  #pick-rows.gridded.plain .row { min-height: 2.2rem; }
+  #pick-rows.gridded .line { position: absolute; top: 2px; right: 3px; width: auto; }
+  #pick-rows.gridded .mark, #pick-rows.gridded .name { display: none; }
   .links { display: inline-flex; vertical-align: middle; margin-left: 10px; }
   .links a { display: inline-flex; color: var(--muted); padding: 2px; border-radius: 4px; }
   .links a:hover { color: var(--ink); }
@@ -473,14 +741,13 @@ const PAGE = `<!doctype html>
   /* A link as a row of a menu, like the buttons around it. */
   .menu-list a.row { color: var(--ink); text-decoration: none; font-size: 13px; border: 1px solid transparent; border-radius: 6px; }
   .menu-list a.row:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
-  #help-menu[hidden] { display: none; }
   .drawn:empty { display: none; }
   /* The divider between the source and the picture: dragged, or moved with the arrows. */
   #split { flex: none; width: 6px; margin: 0 -3px; z-index: 2; cursor: col-resize; touch-action: none; }
   #split[hidden] { display: none; }
   #split:hover, #split.dragging, #split:focus-visible { background: color-mix(in srgb, var(--accent) 45%, transparent); outline: 0; }
   body.dragging { cursor: col-resize; user-select: none; }
-  /* The cheatsheet: a button in the source's bar opens a large window, a
+  /* The cheatsheet: a row of the Help menu opens a large window, a
      card per topic, each row an example in the editor's colors beside what
      it does. The filter narrows the rows as you type. */
   #cheatsheet { width: min(1180px, calc(100vw - 32px)); height: min(820px, calc(100vh - 32px)); max-width: none; max-height: none; }
@@ -515,6 +782,13 @@ const PAGE = `<!doctype html>
   .cs-note code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink); }
   .cs-none { margin: 0; padding: 24px 16px; color: var(--muted); }
   .cs-none[hidden] { display: none; }
+  /* The keyboard shortcuts: the cheatsheet's cards, for the page's keys. */
+  #keys-sheet { width: min(820px, calc(100vw - 32px)); max-width: none; max-height: calc(100vh - 32px); }
+  #keys-sheet[open] { display: flex; flex-direction: column; }
+  #keys-sheet .ks-grid { min-height: 0; overflow: auto; padding: 14px 16px 4px; columns: 300px 2; column-gap: 14px; }
+  #keys-sheet .cs-card { break-inside: avoid; margin-bottom: 14px; }
+  #keys-sheet .cs-row { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+  #keys-sheet .cs-row > div kbd { color: var(--ink); margin-right: 3px; }
   dialog { padding: 0; color: var(--ink); background: var(--page); overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); border-radius: 6px; }
   dialog::backdrop { background: rgba(0, 0, 0, .6); }
@@ -571,7 +845,7 @@ const PAGE = `<!doctype html>
 <body>
 <header>
   <div class="heading">
-    <h1>{{heading}}</h1>{{links}}
+    <h1>{{heading}}</h1>{{links}}{{pick}}
     <p class="drawn">{{drawn}}</p>
   </div>
   <span id="mode" class="mode" role="group" aria-label="Mode" hidden>
@@ -609,6 +883,15 @@ const PAGE = `<!doctype html>
         <span id="theme-list" class="menu-list sub" role="menu" hidden></span>
       </span>
     </span>
+    <span class="menu">
+      <button id="help-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="help-list">Help ▾<kbd class="tag">h</kbd></button>
+      <span id="help-list" class="menu-list" role="menu" hidden>
+        <button id="cheat-open" class="row" type="button" role="menuitem" data-key="?" title="The language on one screen" hidden><span class="name">Language cheatsheet</span><kbd>?</kbd></button>
+        <button id="keys-open" class="row" type="button" role="menuitem" data-key="k" title="Every key the page answers to"><span class="name">Keyboard shortcuts</span><kbd>k</kbd></button>
+        <hr>
+        <a id="syntax-link" class="row" role="menuitem" data-key="r" href="https://github.com/reladraw/reladraw/blob/main/SYNTAX.md" target="_blank" rel="noopener" title="The full syntax reference, on GitHub"><span class="name">Syntax reference ↗</span><kbd>r</kbd></a>
+      </span>
+    </span>
     <button id="full" type="button" title="Full screen (f)"><span class="label">Full screen</span><kbd class="tag">f</kbd></button>
   </div>
 </header>
@@ -631,13 +914,6 @@ const PAGE = `<!doctype html>
       <button id="format" type="button" title="Lay the source out again, as reladraw format does, with the nearest .reladraw-format (Shift+Alt+F)"><span class="name">Format</span></button>
       <button id="format-open" type="button" aria-haspopup="dialog" title="How Format lays the source out" hidden>Format settings…</button>
       <button id="write" type="button" title="Write the source to the file (⌘S or Ctrl+S)"><span class="name">Save</span><kbd>⌘S</kbd></button>
-      <span class="menu" id="help-menu" hidden>
-        <button id="help-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="help-list"><span class="name">Help ▾</span></button>
-        <span id="help-list" class="menu-list" role="menu" hidden>
-          <button id="cheat-open" class="row" type="button" role="menuitem" title="The language on one screen"><span class="name">Cheatsheet</span><kbd>?</kbd></button>
-          <a id="syntax-link" class="row" role="menuitem" href="https://github.com/reladraw/reladraw/blob/main/SYNTAX.md" target="_blank" rel="noopener" title="The full syntax reference, on GitHub"><span class="name">Syntax reference ↗</span></a>
-        </span>
-      </span>
     </div>
     <div class="code">
       <pre id="paint" aria-hidden="true"></pre>
@@ -645,6 +921,7 @@ const PAGE = `<!doctype html>
     </div>{{cheatsheet}}
   </section>
   <div id="split" role="separator" aria-orientation="vertical" aria-label="Resize the source and the diagram" tabindex="0" title="Drag to resize; double-click to reset" hidden></div>
+  <section id="overview" aria-label="Every diagram on this page" hidden></section>
   <div id="picture">
   <div id="canvas">
   <div id="strip" class="floating" hidden><span class="crumbs"></span><span class="hint"></span></div>
@@ -677,12 +954,60 @@ const PAGE = `<!doctype html>
     </aside>
   </div>
 </main>{{dialogs}}
+<dialog id="keys-sheet" aria-label="Keyboard shortcuts">
+  <div class="bar"><h2>Keyboard shortcuts</h2><button type="button" data-close>Close</button></div>
+  <div class="ks-grid">
+    <section class="cs-card" style="--hue: var(--syn-keyword)"><h3>The picture</h3>
+      <div class="cs-row"><div><kbd>+</kbd><kbd>−</kbd></div><span>zoom in, zoom out</span></div>
+      <div class="cs-row"><div><kbd>0</kbd></div><span>fit the diagram to the window</span></div>
+      <div class="cs-row"><div><kbd>1</kbd></div><span>100%</span></div>
+      <div class="cs-row"><div><kbd>g</kbd></div><span>grab the diagram, then pan it with the arrows or <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd>; Shift pans further</span></div>
+      <div class="cs-row"><div><kbd>p</kbd></div><span>show or hide the side panel</span></div>
+      <div class="cs-row"><div><kbd>f</kbd></div><span>full screen</span></div>
+    </section>
+    <section class="cs-card" style="--hue: var(--syn-type)" data-on="list"><h3>Diagrams</h3>
+      <div class="cs-row"><div><kbd>o</kbd></div><span>the overview of every diagram on this page</span></div>
+      <div class="cs-row"><div><kbd>[</kbd><kbd>]</kbd></div><span>the diagram before or after this one; from the overview, the first or last</span></div>
+      <div class="cs-row"><div><kbd>s</kbd></div><span>on the overview, a letter on every diagram; type one to open it</span></div>
+      <div class="cs-row"><div><kbd>m</kbd> <kbd>d</kbd></div><span>with a diagram open, the drop-down of every diagram</span></div>
+    </section>
+    <section class="cs-card" style="--hue: var(--syn-relation)"><h3>Selecting</h3>
+      <div class="cs-row"><div><kbd>s</kbd></div><span>a letter on every box and line; type one to select it</span></div>
+      <div class="cs-row"><div><kbd>/</kbd></div><span>filter what gets a letter: words in its text, or is:node, is:edge, is:container, style:name</span></div>
+      <div class="cs-row"><div><kbd>n</kbd></div><span>letters on what the selection connects to</span></div>
+      <div class="cs-row"><div><kbd>i</kbd></div><span>letters on what is inside the selection, and the box it is in</span></div>
+      <div class="cs-row"><div><kbd>l</kbd></div><span>letters on the selection's links, to open one</span></div>
+      <div class="cs-row"><div><kbd>⌫</kbd></div><span>step back: let go of a grab, then a lit finding, then the selection</span></div>
+      <div class="cs-row"><div><kbd>Esc</kbd></div><span>back to the plain diagram, from anywhere</span></div>
+    </section>
+    <section class="cs-card" style="--hue: var(--syn-value)"><h3>Menus</h3>
+      <div class="cs-row"><div><kbd>m</kbd></div><span>the bar: each control shows its letter</span></div>
+      <div class="cs-row"><div><kbd>m</kbd> <kbd>s</kbd></div><span>Settings</span></div>
+      <div class="cs-row"><div><kbd>m</kbd> <kbd>x</kbd></div><span>Export</span></div>
+      <div class="cs-row" data-on="file"><div><kbd>m</kbd> <kbd>o</kbd></div><span>Versions</span></div>
+      <div class="cs-row"><div><kbd>m</kbd> <kbd>h</kbd></div><span>Help</span></div>
+      <div class="cs-row"><div><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></div><span>in a menu, choose a row; or press the row's letter</span></div>
+      <div class="cs-row"><div><kbd>⌫</kbd></div><span>up one level</span></div>
+    </section>
+    <section class="cs-card" style="--hue: var(--syn-attribute)" data-on="edit"><h3>Editing</h3>
+      <div class="cs-row"><div><kbd>e</kbd></div><span>show or hide the source</span></div>
+      <div class="cs-row"><div><kbd>c</kbd></div><span>Check: look for overlaps and other places the picture may not read as meant, unless Check as I type is on</span></div>
+      <div class="cs-row"><div><kbd>?</kbd></div><span>the language cheatsheet</span></div>
+      <div class="cs-row"><div><kbd>⌘S</kbd> or <kbd>Ctrl+S</kbd></div><span>save</span></div>
+      <div class="cs-row"><div><kbd>Shift+Alt+F</kbd></div><span>format the source</span></div>
+      <div class="cs-row"><div><kbd>Esc</kbd></div><span>in the source, leave it so the keys above work again</span></div>
+    </section>
+  </div>
+</dialog>
 {{library}}
 <script>
 (function () {
   var DATA = {{data}};
   // How the source is edited, or null on a snapshot, which has no editor.
   var EDIT = DATA.edit;
+  // A page of several diagrams: its title and its diagrams, the first of
+  // which is the page's own data. Null on a page of one.
+  var LIST = DATA.list || null;
   // The page as written, taken before anything below changes it, so This
   // page saves what reladraw wrote rather than the current zoom and highlights.
   // A page with an editor makes a fresh snapshot instead (below).
@@ -1124,7 +1449,7 @@ const PAGE = `<!doctype html>
       list.append(wrong);
     }
     if (!checked) {
-      list.append(element('li', 'none', 'Automatic checking is off. Press Check in the bar above to look for overlaps and other places the picture may not read as meant.'));
+      list.append(element('li', 'none', 'Automatic checking is off. Press Check, above the source, to look for overlaps and other places the picture may not read as meant.'));
     } else {
       if (stale()) list.append(element('li', 'again', againText()));
       if (found().length === 0) list.append(element('li', 'none', 'No findings.'));
@@ -1261,6 +1586,10 @@ const PAGE = `<!doctype html>
         wide.classList.add('target');
         stroke.parentNode.insertBefore(wide, stroke.nextSibling);
       });
+    });
+    // A node drawn as text alone, with no shape round it, is lit differently.
+    each(svg.querySelectorAll('g[data-node]'), function (group) {
+      if (!group.querySelector(':scope > :is(rect, path, circle, ellipse, polygon, image), :scope > a > :is(rect, path, circle, ellipse, polygon, image)')) group.classList.add('bare');
     });
     Object.keys(graph.nodes).forEach(function (name) {
       if (graph.nodes[name].links.length > 0) each(nodeGroups(name), function (group) { group.classList.add('has-links'); });
@@ -1462,11 +1791,25 @@ const PAGE = `<!doctype html>
 
   // Neither a theme nor guides move anything, so the view, the selection and
   // the panel stay as they were.
+  function paint(colors, scheme) {
+    Object.keys(colors).forEach(function (key) { document.documentElement.style.setProperty(key, colors[key]); });
+    schemeMeta.setAttribute('content', scheme);
+    document.documentElement.setAttribute('data-scheme', scheme === 'light' ? 'light' : 'dark');
+  }
+
+  // A list's overview is in the page's own theme, or the reader's choice,
+  // never in the theme of whichever diagram was open last.
+  function onOverview() { return !!LIST && openIndex === -1; }
+  function paintOverview() {
+    var list = LIST;
+    var one = list.palettes[chosenName] || list.palettes[list.theme];
+    paint(one.colors, one.scheme);
+  }
+
   function redraw() {
     var next = shown();
-    Object.keys(next.colors).forEach(function (key) { document.documentElement.style.setProperty(key, next.colors[key]); });
-    schemeMeta.setAttribute('content', next.scheme);
-    document.documentElement.setAttribute('data-scheme', next.scheme === 'light' ? 'light' : 'dark');
+    if (onOverview()) paintOverview();
+    else paint(next.colors, next.scheme);
     unlight();
     hovered = null;
     tip.style.display = 'none';
@@ -1516,6 +1859,14 @@ const PAGE = `<!doctype html>
     themeItems.push({ value: value, row: row });
     themeList.append(row);
   }
+  // On a list's overview the first row is the page's own theme; with a
+  // diagram open, that diagram's.
+  function ownThemeName() { return onOverview() ? "Page's theme" : "Diagram's theme"; }
+  function labelOwnTheme() {
+    themeItems[0].row.querySelector('.name').textContent =
+      ownThemeName() + ' (' + (onOverview() ? LIST.theme : DATA.current) + ')';
+    showChosen();
+  }
   addThemeItem('', "Diagram's theme (" + DATA.current + ')');
   [['Dark', DATA.themeGroups.dark], ['Light', DATA.themeGroups.light]].forEach(function (group) {
     if (group[1].length === 0) return;
@@ -1524,7 +1875,7 @@ const PAGE = `<!doctype html>
   });
 
   function showChosen() {
-    themeRow.querySelector('.value').textContent = '· ' + (chosenName || "Diagram's theme");
+    themeRow.querySelector('.value').textContent = '· ' + (chosenName || ownThemeName());
     themeItems.forEach(function (item) {
       var on = item.value === chosenName;
       item.row.setAttribute('aria-checked', String(on));
@@ -1539,6 +1890,7 @@ const PAGE = `<!doctype html>
       else localStorage.removeItem(CHOSEN_THEME);
     } catch (e) {}
     showTheme(value || DATA.current);
+    if (onOverview()) paintOverview();
     showChosen();
     if (level === 'theme') setLevel('view', true);
   }
@@ -1556,7 +1908,8 @@ const PAGE = `<!doctype html>
   /* ---- the menus, by pointer and by key ---- */
 
   // The keys work in levels: the diagram; m, the bar, each control wearing
-  // its letter; then a menu, View or Save; then, from View, the theme list.
+  // its letter; then a menu, Settings, Export, Versions or Help; then, from
+  // Settings, the theme list.
   // A letter means what the level it is pressed in says, so no letter is used
   // up however deep the menus go. Keys that aren't letters mean the same at
   // every level: Backspace steps back one level, and beneath the menus lets
@@ -1568,6 +1921,14 @@ const PAGE = `<!doctype html>
   var viewList = document.getElementById('view-list');
   var versionsButton = document.getElementById('versions-button');
   var versionsList = document.getElementById('versions-list');
+  var helpButton = document.getElementById('help-button');
+  var helpList = document.getElementById('help-list');
+  // On a page of several diagrams: the drop-down that switches between them,
+  // and the overview, whose cards s letters.
+  var pickMenu = document.getElementById('pick-menu');
+  var pickButton = document.getElementById('pick-button');
+  var pickRows = document.getElementById('pick-rows');
+  var overview = document.getElementById('overview');
   var strip = document.getElementById('strip');
   var level = null;
   var cursor = 0;
@@ -1578,14 +1939,20 @@ const PAGE = `<!doctype html>
     view: ['Menu \\u203A <b>Settings</b>', 'letter to flip \\u00B7 \\u2191\\u2193 Enter \\u00B7 \\u232B back \\u00B7 Esc out'],
     save: ['Menu \\u203A <b>Export</b>', 'letter to save \\u00B7 \\u2191\\u2193 Enter \\u00B7 \\u232B back \\u00B7 Esc out'],
     versions: ['Menu \\u203A <b>Versions</b>', '\\u2191\\u2193 Enter to put one in the editor \\u00B7 \\u232B back \\u00B7 Esc out'],
+    help: ['Menu \\u203A <b>Help</b>', 'letter to open \\u00B7 \\u2191\\u2193 Enter \\u00B7 \\u232B back \\u00B7 Esc out'],
     theme: ['Menu \\u203A Settings \\u203A <b>Theme</b>', '\\u2191\\u2193 to try \\u00B7 Enter keep \\u00B7 \\u232B back \\u00B7 Esc out'],
+    diagrams: ['Menu \\u203A <b>Diagrams</b>', 'letter to open \\u00B7 arrows, Enter \\u00B7 \\u232B back \\u00B7 Esc out'],
+    cards: ['<b>Select</b>', 'letter to open \\u00B7 Esc out'],
   };
 
   function rows() {
     if (level === 'view') return Array.prototype.slice.call(viewList.querySelectorAll(':scope > .row:not([hidden])'));
     if (level === 'save') return Array.prototype.slice.call(saveList.querySelectorAll(':scope > .row'));
     if (level === 'versions') return Array.prototype.slice.call(versionsList.querySelectorAll(':scope > .row'));
+    if (level === 'help') return Array.prototype.slice.call(helpList.querySelectorAll(':scope > .row:not([hidden])'));
     if (level === 'theme') return themeItems.map(function (item) { return item.row; });
+    // Grouped as labels, the rows sit inside their columns.
+    if (level === 'diagrams') return Array.prototype.slice.call(pickRows.querySelectorAll('.row'));
     return [];
   }
 
@@ -1606,6 +1973,9 @@ const PAGE = `<!doctype html>
       themeBefore = shownTheme;
       cursor = 0;
       themeItems.forEach(function (item, i) { if (item.value === chosenName) cursor = i; });
+    } else if (next === 'diagrams' && level !== 'diagrams') {
+      // The arrows start on the diagram open.
+      cursor = Math.max(0, openIndex);
     } else if (next !== level) {
       // Back from the theme list, the arrows are on Theme, the first row.
       cursor = 0;
@@ -1618,11 +1988,20 @@ const PAGE = `<!doctype html>
     versionsList.hidden = level !== 'versions';
     versionsButton.classList.toggle('open', level === 'versions');
     versionsButton.setAttribute('aria-expanded', String(level === 'versions'));
+    helpList.hidden = level !== 'help';
+    helpButton.classList.toggle('open', level === 'help');
+    helpButton.setAttribute('aria-expanded', String(level === 'help'));
     viewList.hidden = level !== 'view' && level !== 'theme';
     viewButton.classList.toggle('open', level === 'view' || level === 'theme');
     viewButton.setAttribute('aria-expanded', String(level === 'view' || level === 'theme'));
     themeList.hidden = level !== 'theme';
     viewList.classList.toggle('behind', level === 'theme');
+    if (pickRows) {
+      pickRows.hidden = level !== 'diagrams';
+      pickButton.classList.toggle('open', level === 'diagrams');
+      pickButton.setAttribute('aria-expanded', String(level === 'diagrams'));
+    }
+    if (overview) overview.classList.toggle('keyed', level === 'cards');
     strip.hidden = level === null;
     if (level && STRIP[level]) {
       strip.querySelector('.crumbs').innerHTML = STRIP[level][0];
@@ -1634,7 +2013,7 @@ const PAGE = `<!doctype html>
 
   function back() {
     if (level === 'theme') setLevel('view');
-    else if (level === 'view' || level === 'save' || level === 'versions') setLevel('bar');
+    else if (level === 'view' || level === 'save' || level === 'versions' || level === 'help' || level === 'diagrams') setLevel('bar');
     else setLevel(null);
   }
 
@@ -2055,7 +2434,13 @@ const PAGE = `<!doctype html>
 
   saveButton.onclick = function () { setLevel(level === 'save' ? null : 'save'); };
   versionsButton.onclick = function () { setLevel(level === 'versions' ? null : 'versions'); };
+  helpButton.onclick = function () { setLevel(level === 'help' ? null : 'help'); };
+  // Help's rows open a window or a link, so choosing one closes the menu.
+  helpList.addEventListener('click', function (event) {
+    if (event.target.closest('.row')) setLevel(null);
+  });
   viewButton.onclick = function () { setLevel(level === 'view' || level === 'theme' ? null : 'view'); };
+  if (pickButton) pickButton.onclick = function () { setLevel(level === 'diagrams' ? null : 'diagrams'); };
   themeRow.onclick = function () { setLevel(level === 'theme' ? 'view' : 'theme'); };
   document.addEventListener('click', function (event) {
     if (level && !(event.target.closest && event.target.closest('.menu'))) setLevel(null);
@@ -2094,6 +2479,10 @@ const PAGE = `<!doctype html>
       else if (key === 'e' && EDIT) toggleEditor();
       else if (key === 'c' && !checkButton.hidden) runCheck();
       else if (key === '?' && cheatBox) openCheatsheet();
+      // On the overview, s letters the cards, and the keys that pick from
+      // a diagram have none to pick from.
+      else if (onOverview() && key === 's') setLevel('cards');
+      else if (onOverview() && (key === '/' || key === 'n' || key === 'i' || key === 'l')) return;
       else if (key === 's') startHints('all');
       else if (key === '/') startHints('all', true);
       else if (key === 'n') startHints('neighbors');
@@ -2109,6 +2498,7 @@ const PAGE = `<!doctype html>
     } else {
       if (ZOOM_KEYS[key] || key === 'Tab') return;
       if (key === 'Backspace') back();
+      else if (level === 'diagrams' && key.indexOf('Arrow') === 0) moveInPicker(key);
       else if (key === 'ArrowDown') move(1);
       else if (key === 'ArrowUp') move(-1);
       else if (key === 'Enter' || key === ' ') enter();
@@ -2118,10 +2508,15 @@ const PAGE = `<!doctype html>
           if (letter === 's') setLevel('view');
           else if (letter === 'x') setLevel('save');
           else if (letter === 'o' && tiedFile()) setLevel('versions');
+          else if (letter === 'h') setLevel('help');
+          else if (letter === 'd' && LIST && !onOverview()) setLevel('diagrams');
           else if (letter === 'e' && EDIT) { setLevel(null); toggleEditor(); }
           else if (letter === 'c' && !checkButton.hidden) { setLevel(null); runCheck(); }
           else if (letter === 'f' && !full.hidden) { setLevel(null); toggleFull(); }
-        } else if (level === 'view' || level === 'save' || level === 'versions') {
+        } else if (level === 'cards') {
+          var card = overview.querySelector('.card[data-key="' + letter + '"]');
+          if (card) card.click();
+        } else if (level === 'view' || level === 'save' || level === 'versions' || level === 'help' || level === 'diagrams') {
           rows().forEach(function (row, i) {
             if (row.getAttribute('data-key') !== letter) return;
             cursor = i;
@@ -2162,7 +2557,12 @@ const PAGE = `<!doctype html>
   var drawnLine = document.querySelector('header .drawn');
   var liveNote = document.getElementById('live');
 
-  function tiedFile() { return EDIT && EDIT.kind === 'file' ? EDIT.file : null; }
+  // The file the editor writes: on a served page of several, the one in view,
+  // unless that is the spec a folder or files imply, which is no file yet.
+  function tiedFile() {
+    if (EDIT && EDIT.kind === 'list') return shownFile || null;
+    return EDIT && EDIT.kind === 'file' ? EDIT.file : null;
+  }
 
   function adopt(next, title) {
     next.edit = EDIT;
@@ -2170,12 +2570,15 @@ const PAGE = `<!doctype html>
     graph = DATA.graph;
     collectStyles();
     shownTheme = chosenName && DATA.themes[chosenName] ? chosenName : DATA.current;
-    // A page with no file is headed reladraw, whatever the diagram is called.
-    if (!EDIT || EDIT.kind === 'file') {
+    // A page with no file is headed reladraw, whatever the diagram is called,
+    // and a page of several keeps its own title, which goes back to them all.
+    if (LIST) {
+      document.title = title + ' · ' + LIST.title;
+    } else if (!EDIT || EDIT.kind === 'file') {
       heading.textContent = title;
       document.title = title;
     }
-    themeItems[0].row.querySelector('.name').textContent = "Diagram's theme (" + DATA.current + ')';
+    labelOwnTheme();
     if (selection && !(selection.kind === 'node' ? graph.nodes[selection.key] : graph.edges[selection.key])) selection = null;
     if (level === 'pick' || level === 'filter') setLevel(null);
     listFindings(null);
@@ -2185,8 +2588,9 @@ const PAGE = `<!doctype html>
 
   var libReady = !EDIT ? Promise.resolve(null)
     : EDIT.kind === 'hosted' ? Promise.resolve(globalThis.reladraw)
-    : Promise.all(['/lib/index.js', '/lib/page.js', '/lib/page-data.js'].map(function (path) { return import(path); }))
-      .then(function (all) { return Object.assign({}, all[0], all[1], all[2]); });
+    : Promise.all(['/lib/index.js', '/lib/page.js', '/lib/page-data.js'].concat(EDIT.kind === 'list' ? ['/lib/page-spec.js'] : [])
+      .map(function (path) { return import(path); }))
+      .then(function (all) { return Object.assign.apply(Object, [{}].concat(all)); });
   var lib = null;
 
   function clock(at) {
@@ -2233,9 +2637,6 @@ const PAGE = `<!doctype html>
   var fileMenu = document.getElementById('file-menu');
   var fileButton = document.getElementById('file-button');
   var closeFileMenu = sourceMenu(fileMenu, fileButton, document.getElementById('file-list'));
-  // Help: the cheatsheet, and the full reference.
-  var helpMenu = document.getElementById('help-menu');
-  sourceMenu(helpMenu, document.getElementById('help-button'), document.getElementById('help-list'));
   document.getElementById('write-row').onclick = function () { writeButton.click(); };
   // Where "Saved" flashes: the Save button, or the File menu it is in.
   function saveFlash(text) { flash(writeButton.hidden ? fileButton : writeButton, text); }
@@ -2342,6 +2743,14 @@ const PAGE = `<!doctype html>
 
   // \`check\` looks for findings this once, as Check does.
   function draw(text, check) {
+    // Served, a page of several has the spec in the editor on its overview,
+    // and draws the cards from it.
+    if (SERVED_LIST && onOverview()) {
+      if (text === drawnSpec || !lib) return;
+      drawnSpec = text;
+      relist();
+      return;
+    }
     if (text === drawnText || !lib) return;
     drawnText = text;
     shownText = text;
@@ -2355,10 +2764,20 @@ const PAGE = `<!doctype html>
       cost = performance.now() - started;
       listFindings({ message: error.message, line: error.line });
       if (panelOn && panel.hidden) { openedByError = true; showPanel(true); }
+      if (SERVED_LIST && shownFile) {
+        var was = drawnItems[shownFile];
+        drawnItems[shownFile] = { text: text, made: was ? was.made : null, error: { message: error.message, line: error.line } };
+        relistSoon();
+      }
       return;
     }
     cost = performance.now() - started;
     adopt(made.data, made.title);
+    // The card shows what the editor drew.
+    if (SERVED_LIST && shownFile) {
+      drawnItems[shownFile] = { text: text, made: made, error: null };
+      relistSoon();
+    }
   }
 
   // A diagram quick to draw is drawn on every keystroke; a slow one once the
@@ -2472,6 +2891,15 @@ const PAGE = `<!doctype html>
     return Promise.resolve(formatText());
   }
   function formatSource() {
+    // A spec is laid out as reladraw format lays one out, with no settings.
+    if (SERVED_LIST && onOverview()) {
+      libReady.then(function () {
+        var laid = lib.formatPageSpec(sourceBox.value);
+        if (laid === sourceBox.value) { flash(formatButton, 'Already formatted'); return; }
+        replaceSource(laid);
+      }).catch(function (error) { flash(formatButton, 'Can\\u2019t format: ' + error.message.split('\\n')[0]); });
+      return;
+    }
     Promise.all([libReady, settingsText()]).then(function (got) {
       var settings;
       try {
@@ -2506,6 +2934,7 @@ const PAGE = `<!doctype html>
 
   function saveText() {
     if (tiedFile()) write(false);
+    else if (EDIT.kind === 'list') openSpecSaveAs();
     else if (EDIT.kind === 'local') openSaveAs();
     else saveDownload();
   }
@@ -2525,7 +2954,11 @@ const PAGE = `<!doctype html>
 
   function markUnsaved() {
     if (!EDIT) return;
-    if (tiedFile()) {
+    if (EDIT.kind === 'list') {
+      unsavedMark.hidden = !unsaved(shownFile);
+      unsavedMark.title = disk !== null ? 'Not saved to the file' : 'Not saved to a file';
+      markCards();
+    } else if (tiedFile()) {
       unsavedMark.hidden = sourceBox.value === disk;
       unsavedMark.title = 'Not saved to the file';
     } else {
@@ -2575,7 +3008,8 @@ const PAGE = `<!doctype html>
   // A change on disk loads at once, unless the editor holds text that isn't
   // in the file: then the text stays and a strip offers the file instead.
   function heard(message) {
-    var clean = sourceBox.value === disk && base === disk;
+    // A file shown before its text first came has nothing typed in it to keep.
+    var clean = disk === null || (sourceBox.value === disk && base === disk);
     disk = message.text;
     versions = message.versions || [];
     listVersions();
@@ -2675,7 +3109,10 @@ const PAGE = `<!doctype html>
   }
 
   window.addEventListener('beforeunload', function (event) {
-    if (tiedFile() && sourceBox.value !== disk) { event.preventDefault(); event.returnValue = ''; }
+    var losing = EDIT && EDIT.kind === 'list'
+      ? Object.keys(buffers).some(unsaved)
+      : tiedFile() && sourceBox.value !== disk;
+    if (losing) { event.preventDefault(); event.returnValue = ''; }
   });
 
   /* ---- a page with no file: the text kept in this browser ---- */
@@ -2704,7 +3141,7 @@ const PAGE = `<!doctype html>
   function unsavedHere() { return sourceBox.value !== keptText && current === null; }
 
   function edited() {
-    if (EDIT && EDIT.kind !== 'file') {
+    if (EDIT && (EDIT.kind === 'local' || EDIT.kind === 'hosted')) {
       current = named(sourceBox.value);
       // The stored copy trails the typing: it isn't read until the page is opened again.
       clearTimeout(stowing);
@@ -2808,6 +3245,11 @@ const PAGE = `<!doctype html>
       event.preventDefault();
       var path = document.getElementById('save-path').value.trim();
       if (!path) return;
+      if (EDIT.kind === 'list') {
+        if (!/\\.reladraw-page$/.test(path)) path += '.reladraw-page';
+        createSpec(path, false);
+        return;
+      }
       if (!/\\.reladraw$/.test(path)) path += '.reladraw';
       create(path, false);
     });
@@ -3053,8 +3495,9 @@ const PAGE = `<!doctype html>
       cheatFilter.focus();
       cheatFilter.select();
     };
-    helpMenu.hidden = false;
-    document.getElementById('cheat-open').onclick = openCheatsheet;
+    var cheatRow = document.getElementById('cheat-open');
+    cheatRow.hidden = false;
+    cheatRow.onclick = openCheatsheet;
     closeOnBackdrop(cheatBox);
     cheatFilter.addEventListener('input', function () {
       var words = cheatFilter.value.toLowerCase().split(/\\s+/).filter(Boolean);
@@ -3083,6 +3526,930 @@ const PAGE = `<!doctype html>
     });
   }
 
+  /* ---- a page of several diagrams ---- */
+
+  // It opens on the overview: a card for each diagram, under its label. A
+  // card, the drop-down, [ or ] open one, which fills the page as a page of
+  // one diagram does; the page's title, now marked ←, or o go back.
+  // The diagram open, or -1 on the overview; and the one whose data DATA is.
+  var openIndex = -1;
+  var dataIndex = 0;
+  // What Export saves of one diagram, which the overview has none of.
+  var diagramExports = ['save-source', 'save-svg', 'save-png', 'copy-svg'].map(function (id) { return document.getElementById(id); })
+    .concat([document.querySelector('#save-list hr')]);
+
+  // A small copy of a drawing for its card, its ids made its own: an id
+  // shared with the drawing in the hidden picture would point an arrowhead
+  // at something not drawn.
+  function thumbnail(svgText, prefix) {
+    var ids = {};
+    svgText.replace(/\\sid="([^"]+)"/g, function (all, id) { ids[id] = true; return all; });
+    return svgText.replace(/(\\sid="|url\\(#|href="#)([^")]+)/g, function (all, lead, id) {
+      return ids[id] ? lead + prefix + id : all;
+    });
+  }
+
+  function showOverview() {
+    if (!LIST) return;
+    stash();
+    openIndex = -1;
+    setLevel(null);
+    overview.hidden = false;
+    document.querySelector('main').classList.add('on-overview');
+    pickMenu.hidden = true;
+    heading.classList.remove('back');
+    heading.removeAttribute('role');
+    heading.removeAttribute('tabindex');
+    heading.removeAttribute('title');
+    drawnLine.textContent = LIST.items.length + ' diagrams';
+    document.title = LIST.title;
+    diagramExports.forEach(function (row) { if (row) row.hidden = true; });
+    paintOverview();
+    labelOwnTheme();
+    // Served, the source shown is now the spec.
+    if (SERVED_LIST) showFile(specKey());
+    var first = overview.querySelector('.card');
+    if (first && document.activeElement === heading) first.focus();
+  }
+
+  function openDiagram(index) {
+    if (!LIST) return;
+    var item = LIST.items[index];
+    if (!item || !item.data) return;
+    stash();
+    openIndex = index;
+    overview.hidden = true;
+    document.querySelector('main').classList.remove('on-overview');
+    setLevel(null);
+    // Its findings, not the last diagram's: a written page carries each
+    // diagram's own; a served one keeps what was last checked of each.
+    if (!EDIT) {
+      checked = { text: item.data.source, findings: item.data.findings };
+      shownText = item.data.source;
+    }
+    pickMenu.hidden = false;
+    pickButton.querySelector('.name').textContent = item.label;
+    each(pickRows.querySelectorAll('.row'), function (row, i) {
+      row.setAttribute('aria-checked', String(i === index));
+      row.querySelector('.mark').textContent = i === index ? '\\u25CF' : '';
+    });
+    tintGrid();
+    heading.classList.add('back');
+    heading.setAttribute('role', 'button');
+    heading.setAttribute('tabindex', '0');
+    heading.title = 'Every diagram on this page (o)';
+    diagramExports.forEach(function (row) { if (row) row.hidden = false; });
+    if (SERVED_LIST) showFile(item.file, item);
+    if (index !== dataIndex) {
+      dataIndex = index;
+      adopt(item.data, item.title);
+    } else {
+      document.title = item.title + ' · ' + LIST.title;
+      redraw();
+      labelOwnTheme();
+      if (SERVED_LIST) listFindings(item.error ? { message: item.error.message, line: item.error.line } : null);
+    }
+    drawnLine.textContent = item.title + ' · ' + item.drawn;
+    if (SERVED_LIST) {
+      liveLine();
+      // What is typed but not drawn, or what doesn't draw, is drawn now, to show why.
+      if (sourceBox.value !== item.data.source || item.error) { drawnText = null; draw(sourceBox.value); }
+    }
+    // A diagram opens seen whole, as a page of one does.
+    zoom.fit();
+  }
+
+  // The drop-down shows the page's shape: a few diagrams as tiles, each a
+  // small drawing under its label; more than that as labels in columns,
+  // each with its title under it, so the list is wide rather than long.
+  // With groups, the tiles sit in a box per group, the boxes flowing; as labels,
+  // the groups flow down at most as many columns as the list would have
+  // without them, in order, each kept whole in one column.
+  var TILES_UP_TO = 8;
+  function pickLayout(count, sections) {
+    if (sections) {
+      pickRows.setAttribute('data-grouped', '');
+      if (count <= TILES_UP_TO) {
+        pickRows.classList.add('tiles', 'boxed');
+      } else {
+        pickRows.classList.add('flow');
+      }
+      return;
+    }
+    pickRows.removeAttribute('data-grouped');
+    if (count <= TILES_UP_TO) {
+      var across = Math.max(1, Math.min(count, 4));
+      pickRows.classList.add('tiles');
+      pickRows.setAttribute('data-across', String(across));
+      pickRows.setAttribute('data-down', String(Math.ceil(count / across)));
+      pickRows.style.setProperty('--across', String(across));
+    } else {
+      var columns = Math.min(3, Math.ceil(count / 10));
+      var down = Math.ceil(count / columns);
+      pickRows.classList.add('columns');
+      pickRows.setAttribute('data-across', String(columns));
+      pickRows.setAttribute('data-down', String(down));
+      pickRows.style.setProperty('--across', String(columns));
+      pickRows.style.setProperty('--down', String(down));
+    }
+  }
+
+  // The arrows move as the drop-down is laid out: tiles run along their
+  // rows, columns down theirs. A step off the edge stays put.
+  function moveInPicker(key) {
+    if (pickRows.hasAttribute('data-grid')) { moveInGrid(key); return; }
+    if (pickRows.hasAttribute('data-grouped')) {
+      // Along the layout, the next in order, as ungrouped; across it, by place.
+      var along = pickRows.classList.contains('tiles') ? { ArrowLeft: -1, ArrowRight: 1 } : { ArrowUp: -1, ArrowDown: 1 };
+      if (along[key]) move(along[key]);
+      else moveByPlace(key);
+      return;
+    }
+    var across = Number(pickRows.getAttribute('data-across')) || 1;
+    var down = Number(pickRows.getAttribute('data-down')) || 1;
+    var step = pickRows.classList.contains('tiles')
+      ? { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -across, ArrowDown: across }[key]
+      : { ArrowLeft: -down, ArrowRight: down, ArrowUp: -1, ArrowDown: 1 }[key];
+    if (!step) return;
+    if (step === 1 || step === -1) { move(step); return; }
+    var to = cursor + step;
+    if (to < 0 || to >= rows().length) return;
+    cursor = to;
+    markCursor();
+  }
+
+  // Grouped, the rows aren't a regular grid, so an arrow across the layout
+  // goes to the nearest row that way, keeping to its column or row.
+  function moveByPlace(key) {
+    var all = rows();
+    if (!all.length) return;
+    var dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
+    if (!dir) return;
+    function centre(row) { var r = row.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }
+    var from = centre(all[cursor]);
+    var best = -1, bestScore = Infinity;
+    all.forEach(function (row, i) {
+      if (i === cursor) return;
+      var at = centre(row);
+      var dx = at[0] - from[0], dy = at[1] - from[1];
+      var ahead = dx * dir[0] + dy * dir[1];
+      if (ahead <= 2) return;
+      var aside = Math.abs(dir[0] ? dy : dx);
+      var score = ahead + aside * 3;
+      if (score < bestScore) { bestScore = score; best = i; }
+    });
+    if (best < 0) return;
+    cursor = best;
+    markCursor();
+  }
+
+  // The list in its sections: the diagrams before any group, then each
+  // group in order with its diagrams, an empty group included.
+  function sectionsOf() {
+    var sections = [{ name: null, items: [] }];
+    var byName = {};
+    (LIST.groups || []).forEach(function (name) {
+      var section = { name: name, items: [] };
+      byName[name] = section;
+      sections.push(section);
+    });
+    LIST.items.forEach(function (item, i) {
+      var section = item.group !== undefined && item.group !== null ? byName[item.group] : null;
+      (section || sections[0]).items.push(i);
+    });
+    if (!sections[0].items.length) sections.shift();
+    return sections;
+  }
+
+  // A group's box on the overview is as many cards wide as it has, up to as
+  // many as the overview holds across, so a short group's box fits it and a
+  // long one wraps inside its box. Kept up as the overview's width changes.
+  var CARD = 300, CARD_GAP = 16, BOX_PAD = 30;
+  function fitGroups() {
+    if (!overview) return;
+    var width = overview.clientWidth - 40;
+    if (width <= 0) return;
+    var fits = Math.max(1, Math.floor((width - BOX_PAD + CARD_GAP) / (CARD + CARD_GAP)));
+    each(overview.querySelectorAll('.group-box[data-count]'), function (box) {
+      var inside = box.querySelector('.inside');
+      if (inside) inside.style.setProperty('--across', String(Math.min(Number(box.getAttribute('data-count')), fits)));
+    });
+  }
+  if (overview && window.ResizeObserver) new ResizeObserver(fitGroups).observe(overview);
+
+  // Groups into at most \`most\` columns, in order, none split: the shortest
+  // column that takes them all, counting a heading as a row.
+  function flowColumns(sections, most) {
+    function size(one) { return one.items.length + (one.name === null ? 0 : 1); }
+    var tall = Math.max.apply(null, sections.map(size).concat([1]));
+    for (;;) {
+      var columns = [[]], used = 0;
+      sections.forEach(function (one) {
+        if (used + size(one) > tall && columns[columns.length - 1].length) { columns.push([]); used = 0; }
+        columns[columns.length - 1].push(one);
+        used += size(one);
+      });
+      if (columns.length <= most) return columns;
+      tall += 1;
+    }
+  }
+
+  /* ---- a served page of several diagrams ---- */
+
+  // Served, a page of several follows the spec and every diagram on it over
+  // one stream, and keeps each file's text apart: what is on disk, what the
+  // editor's text was loaded or saved from, and what was typed, so switching
+  // diagrams keeps what was typed in each. Edit edits what is in view: the
+  // spec on the overview, the diagram open otherwise. A folder or files
+  // imply a spec, which isn't a file until its first Save names one.
+  var SERVED_LIST = !!(EDIT && EDIT.kind === 'list');
+  // The key the implied spec is kept under, which is no file's path.
+  var IMPLIED = '';
+  var buffers = {};
+  var shownFile = null;
+  // What the server last said the page lists, and each diagram's last drawing.
+  var listing = null;
+  var drawnItems = {};
+  // The spec's diagrams as it last read, and why it doesn't read now, if it doesn't.
+  var specEntries = [];
+  var specProblem = null;
+  var drawnSpec = null;
+  var listStream = null;
+  var relisting = null;
+
+  function specKey() { return EDIT.from.spec || IMPLIED; }
+  function specFolder() { return EDIT.from.spec ? dirOf(EDIT.from.spec) : '.'; }
+  function specName() {
+    if (EDIT.from.spec) return EDIT.from.spec.split('/').pop().replace(/\\.reladraw-page$/, '');
+    return listing ? listing.title : LIST.title;
+  }
+  function dirOf(path) { var at = path.lastIndexOf('/'); return at < 0 ? '.' : path.slice(0, at); }
+  // A path from a folder, as the server resolves it: . and .. taken out.
+  function joinPath(dir, path) {
+    var out = [];
+    (dir === '.' ? [] : dir.split('/')).concat(path.split('/')).forEach(function (part) {
+      if (part === '' || part === '.') return;
+      if (part === '..' && out.length && out[out.length - 1] !== '..') out.pop();
+      else out.push(part);
+    });
+    return out.join('/');
+  }
+  function bufferOf(file) {
+    if (!buffers[file]) buffers[file] = { disk: null, base: null, text: null, versions: [], at: Date.now(), changed: false, checked: null };
+    return buffers[file];
+  }
+  // The text this page has of a file: the editor's, for the one shown.
+  function textOf(file) {
+    if (file === shownFile) return sourceBox.value;
+    var b = buffers[file];
+    return b ? b.text : null;
+  }
+  // Typed and not saved: against the file, or for the implied spec, against what was implied.
+  function unsaved(file) {
+    var b = buffers[file];
+    if (!b) return false;
+    var against = file === shownFile ? (disk !== null ? disk : base) : (b.disk !== null ? b.disk : b.base);
+    var text = textOf(file);
+    return text !== null && against !== null && text !== against;
+  }
+
+  // The editor's state for the file shown, kept before another is shown.
+  function stash() {
+    if (!SERVED_LIST || shownFile === null) return;
+    var b = bufferOf(shownFile);
+    b.text = sourceBox.value;
+    b.disk = disk;
+    b.base = base;
+    b.versions = versions;
+    b.checked = checked;
+  }
+
+  // Puts a file in the editor, with its own state: the spec on the overview,
+  // a diagram when it is open.
+  function showFile(file, item) {
+    if (!SERVED_LIST) return;
+    shownFile = file;
+    var b = bufferOf(file);
+    disk = b.disk;
+    base = b.base;
+    versions = b.versions;
+    markedLine = 0;
+    var spec = file === specKey();
+    var implied = spec && !EDIT.from.spec;
+    fileName = file ? file.split('/').pop() : specName() + '.reladraw-page';
+    sourceBox.value = b.text !== null ? b.text : '';
+    if (!spec) {
+      checked = autoCheck && item && item.data ? { text: item.data.source, findings: item.data.findings } : b.checked;
+      drawnText = item && item.data ? item.data.source : null;
+      shownText = drawnText;
+    }
+    editorPane.querySelector('.file').textContent = implied ? 'the spec this page implies \\u00b7 not saved to a file' : file;
+    writeButton.querySelector('.name').textContent = implied ? 'Save\\u2026' : 'Save';
+    writeButton.title = implied
+      ? 'Save this spec as a .reladraw-page file in ' + EDIT.folder + ' (\\u2318S or Ctrl+S)'
+      : 'Write the source to the file (\\u2318S or Ctrl+S)';
+    formatOpen.hidden = spec;
+    formatButton.title = spec
+      ? 'Lay the spec out again, as reladraw format does (Shift+Alt+F)'
+      : 'Lay the source out again, as reladraw format does, with the nearest .reladraw-format (Shift+Alt+F)';
+    document.getElementById('versions-menu').hidden = implied;
+    changedStrip.hidden = !(b.disk !== null && b.text !== b.disk && b.base !== b.disk);
+    if (!changedStrip.hidden) changedStrip.querySelector('.what').textContent = fileName + ' changed on disk at ' + clock(new Date(b.at));
+    listVersions();
+    if (!editorPane.hidden) paintSource();
+    markUnsaved();
+  }
+
+  function readSpecText(text) {
+    try {
+      var spec = lib.parsePageSpec(text);
+      specProblem = null;
+      return spec;
+    } catch (error) {
+      specProblem = { message: error.message, line: error.line };
+      return null;
+    }
+  }
+
+  // A diagram drawn from the text this page has of it, or its last drawing
+  // when it doesn't draw, kept until its text changes. Before its text has
+  // come, the drawing the page was written with.
+  function drawItem(file) {
+    var text = textOf(file);
+    var was = drawnItems[file];
+    if (text === null) return was || null;
+    if (was && was.text === text) return was;
+    var now = { text: text, made: was ? was.made : null, error: null };
+    var name = file.split('/').pop();
+    try {
+      now.made = lib.pageData(text, name, autoCheck ? {} : { checks: false });
+    } catch (error) {
+      now.error = { message: error.message, line: error.line };
+      if (!now.made) { try { now.made = lib.pageData('', name, { checks: false }); } catch (e) {} }
+    }
+    drawnItems[file] = now;
+    return now;
+  }
+
+  function relistSoon() {
+    clearTimeout(relisting);
+    relisting = setTimeout(relist, 20);
+  }
+
+  // The overview made again from the spec as typed: its title, theme and
+  // diagrams in order, each drawn from what this page has of it. A spec
+  // that doesn't read keeps the diagrams it last listed, and says why.
+  function relist() {
+    clearTimeout(relisting);
+    // Before the spec's text has come, the cards stay as the page was written.
+    if (!SERVED_LIST || !lib || textOf(specKey()) === null) return;
+    var spec = readSpecText(textOf(specKey()));
+    if (spec) {
+      specEntries = spec.entries.map(function (entry) {
+        return { file: joinPath(specFolder(), entry.path), path: entry.path, label: entry.label, group: entry.group, cell: entry.cell, line: entry.line };
+      });
+      LIST.groups = spec.groups.map(function (one) { return one.name; });
+      // A grid as typed, without the lines its parts were stated on.
+      if (spec.grid) {
+        var strip = function (one) { return { name: one.name, label: one.label }; };
+        LIST.grid = { rowsName: spec.grid.rowsName, columnsName: spec.grid.columnsName, rows: spec.grid.rows.map(strip), columns: spec.grid.columns.map(strip) };
+      } else delete LIST.grid;
+      LIST.title = spec.title || specName();
+      LIST.theme = spec.theme || 'dark';
+    }
+    var openFile = openIndex >= 0 && LIST.items[openIndex] ? LIST.items[openIndex].file : null;
+    LIST.items = specEntries.map(function (entry) {
+      var drawn = drawItem(entry.file);
+      var missing = null;
+      if (!drawn) {
+        var gone = listing ? listing.missing.filter(function (one) { return one.file === entry.file; })[0] : null;
+        missing = gone ? gone.problem : entry.path + ' isn\\u2019t read yet: save the spec, and the page reads it';
+      }
+      var made = drawn && drawn.made;
+      var title = made ? made.title : entry.path.split('/').pop().replace(/\\.reladraw$/, '');
+      var label = entry.label || title;
+      if (LIST.grid && entry.cell) label = axisLabel(LIST.grid.rows, entry.cell.row) + ' \\u00b7 ' + axisLabel(LIST.grid.columns, entry.cell.column);
+      return {
+        file: entry.file, line: entry.line, label: label, stated: entry.label, group: entry.group, cell: entry.cell, title: title,
+        drawn: made ? made.drawn : '', data: made ? made.data : null, error: drawn ? drawn.error : null, missing: missing,
+      };
+    });
+    dataIndex = -1;
+    var at = -1;
+    LIST.items.forEach(function (item, i) {
+      if (item.data === DATA) dataIndex = i;
+      if (item.file === openFile && item.data) at = i;
+    });
+    heading.textContent = LIST.title;
+    if (openFile !== null && at < 0) {
+      // The diagram open is no longer listed.
+      openIndex = -1;
+      buildCards();
+      showOverview();
+      return;
+    }
+    openIndex = at;
+    buildCards();
+    if (onOverview()) {
+      document.title = LIST.title;
+      paintOverview();
+      labelOwnTheme();
+    } else {
+      pickButton.querySelector('.name').textContent = LIST.items[openIndex].label;
+      document.title = LIST.items[openIndex].title + ' \\u00b7 ' + LIST.title;
+    }
+    liveLine();
+  }
+
+  // What is wrong with the list, over the cards: the spec not reading, and
+  // the diagrams it names that aren't there. Each names its line in the spec.
+  function problemList() {
+    var list = element('ul', 'problems');
+    function add(line, text) {
+      var row = element('li');
+      if (line) {
+        var where = element('span', 'where goto', 'line ' + line);
+        where.title = 'Select the line in the spec';
+        where.onclick = function () { goToLine(line); };
+        row.append(where);
+      }
+      row.append(document.createTextNode(text));
+      list.append(row);
+    }
+    if (specProblem) add(specProblem.line, specProblem.message + ' \\u2014 the cards are the spec as it last read');
+    LIST.items.forEach(function (item) { if (item.missing) add(item.line, item.missing); });
+    list.hidden = list.children.length === 0;
+    return list;
+  }
+
+  // A mark on each card and row whose file has typed text not saved.
+  function markCards() {
+    if (!SERVED_LIST) return;
+    function mark(box, on) {
+      if (!box) return;
+      var there = box.querySelector('.dirty');
+      if (on && !there) {
+        var dot = element('span', 'dirty', '\\u25CF');
+        dot.title = 'Not saved to the file';
+        box.append(dot);
+      } else if (!on && there) there.remove();
+    }
+    each(overview.querySelectorAll('.card[data-file]'), function (card) { mark(card.querySelector('.top'), unsaved(card.getAttribute('data-file'))); });
+    each(pickRows.querySelectorAll('.row[data-file]'), function (row) { mark(row.querySelector('.line'), unsaved(row.getAttribute('data-file'))); });
+  }
+
+  function liveLine() {
+    if (!SERVED_LIST || down) return;
+    if (onOverview()) {
+      var from = EDIT.from.spec ? EDIT.from.spec
+        : EDIT.from.folder ? (EDIT.from.folder === '.' ? 'this folder' : EDIT.from.folder + '/')
+        : 'the files given';
+      drawnLine.textContent = LIST.items.length + ' diagrams \\u00b7 ' + from + ' \\u00b7 live';
+    } else if (shownFile) {
+      var b = bufferOf(shownFile);
+      drawnLine.textContent = shownFile + ' \\u00b7 live, ' + (b.changed ? 'changed ' : 'read ') + clock(new Date(b.at));
+    }
+  }
+
+  // A file's text from the server. The one shown goes through the editor, as
+  // a page of one's does; another is taken in when nothing typed in it would
+  // be lost, and kept on disk's side until it is shown otherwise.
+  function hear(file, message) {
+    var b = bufferOf(file);
+    b.at = message.at;
+    b.changed = message.changed;
+    if (file === shownFile) {
+      heard(message);
+      liveLine();
+      markCards();
+      return;
+    }
+    var clean = b.disk === null || (b.text === b.disk && b.base === b.disk);
+    b.disk = message.text;
+    b.versions = message.versions || [];
+    if (clean) {
+      b.text = message.text;
+      b.base = message.text;
+    }
+    relistSoon();
+  }
+
+  function listQuery() {
+    var query = new URLSearchParams();
+    if (EDIT.from.spec) query.set('spec', EDIT.from.spec);
+    else if (EDIT.from.folder) query.set('folder', EDIT.from.folder);
+    else EDIT.from.files.forEach(function (file) { query.append('file', file); });
+    return query.toString();
+  }
+
+  function followList() {
+    if (listStream) listStream.close();
+    var events = listStream = new EventSource('/list-events?' + listQuery());
+    function back() {
+      if (!down) return;
+      down = false;
+      liveNote.hidden = true;
+      writeButton.disabled = false;
+    }
+    events.addEventListener('list', function (event) {
+      back();
+      listing = JSON.parse(event.data);
+      // With no spec, what the folder or files imply, unless it has been typed over.
+      if (!EDIT.from.spec && listing.implied !== null) {
+        if (shownFile === IMPLIED) {
+          if (base === null || sourceBox.value === base) {
+            base = listing.implied;
+            load(listing.implied);
+          }
+        } else {
+          var b = bufferOf(IMPLIED);
+          if (b.text === null || b.text === b.base) b.text = listing.implied;
+          b.base = listing.implied;
+        }
+      }
+      relistSoon();
+    });
+    events.addEventListener('source', function (event) {
+      back();
+      var message = JSON.parse(event.data);
+      hear(message.file, message);
+    });
+    events.onerror = function () {
+      if (down) return;
+      down = true;
+      writeButton.disabled = true;
+      drawnLine.textContent = (EDIT.from.spec || 'this page') + ' \\u00b7 not live';
+      liveNote.textContent = 'The server has stopped, so this page can\\u2019t save or follow its files. Start it again with reladraw serve in the same folder, and this page picks them up again. Export \\u25BE still saves what you typed.';
+      liveNote.hidden = false;
+    };
+  }
+
+  // The implied spec's first Save: a .reladraw-page in the folder, its
+  // diagrams' paths written from wherever it goes. From then on the page
+  // follows that spec, as if it had been served with it.
+  function openSpecSaveAs() {
+    var path = document.getElementById('save-path');
+    document.getElementById('save-problem').textContent = '';
+    saveAs.querySelector('.about').textContent = 'A path inside that folder, such as library.reladraw-page or docs/library.reladraw-page. '
+      + 'Each diagram is written by its path from the spec\\u2019s folder. If the file is there already, you\\u2019ll be asked before it\\u2019s replaced. '
+      + 'From then on this page follows the spec.';
+    if (!path.value || !/\\.reladraw-page$/.test(path.value)) {
+      var folder = EDIT.from.folder && EDIT.from.folder !== '.' ? EDIT.from.folder + '/' : '';
+      path.value = folder + specName() + '.reladraw-page';
+    }
+    saveAs.showModal();
+    path.select();
+  }
+  function createSpec(path, replace) {
+    var text = sourceBox.value;
+    var problem = document.getElementById('save-problem');
+    return fetch('/create?file=' + encodeURIComponent(path), {
+      method: 'POST',
+      body: JSON.stringify({ text: text, replace: !!replace, from: '.' }),
+    }).then(function (answer) {
+      return answer.json().then(function (told) {
+        if (answer.status === 409 && told.exists) {
+          if (confirm(told.file + ' is there already. Replace it with this spec?')) return createSpec(path, true);
+          return;
+        }
+        if (!answer.ok) { problem.textContent = told.error || 'The server said ' + answer.status; return; }
+        saveAs.close();
+        delete buffers[IMPLIED];
+        EDIT.from = { spec: told.file };
+        buffers[told.file] = { disk: told.text, base: told.text, text: told.text, versions: [], at: told.at, changed: true, checked: null };
+        history.replaceState(null, '', '/' + told.file.split('/').map(encodeURIComponent).join('/'));
+        showFile(told.file);
+        drawnSpec = null;
+        relist();
+        followList();
+        saveFlash('Saved');
+      });
+    }).catch(function (error) {
+      problem.textContent = 'Couldn\\u2019t save: ' + error.message + '. Is reladraw serve still running?';
+    });
+  }
+
+  function startList() {
+    fileMenu.hidden = true;
+    writeButton.hidden = false;
+    // Until each file's text comes, its card is the drawing the page was written with.
+    LIST.items.forEach(function (item) {
+      if (item.file && item.data) {
+        drawnItems[item.file] = { text: item.data.source, made: { data: item.data, title: item.title, drawn: item.drawn }, error: null };
+      }
+    });
+    specEntries = LIST.items.map(function (item) { return { file: item.file, path: item.file, label: item.stated, group: item.group, cell: item.cell, line: 0 }; });
+    if (onOverview()) showFile(specKey());
+    liveLine();
+    followList();
+  }
+
+  // The cards and the drop-down's rows, made again when a served page's
+  // list changes. A diagram that doesn't draw has its card say why, over its
+  // last drawing; one that isn't there has a card that opens nothing.
+  function buildCards() {
+    overview.textContent = '';
+    pickRows.textContent = '';
+    pickRows.classList.remove('tiles', 'columns', 'flow', 'boxed');
+    if (SERVED_LIST) overview.append(problemList());
+    pickRows.classList.remove('gridded', 'plain', 'grid-table');
+    pickRows.removeAttribute('data-grid');
+    if (LIST.grid) {
+      buildGrid();
+      if (SERVED_LIST) markCards();
+      return;
+    }
+    var grouped = (LIST.groups || []).length > 0;
+    var sections = grouped ? sectionsOf() : null;
+    pickLayout(LIST.items.length, sections);
+    var tiles = pickRows.classList.contains('tiles');
+    var cardOf = [], rowOf = [];
+    LIST.items.forEach(function (item, i) {
+      var card = element('button', 'card');
+      card.type = 'button';
+      card.title = item.data ? 'Open ' + item.label : item.missing;
+      if (item.file) card.setAttribute('data-file', item.file);
+      var top = element('span', 'top');
+      top.append(element('span', 'label', item.label));
+      card.append(top);
+      if (item.title !== item.label) card.append(element('span', 'title', item.title));
+      if (item.error) card.append(element('span', 'why', 'Doesn\\u2019t draw: ' + (item.error.line ? 'line ' + item.error.line + ': ' : '') + item.error.message));
+      if (item.missing) {
+        card.disabled = true;
+        card.append(element('span', 'why', item.missing));
+      } else {
+        var thumb = element('span', 'thumb');
+        thumb.innerHTML = thumbnail(item.data.themes[item.data.current].svg, 'card' + i + '-');
+        card.append(thumb);
+      }
+      card.onclick = function () { openDiagram(i); };
+      cardOf.push(card);
+      // The same letter on its card, for s, and its row in the drop-down,
+      // for m d: a to z, then none, where the arrows still reach.
+      var letter = i < 26 ? String.fromCharCode(97 + i) : '';
+      var row = element('button', 'row');
+      row.type = 'button';
+      row.setAttribute('role', 'menuitemradio');
+      var line = element('span', 'line');
+      line.append(element('span', 'mark'), element('span', 'name', item.label));
+      var title = item.title !== item.label ? element('span', 'title', item.title) : null;
+      if (item.file) row.setAttribute('data-file', item.file);
+      if (item.missing) row.disabled = true;
+      if (tiles) {
+        var small = element('span', 'thumb');
+        if (item.data) small.innerHTML = thumbnail(item.data.themes[item.data.current].svg, 'pick' + i + '-');
+        row.append(small, line);
+        if (title) row.append(title);
+      } else {
+        var text = element('span', 'text');
+        text.append(line);
+        if (title) text.append(title);
+        row.append(text);
+      }
+      if (letter) {
+        card.setAttribute('data-key', letter);
+        var tag = element('kbd', 'tag', letter);
+        top.prepend(tag);
+        row.setAttribute('data-key', letter);
+        line.append(element('kbd', '', letter));
+      }
+      row.onclick = function () { openDiagram(i); };
+      rowOf.push(row);
+    });
+    if (!sections) {
+      var cards = element('div', 'cards');
+      cardOf.forEach(function (card) { cards.append(card); });
+      overview.append(cards);
+      rowOf.forEach(function (row) { pickRows.append(row); });
+    } else {
+      // Each group a box under its name, sized to its diagrams; the boxes
+      // run in order and wrap, every box on a line as tall as the tallest.
+      // The diagrams before any group are a box headed Ungrouped, and a
+      // group with none yet says so.
+      var boxed = function (one, heading, of, across) {
+        var box = element('div', 'group-box');
+        var head = element(heading, 'group', one.name === null ? 'Ungrouped' : one.name);
+        if (one.name === null) { box.classList.add('ungrouped'); head.classList.add('ungrouped'); }
+        box.append(head);
+        if (!one.items.length) {
+          box.classList.add('empty');
+          box.append(element('span', 'none', 'no diagrams yet'));
+          return box;
+        }
+        var inside = element('div', 'inside');
+        if (across) inside.style.setProperty('--across', String(Math.min(one.items.length, across)));
+        one.items.forEach(function (i) { inside.append(of[i]); });
+        box.append(inside);
+        return box;
+      };
+      var boxes = element('div', 'group-boxes');
+      sections.forEach(function (one) {
+        var box = boxed(one, 'h2', cardOf);
+        box.setAttribute('data-count', String(one.items.length));
+        boxes.append(box);
+      });
+      overview.append(boxes);
+      fitGroups();
+      var place = function (box, one) {
+        if (one.name !== null) box.append(element('div', 'group', one.name));
+        one.items.forEach(function (i) { box.append(rowOf[i]); });
+      };
+      if (tiles) {
+        sections.forEach(function (one) { pickRows.append(boxed(one, 'div', rowOf, 4)); });
+      } else {
+        flowColumns(sections, Math.min(3, Math.ceil(LIST.items.length / 10))).forEach(function (column) {
+          var box = element('div', 'column');
+          column.forEach(function (one) { place(box, one); });
+          pickRows.append(box);
+        });
+      }
+    }
+    if (openIndex >= 0) {
+      each(pickRows.querySelectorAll('.row'), function (row, i) {
+        row.setAttribute('aria-checked', String(i === openIndex));
+        row.querySelector('.mark').textContent = i === openIndex ? '\\u25CF' : '';
+      });
+    }
+    if (SERVED_LIST) markCards();
+  }
+
+  // A grid: the overview is a table of drawings under the rows' and columns'
+  // labels, and the drop-down is the same table, smaller. The diagrams are in
+  // reading order, so a cell's letter, ] and [ and the drop-down's rows all
+  // follow it; a cell with no diagram is no row, and nothing lands on it.
+  var GRID_DRAWINGS_UP_TO = 25;
+  function axisLabel(axis, name) {
+    for (var i = 0; i < axis.length; i += 1) if (axis[i].name === name) return axis[i].label;
+    return name;
+  }
+  function cellAt(r, c) {
+    for (var i = 0; i < LIST.items.length; i += 1) {
+      var cell = LIST.items[i].cell;
+      if (cell && cell.row === LIST.grid.rows[r].name && cell.column === LIST.grid.columns[c].name) return i;
+    }
+    return -1;
+  }
+  function gridPlace(index) {
+    var cell = LIST.items[index] && LIST.items[index].cell;
+    if (!cell) return null;
+    var r = -1, c = -1;
+    LIST.grid.rows.forEach(function (one, i) { if (one.name === cell.row) r = i; });
+    LIST.grid.columns.forEach(function (one, i) { if (one.name === cell.column) c = i; });
+    return r < 0 || c < 0 ? null : [r, c];
+  }
+  function gridTable(into, small) {
+    var grid = LIST.grid;
+    into.style.setProperty('--across', String(grid.columns.length));
+    var corner = element('div', 'corner');
+    if (grid.columnsName) corner.append(element('span', '', grid.columnsName + ' \\u2192'));
+    if (grid.rowsName) corner.append(element('span', '', grid.rowsName + ' \\u2193'));
+    into.append(corner);
+    grid.columns.forEach(function (one, c) {
+      var head = element('div', 'column-head', one.label);
+      head.setAttribute('data-head-c', String(c));
+      into.append(head);
+    });
+    var cells = [];
+    grid.rows.forEach(function (row, r) {
+      var head = element('div', 'row-head', row.label);
+      head.setAttribute('data-head-r', String(r));
+      into.append(head);
+      grid.columns.forEach(function (column, c) {
+        var at = cellAt(r, c);
+        var made = small(at, r, c);
+        made.setAttribute('data-r', String(r));
+        made.setAttribute('data-c', String(c));
+        into.append(made);
+        cells.push(made);
+      });
+    });
+    return cells;
+  }
+  function buildGrid() {
+    var count = LIST.grid.rows.length * LIST.grid.columns.length;
+    var drawings = count <= GRID_DRAWINGS_UP_TO;
+    var table = element('div', 'grid-table');
+    gridTable(table, function (i) {
+      if (i < 0) return element('div', 'empty-cell');
+      var item = LIST.items[i];
+      var card = element('button', 'card');
+      card.type = 'button';
+      card.title = item.data ? item.label + ': ' + item.title : item.missing;
+      if (item.file) card.setAttribute('data-file', item.file);
+      var top = element('span', 'top');
+      card.append(top);
+      if (item.error) card.append(element('span', 'why', 'Doesn\\u2019t draw: ' + (item.error.line ? 'line ' + item.error.line + ': ' : '') + item.error.message));
+      if (item.missing) {
+        card.disabled = true;
+        card.append(element('span', 'why', item.missing));
+      } else {
+        var thumb = element('span', 'thumb');
+        thumb.innerHTML = thumbnail(item.data.themes[item.data.current].svg, 'card' + i + '-');
+        card.append(thumb);
+      }
+      if (i < 26) {
+        var letter = String.fromCharCode(97 + i);
+        card.setAttribute('data-key', letter);
+        top.append(element('kbd', 'tag', letter));
+      }
+      card.onclick = function () { openDiagram(i); };
+      return card;
+    });
+    overview.append(table);
+    pickRows.classList.add('gridded', 'grid-table');
+    if (!drawings) pickRows.classList.add('plain');
+    pickRows.setAttribute('data-grid', '');
+    gridTable(pickRows, function (i) {
+      if (i < 0) return element('div', 'empty-cell');
+      var item = LIST.items[i];
+      var row = element('button', 'row');
+      row.type = 'button';
+      row.setAttribute('role', 'menuitemradio');
+      row.title = item.label + (item.title !== item.label ? ': ' + item.title : '');
+      if (item.file) row.setAttribute('data-file', item.file);
+      if (item.missing) row.disabled = true;
+      var line = element('span', 'line');
+      line.append(element('span', 'mark'), element('span', 'name', item.label));
+      if (drawings) {
+        var small = element('span', 'thumb');
+        if (item.data) small.innerHTML = thumbnail(item.data.themes[item.data.current].svg, 'pick' + i + '-');
+        row.append(small);
+      }
+      row.append(line);
+      if (i < 26) {
+        var letter = String.fromCharCode(97 + i);
+        row.setAttribute('data-key', letter);
+        line.append(element('kbd', '', letter));
+      }
+      row.onclick = function () { openDiagram(i); };
+      return row;
+    });
+    tintGrid();
+  }
+  // The open diagram's row and column, tinted in the drop-down.
+  function tintGrid() {
+    if (!LIST || !LIST.grid) return;
+    var at = openIndex >= 0 ? gridPlace(openIndex) : null;
+    each(pickRows.querySelectorAll('[data-r]'), function (cell) {
+      var r = Number(cell.getAttribute('data-r')), c = Number(cell.getAttribute('data-c'));
+      cell.classList.toggle('tint', !!at && (r === at[0] || c === at[1]));
+    });
+    each(pickRows.querySelectorAll('[data-head-r]'), function (head) { head.classList.toggle('tint', !!at && Number(head.getAttribute('data-head-r')) === at[0]); });
+    each(pickRows.querySelectorAll('[data-head-c]'), function (head) { head.classList.toggle('tint', !!at && Number(head.getAttribute('data-head-c')) === at[1]); });
+    each(pickRows.querySelectorAll('.row'), function (row, i) {
+      row.setAttribute('aria-checked', String(i === openIndex));
+    });
+  }
+  // In the grid, an arrow goes to the nearest cell that way with a diagram
+  // in it, along the row or the column; at the edge it stays put.
+  function moveInGrid(key) {
+    var dir = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[key];
+    var at = gridPlace(cursor);
+    if (!dir || !at) return;
+    var r = at[0] + dir[0], c = at[1] + dir[1];
+    while (r >= 0 && c >= 0 && r < LIST.grid.rows.length && c < LIST.grid.columns.length) {
+      var i = cellAt(r, c);
+      if (i >= 0 && !LIST.items[i].missing) { cursor = i; markCursor(); return; }
+      r += dir[0];
+      c += dir[1];
+    }
+  }
+
+  if (LIST) {
+    if (LIST.items.length) LIST.items[0].data = DATA;
+    else dataIndex = -1;
+    buildCards();
+    heading.addEventListener('click', function () { if (openIndex >= 0) showOverview(); });
+    heading.addEventListener('keydown', function (event) {
+      if ((event.key === 'Enter' || event.key === ' ') && openIndex >= 0) { event.preventDefault(); showOverview(); }
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.ctrlKey || event.metaKey || event.altKey || level) return;
+      if (event.target.closest && event.target.closest('input, textarea, select, [contenteditable]')) return;
+      if (document.querySelector('dialog[open]')) return;
+      var count = LIST.items.length;
+      if (event.key !== 'o' && count === 0) return;
+      if (event.key === 'o') showOverview();
+      else if (event.key === ']') openDiagram(openIndex < 0 ? 0 : (openIndex + 1) % count);
+      else if (event.key === '[') openDiagram(openIndex < 0 ? count - 1 : (openIndex - 1 + count) % count);
+      else return;
+      event.preventDefault();
+    });
+    showOverview();
+  }
+
+  /* ---- the keyboard shortcuts ---- */
+
+  // Every page has them; rows for editing and for a served file's versions
+  // show only where those are.
+  var keysBox = document.getElementById('keys-sheet');
+  each(keysBox.querySelectorAll('[data-on]'), function (part) {
+    var on = part.getAttribute('data-on');
+    part.hidden = on === 'edit' ? !EDIT : on === 'file' ? !tiedFile() : on === 'list' ? !LIST : false;
+  });
+  closeOnBackdrop(keysBox);
+  document.getElementById('keys-open').onclick = function () { keysBox.showModal(); };
+
   /* ---- the start ---- */
 
   if (EDIT) {
@@ -3094,7 +4461,9 @@ const PAGE = `<!doctype html>
       var share = parseFloat(localStorage.getItem(SPLIT));
       if (share > 0 && share < 1) divide(share, false);
     } catch (e) {}
-    if (EDIT.kind === 'file') {
+    if (EDIT.kind === 'list') {
+      startList();
+    } else if (EDIT.kind === 'file') {
       sourceBox.value = DATA.source;
       tie(EDIT.file, DATA.source);
     } else {
@@ -3255,6 +4624,9 @@ const CHEATSHEET = `
 `;
 
 /** Where a page with no file sends someone who wants more than the cheatsheet. */
+// The drop-down a page of several diagrams switches between them with; the script fills it.
+const PICK = `<span class="menu pick" id="pick-menu" hidden><button id="pick-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="pick-rows" title="Another diagram on this page ([ and ])"><span class="name"></span> ▾<kbd class="tag">d</kbd></button><span id="pick-rows" class="menu-list" role="menu" aria-label="Which diagram" hidden></span></span>`;
+
 const LINKS = `<nav class="links"><a href="https://github.com/reladraw/reladraw" title="reladraw on GitHub" aria-label="reladraw on GitHub"><svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a></nav>`;
 
 /**

@@ -15,7 +15,7 @@ That matters here specifically. You can't see the SVG you produced. With auto-la
 
 ## Check it is installed, and the same version as this skill
 
-This skill teaches reladraw 0.30.1. Once per session, before the first render, run:
+This skill teaches reladraw 0.31.1. Once per session, before the first render, run:
 
 ```
 reladraw --version
@@ -44,6 +44,18 @@ diagram.reladraw:9: warning(edge-node-overlap): line api -> db crosses node cach
 7. Finish by showing the user the picture. Give the diagram a title with `diagram  title: "…"`, which heads the page, then run `reladraw serve diagram.reladraw` from the folder that holds the file (`cd` there first for a diagram in the outside folder of step 1), in the background, since it runs until stopped. It opens the page in the default browser: the diagram in its own colors, panning, zooming and going full screen, with an editor (Edit, or `e`) whose Save writes the file. Serve each diagram once: the page redraws by itself when you change the file, so there is nothing to tell the user to reload. One server per folder is all there is to it: serving a second file from the same folder opens its page on the server already running and returns at once, saying the folder is already served. That is success, not an error; don't stop the server, pick another port or retry, and don't wait on the second command, since it has finished. Don't build a page of your own around it. When there is no display to open it on, as in a remote or headless session, or when the user has said not to open it, add `--no-open` and give them the address it prints. When the user wants a page to send to someone, `reladraw render diagram.reladraw --page` writes `diagram.html`, one file that needs nothing running; put it in the outside folder of step 1 with `-o` for a diagram kept in the project, so it isn't committed by mistake. Write an SVG only when something will use it, such as a README picture: `reladraw render diagram.reladraw` writes `diagram.svg` beside the source.
 
 **The user edits the file too.** On the served page the user can change the diagram and save it, so read the file again before every change you make to it, even one you wrote a minute ago; what you remember may no longer be what is there. After each change, describe it in a few words, which the page's Versions menu shows as yours: `reladraw note diagram.reladraw "moved the cache under the API"`, run from the folder you served. With no server running it notes nothing and says so, which is fine.
+
+**Several diagrams go on one page.** When you have drawn more than one diagram for the same question, such as a view per endpoint or the steps of a change, serve them together rather than one page each: `reladraw serve diagrams/` for a folder, or `reladraw serve a.reladraw b.reladraw` for files. The page opens on an overview of them all, drawn small, with a drop-down to switch between them, and follows every file. To fix their order and give each a short label, write a page spec, `diagrams.reladraw-page`, and serve that:
+
+```
+page  title: "Checkout"  kind: list
+
+diagram cart.reladraw    "Cart"
+diagram pay.reladraw     "Pay"
+diagram refund.reladraw  "Refund"
+```
+
+Paths are from the spec's folder; `group "…"` lines put the diagrams after them under a heading. When the diagrams are the same few views of several things, such as each endpoint at the desk, in the code and in its dependencies, make it `kind: grid`: name each `row borrow "Borrow"` and `column code "In the code"`, then put each diagram in its cell, `diagram borrow.code  borrow/code.reladraw`. The overview is then a table, and the reader moves to the same view of another thing in one step. A cell may stay empty. `render --page`, `check` and `format` take a spec, a folder or several files too, and `render --page` of several files needs `-o`.
 
 A file with no errors and no findings has nothing on top of anything. That is still not the same as a good picture: re-read your source to confirm the arrangement says what you meant, and for a large diagram tell the user you have checked the findings but not seen the render.
 
