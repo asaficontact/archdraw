@@ -1,16 +1,19 @@
 import {
   ARROW_LENGTH,
   ARROW_MARKER_WIDTH,
+  BORDER_WIDTH,
   DEFAULT_FONT_SIZE,
   ICON_LINES,
   LINE_WIDTH,
   PAD,
   arrowLength,
   fontSizeFor,
+  lineSize,
+  lineTall,
   textStyleFor,
   widestLine,
 } from './constants.js';
-import type { Attrs, Mark, NodeCorners } from './ast.js';
+import { isErdMark, type Attrs, type Mark, type NodeCorners } from './ast.js';
 import { SourceError } from './errors.js';
 import { ICON_STROKE, type Icon, type IconTone, type LetterIcon, type Outline } from './icons.js';
 import { insideOutline,isBoxy, isRound, placePath, shapeOf, SUBPROCESS_INSET, type ShapeLook } from './outline.js';
@@ -21,6 +24,7 @@ import { crossingPoints, planLines, traceRoute, visibleRuns, type Point, type Ro
 import { patchPadding, placeLineTexts } from './linetexts.js';
 import { plain, type Line, type Run } from './text.js';
 import { linkLabel, linksOf, type Link } from './links.js';
+import { markdownPlain } from './markdown.js';
 
 export interface RenderOptions {
   measurer?: Measurer;
@@ -85,7 +89,7 @@ function drawing(layout: Layout, options: RenderOptions): (tagged: boolean) => s
   const boxes = layout.roots.flatMap((root) => drawNode(root, theme, measurer, fontSize, layout.markup, guides));
   const marks = layout.marks.map((mark) => ({
     mark,
-    item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize), fills: markFills(mark, theme) },
+    item: { key: mark.name, svg: markSvg(mark, theme, guides, layout.markup, fontSize, measurer), fills: markFills(mark, theme) },
   }));
   const lines: Drawn[] = [];
   // Everything the boxes cover. Edges are added to it as they are drawn.
@@ -150,7 +154,7 @@ function drawing(layout: Layout, options: RenderOptions): (tagged: boolean) => s
   }
   const lineSvg = new Map(lines.map((line) => [line.key, line.svg]));
   const body = sequence
-    .map((item) => ({ item, svg: lineSvg.get(item.key) ?? item.svg }))
+    .map((item) => ({ item, svg: described(layout, item, lineSvg.get(item.key) ?? item.svg) }))
     .filter(({ svg }) => svg.length > 0);
 
   // An edge's geometry is measured rather than solved for, so the resolver sized
@@ -224,8 +228,21 @@ export function themeOf(layout: Layout, options: RenderOptions = {}): Theme {
 }
 
 /**
+ * A box or a line with a description carries it, marks stripped, as hover
+ * text. A `<title>` is the tooltip of the element it opens, so the drawing is
+ * wrapped in a group of its own; one without a description draws as before.
+ */
+function described(layout: Layout, item: Drawn, svg: string): string {
+  const attrs = item.node?.attrs ?? (item.key.startsWith('edge ') ? layout.edges[Number(item.key.slice('edge '.length))]?.attrs : undefined);
+  const text = attrs?.['description'];
+  if (text === undefined || svg.length === 0) return svg;
+  return `  <g>\n  <title>${escapeXml(markdownPlain(text))}</title>\n${svg}\n  </g>`;
+}
+
+/**
  * `<g data-name="api" data-line="12">` round each thing drawn: what a page
- * shows on hover, and what a finding about that line lights up.
+ * shows on hover, which line of the source it marks when selected, and what
+ * a finding about that line lights up.
  */
 function tag(layout: Layout, item: Drawn, svg: string): string {
   let name: string;
@@ -576,7 +593,7 @@ function nodeSvg(
     while (behind && behind.body.kind === 'none') behind = behind.parent;
     const onFill = behind ? textOnFill(behind.appearance['fill'] ?? '', theme) : undefined;
     return [sized(
-      textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
+      textBlock(node.lines, node.x, node.y, measurer, size, node.textBox, {
         color: textColorOf(node.textAttrs, theme, onFill ?? theme.text),
         align: style.align,
         ink,
@@ -599,7 +616,7 @@ function nodeSvg(
     if (node.lines.some((line) => plain(line).length > 0)) {
       drawn.push(
         sized(
-          textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
+          textBlock(node.lines, node.x, node.y, measurer, size, node.textBox, {
             color: textColorOf(node.textAttrs, theme, theme.text),
             align: style.align,
             ink,
@@ -621,7 +638,9 @@ function nodeSvg(
   // except its heading, which is its title: a badged box with nothing else in
   // it looks like the boxes beside it. Every rule that tried to tell a badge
   // from contents by looking was a guess; `badge:` and `heading:` say it.
-  const container = holdsContents(node);
+  // A table is one box with rows in it, not a backdrop for other boxes, so it
+  // wears a box's colors, and its rules show as its border does.
+  const container = holdsContents(node) && node.table === undefined;
   const border = borderOf(node.appearance, theme, container ? theme.containerStroke : theme.boxStroke);
   const fill = fillOf(node.appearance, theme, container ? containerFillOf(node, theme) : theme.boxFill);
   // A box is the one kind with two inkable parts, which is why its text needs
@@ -656,6 +675,12 @@ function nodeSvg(
   for (const extra of outlineDetail(outline, face.x, face.y, face.width, face.height, look)) {
     parts.push(`  <path d="${extra}" fill="none" stroke="${border}"${stroke.detail}/>`);
   }
+  let titleText = text;
+  if (node.table) {
+    const drawn = tableSvg(node, d, border, theme);
+    parts.push(...drawn.parts);
+    if (drawn.band !== undefined && node.textAttrs['color'] === undefined) titleText = textOnFill(drawn.band, theme) ?? text;
+  }
 
   // A leaf's text defaults to the middle of its box, a container's to the top
   // left of the band; both then read `at` for where it really goes. Where the
@@ -685,8 +710,8 @@ function nodeSvg(
   );
   parts.push(
     sized(
-      textBlock(node.lines, node.x, node.y, textHeight, size, node.textBox, {
-        color: text,
+      textBlock(node.lines, node.x, node.y, measurer, size, node.textBox, {
+        color: titleText,
         align: textStyle.align,
         ink,
         reads: node.textAttrs['reads'],
@@ -699,16 +724,53 @@ function nodeSvg(
 }
 
 /**
+ * A table's title band and its rules (design.org 5.1). The band runs from the
+ * top of the box to its first row, in `title: (fill: …)` or else the border's
+ * color, faint, over the box's fill; the rules are the border's color and
+ * thickness, under the band and above each row or section that has one.
+ * `band` is the band's color when it was stated, for the title's text to read on.
+ */
+function tableSvg(node: LayoutNode, outline: string, border: string, theme: Theme): { parts: string[]; band?: string } {
+  const parts: string[] = [];
+  const first = node.children[0];
+  const width = node.borderWidth ?? BORDER_WIDTH;
+  const rule = (y: number): string =>
+    `  <line x1="${round(node.x)}" y1="${round(y)}" x2="${round(node.x + node.width)}" y2="${round(y)}" stroke="${border}" stroke-width="${round(width)}"/>`;
+  const hasTitle = node.lines.some((line) => plain(line).length > 0);
+  const bottom = first ? first.y : node.y + node.height;
+  let band: string | undefined;
+  if (hasTitle) {
+    const id = `table-${node.name.replace(/[^\w.-]/g, '_')}`;
+    band = node.table?.titleFill;
+    parts.push(
+      `  <clipPath id="${id}"><path d="${outline}"/></clipPath>`,
+      `  <rect x="${round(node.x)}" y="${round(node.y)}" width="${round(node.width)}" height="${round(bottom - node.y)}" ` +
+        `fill="${band === undefined ? border : themeColor(band, theme)}"${band === undefined ? ' fill-opacity="0.18"' : ''} clip-path="url(#${id})"/>`,
+      `  <path d="${outline}" fill="none" stroke="${border}" stroke-width="${round(width)}"/>`,
+    );
+    if (first) parts.push(rule(bottom));
+  }
+  const ruled = (one: LayoutNode): void => {
+    for (const child of one.children) {
+      if (child.ruleAbove) parts.push(rule(child.y));
+      ruled(child);
+    }
+  };
+  ruled(node);
+  return { parts, ...(band !== undefined ? { band } : {}) };
+}
+
+/**
  * A named point or region (design.org 8.1, 8.3). A region is a light tint
  * with a quiet border, thin, at about half strength, solid, in the theme's
  * primary color; a point is a dot. A guide is drawn only when guides are
  * shown, dashed and unfilled in the guide color.
  */
-function markSvg(mark: LayoutMark, theme: Theme, guides: Guides, markup: Record<string, string>, fontSize: number): string {
+function markSvg(mark: LayoutMark, theme: Theme, guides: Guides, markup: Record<string, string>, fontSize: number, measurer: Measurer): string {
   const said = (key: string) => mark.appearance[key] ?? (mark.guide ? guides.looks[mark.kind][key] : undefined);
   if (mark.guide && !guides.shown) return '';
   const color = (value: string | undefined) => (value === undefined ? undefined : themeColor(value, theme));
-  const label = markTextSvg(mark, theme, mark.guide ? guides.color : theme.text, markup, fontSize);
+  const label = markTextSvg(mark, theme, mark.guide ? guides.color : theme.text, markup, fontSize, measurer);
   if (mark.kind === 'point') {
     const fill = color(said('fill')) ?? (mark.guide ? guides.color : theme.edge);
     return `  <circle cx="${round(mark.x)}" cy="${round(mark.y)}" r="3" fill="${fill}"/>${label}`;
@@ -774,11 +836,11 @@ function markFills(mark: LayoutMark, theme: Theme): Fill[] {
 }
 
 /** A point's or a region's text (design.org 7.4), on a line of its own after the mark. */
-function markTextSvg(mark: LayoutMark, theme: Theme, fallback: string, markup: Record<string, string>, fontSize: number): string {
+function markTextSvg(mark: LayoutMark, theme: Theme, fallback: string, markup: Record<string, string>, fontSize: number, measurer: Measurer): string {
   const text = mark.text;
   if (!text) return '';
   const align = text.textAttrs['align'];
-  const block = textBlock(text.lines, 0, 0, text.lineHeight, text.size, text.box, {
+  const block = textBlock(text.lines, 0, 0, measurer, text.size, text.box, {
     color: textColorOf(text.textAttrs, theme, fallback),
     align: align === 'left' || align === 'top' ? 'start' : align === 'right' || align === 'bottom' ? 'end' : 'middle',
     ink: (run, own) => runInk(run, own, markup, theme),
@@ -1081,13 +1143,12 @@ function drawEdge(
   } else if (route.pieces.some((piece) => 'c1' in piece)) {
     // A curved line is a spline through its points (design.org 6.3); a
     // straight leg of it, or a run along a side, stays straight.
-    const lead = arrowLength(edge.look.thickness);
-    const d = piecesPath(route, { start: edge.marks.from !== 'none' ? lead : 0, end: edge.marks.to !== 'none' ? lead : 0 });
+    const d = piecesPath(route, { start: markLead(edge, 'from'), end: markLead(edge, 'to') });
     parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
     ink = extentOfPoints(traceRoute(route));
   } else if (points.length > 2) {
-    const d =
-      edge.look.corners === 'rounded' ? roundedPath(points, arrowLength(edge.look.thickness)) : sharpPath(points);
+    const lead = Math.max(arrowLength(edge.look.thickness), markLead(edge, 'from'), markLead(edge, 'to'));
+    const d = edge.look.corners === 'rounded' ? roundedPath(points, lead) : sharpPath(points);
     parts.push(`  <path d="${d}" fill="none"${stroke}${markerEnd}${markerStart}/>`);
   } else {
     parts.push(
@@ -1102,7 +1163,6 @@ function drawEdge(
   const patches: Patch[] = [];
   for (const placed of placeLineTexts(edge, route)) {
     const { text, center, angle } = placed;
-    const lineHeight = measurer.lineHeight(text.size);
     const { width, height } = text;
     const top = center.y - height / 2;
     const turn = angle === 0 ? '' : ` transform="rotate(${round(angle)} ${round(center.x)} ${round(center.y)})"`;
@@ -1121,7 +1181,7 @@ function drawEdge(
       ...(turn ? ['  <g' + turn + '>'] : []),
       marker,
       sized(
-        textBlock(text.lines, center.x - width / 2, top, lineHeight, text.size,
+        textBlock(text.lines, center.x - width / 2, top, measurer, text.size,
           { x: 0, y: 0, width, height },
           {
             // A colored edge carries its meaning into its text; an uncolored
@@ -1443,9 +1503,39 @@ function markShape(mark: Mark, color: string, background: string): string {
       return `<path d="M 0.9 5 L 5 1.9 L 9.1 5 L 5 8.1 z" ${outline}/>`;
     case 'bar':
       return `<rect x="5.5" y="0.5" width="1.4" height="9" fill="${color}"/>`;
+    // The crow's-foot pairs, in a 20 by 10 box: the maximum against the box,
+    // the minimum just inside it.
+    case 'erd-one':
+      return [erdBar(15, color), erdBar(10.5, color)].join('');
+    case 'erd-zero-or-one':
+      return [erdBar(15, color), erdCircle(outline)].join('');
+    case 'erd-one-or-many':
+      return [erdFoot(color), erdBar(8.5, color)].join('');
+    case 'erd-zero-or-many':
+      return [erdFoot(color), erdCircle(outline)].join('');
     case 'none':
       return '';
   }
+}
+
+function erdBar(x: number, color: string): string {
+  return `<rect x="${x}" y="0.5" width="1.4" height="9" fill="${color}"/>`;
+}
+
+function erdCircle(outline: string): string {
+  return `<circle cx="7" cy="5" r="3" ${outline}/>`;
+}
+
+/** Three prongs from a point on the line, fanning out to meet the box. */
+function erdFoot(color: string): string {
+  return `<path d="M 20 0.7 L 11 5 L 20 9.3 M 11 5 L 20 5" fill="none" stroke="${color}" stroke-width="1.4"/>`;
+}
+
+/** How much of the line at this end a mark covers, which a curve leaves straight. */
+function markLead(edge: LayoutEdge, which: 'from' | 'to'): number {
+  const mark = edge.marks[which];
+  if (mark === 'none') return 0;
+  return arrowLength(edge.look.thickness) * (isErdMark(mark) ? 2 : 1);
 }
 
 /**
@@ -1465,9 +1555,13 @@ function freeEnd(edge: LayoutEdge, which: 'from' | 'to'): boolean {
  */
 function markMarker(mark: Mark, color: string, background: string, free: boolean): string {
   const round = mark === 'dot' || mark === 'odot';
-  const size = round ? ` markerUnits="userSpaceOnUse" markerWidth="${ARROW_MARKER_WIDTH * LINE_WIDTH}" markerHeight="${ARROW_MARKER_WIDTH * LINE_WIDTH}"` : ` markerWidth="${ARROW_MARKER_WIDTH}" markerHeight="${ARROW_MARKER_WIDTH}"`;
+  const erd = isErdMark(mark);
+  const size = round
+    ? ` markerUnits="userSpaceOnUse" markerWidth="${ARROW_MARKER_WIDTH * LINE_WIDTH}" markerHeight="${ARROW_MARKER_WIDTH * LINE_WIDTH}"`
+    : ` markerWidth="${ARROW_MARKER_WIDTH * (erd ? 2 : 1)}" markerHeight="${ARROW_MARKER_WIDTH}"`;
+  const refX = erd ? 20 : round && free ? 5 : 9;
   return [
-    `    <marker id="${markerId(mark, color, free)}" viewBox="0 0 10 10" refX="${round && free ? 5 : 9}" refY="5"${size} orient="auto-start-reverse">`,
+    `    <marker id="${markerId(mark, color, free)}" viewBox="0 0 ${erd ? 20 : 10} 10" refX="${refX}" refY="5"${size} orient="auto-start-reverse">`,
     `      ${markShape(mark, color, background)}`,
     '    </marker>',
   ].join('\n');
@@ -1532,7 +1626,7 @@ function textBlock(
   lines: Line[],
   x: number,
   y: number,
-  lineHeight: number,
+  heights: Measurer,
   fontSize: number,
   box: { x: number; y: number; width: number; height: number },
   style: {
@@ -1548,7 +1642,7 @@ function textBlock(
     const cx = x + box.x + box.width / 2;
     const cy = y + box.y + box.height / 2;
     const level = { x: cx - box.height / 2, y: cy - box.width / 2, width: box.height, height: box.width };
-    const inner = textBlock(lines, 0, 0, lineHeight, fontSize, level, { ...style, reads: undefined });
+    const inner = textBlock(lines, 0, 0, heights, fontSize, level, { ...style, reads: undefined });
     return `  <g transform="rotate(${style.reads === 'up' ? -90 : 90} ${round(cx)} ${round(cy)})">\n${inner}\n  </g>`;
   }
   // `box` is the ink the text occupies, worked out by the resolver — the one
@@ -1562,27 +1656,37 @@ function textBlock(
       : style.align === 'end'
         ? blockLeft + box.width
         : blockLeft;
+  // Each line is as tall as its largest text (design.org 7.1), so the lines are
+  // stacked by their own heights rather than at one spacing.
+  let lineTop = top;
   return lines
-    .map((line, index) => {
+    .map((line) => {
+      const tall = lineTall(line, heights, fontSize);
+      const largest = lineSize(line, fontSize);
+      const at = lineTop;
+      lineTop += tall;
       if (plain(line).length === 0) return '';
-      const baseline = top + index * lineHeight + lineHeight / 2 + fontSize * 0.35;
+      // The runs on a line share one baseline, set by the largest of them.
+      const baseline = at + tall / 2 + largest * 0.35;
       // One `<text>` per line, with a `<tspan>` per run inside it, so the runs
       // flow from the line's own anchor and a mark never moves a character.
-      // A line drawn in one color says so on the `<text>` and emits no spans at
-      // all, which is what keeps a whole quiet line identical to what the
-      // `subtext:` it replaced produced.
+      // A line drawn in one color and one size says so on the `<text>` and
+      // emits no spans at all, which is what keeps a whole quiet line identical
+      // to what the `subtext:` it replaced produced.
       const colors = line.map((run) => style.ink(run, style.color));
-      const uniform = colors.every((color) => color === colors[0]);
+      const sizes = line.map((run) => run.size);
+      const uniform = colors.every((color) => color === colors[0]) && sizes.every((size) => size === sizes[0]);
+      const sizeAttr = (size: number | undefined) => (size === undefined ? '' : ` font-size="${size}px"`);
       const body = uniform
         ? escapeXml(plain(line))
         : line
-            .map((run, run_index) =>
-              colors[run_index] === style.color
-                ? escapeXml(run.text)
-                : `<tspan fill="${colors[run_index]}">${escapeXml(run.text)}</tspan>`,
-            )
+            .map((run, run_index) => {
+              const fill = colors[run_index] === style.color ? '' : ` fill="${colors[run_index]}"`;
+              const sized = sizeAttr(run.size);
+              return fill || sized ? `<tspan${fill}${sized}>${escapeXml(run.text)}</tspan>` : escapeXml(run.text);
+            })
             .join('');
-      return `  <text x="${round(anchorX)}" y="${round(baseline)}" fill="${uniform ? colors[0] ?? style.color : style.color}" text-anchor="${style.align}">${body}</text>`;
+      return `  <text x="${round(anchorX)}" y="${round(baseline)}" fill="${uniform ? colors[0] ?? style.color : style.color}"${uniform ? sizeAttr(sizes[0]) : ''} text-anchor="${style.align}">${body}</text>`;
     })
     .filter((element) => element.length > 0)
     .join('\n');
@@ -1593,7 +1697,8 @@ function textBlock(
  * color, so the word borrows a meaning the file already has rather than
  * restating a value that goes stale the day the thing it means is recolored.
  * The resolver has already refused a mark naming a style that does not exist or
- * that says nothing about text.
+ * that gives text neither a color nor a size; a style that lends only a size
+ * leaves the run in the text's own color.
  */
 function runInk(
   run: Run,
@@ -1601,8 +1706,8 @@ function runInk(
   markup: Record<string, string>,
   theme: Theme,
 ): string {
-  if (run.style === undefined) return own;
-  return themeColor(markup[run.style]!, theme);
+  const color = run.style === undefined ? undefined : markup[run.style];
+  return color === undefined ? own : themeColor(color, theme);
 }
 
 /**

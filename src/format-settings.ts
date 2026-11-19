@@ -10,6 +10,7 @@ import { SourceError } from './errors.js';
 export interface FormatSettings {
   'wrap-at': 'off' | number;
   'clause-per-line-at': 'off' | 'always' | number;
+  'setting-per-line-at': 'off' | { characters?: number; settings?: number };
   'first-line': 'text' | 'name';
   'continued-lines-indent': number | 'tab' | 'under-name' | 'under-text' | { underName: number };
   'clause-order': 'as-written' | string[];
@@ -90,6 +91,26 @@ export const SETTINGS: Setting[] = [
       if (value === 'off' || value === 'always') return value;
       if (SETTING_COUNT.test(value)) return Number(value);
       throw `clause-per-line-at: "${value}" is not one of its values — it takes off, always, or a number of characters such as 120`;
+    },
+  },
+  {
+    name: 'setting-per-line-at',
+    about: 'When a bracket of two or more settings opens onto lines of its own, one\nsetting to a line: past a line length, from a number of settings, or either.',
+    values: [
+      ['off', 'never'],
+      ['a number', 'on a line longer than that many characters, such as 60'],
+      ['3 settings', 'a bracket holding that many settings or more'],
+      ['60 or 3 settings', 'whichever comes first'],
+    ],
+    written: 'off',
+    read: (value) => {
+      if (value === 'off') return value;
+      const both = /^([1-9]\d*) or ([1-9]\d*) settings$/.exec(value);
+      if (both) return { characters: Number(both[1]), settings: Number(both[2]) };
+      const count = /^([1-9]\d*) settings$/.exec(value);
+      if (count) return { settings: Number(count[1]) };
+      if (SETTING_COUNT.test(value)) return { characters: Number(value) };
+      throw `setting-per-line-at: "${value}" is not one of its values — it takes off, a number of characters such as 60, a number of settings such as 3 settings, or both: 60 or 3 settings`;
     },
   },
   wordSetting('first-line', 'When a statement breaks onto more lines, where its first line ends.', [
@@ -274,6 +295,28 @@ export function settingsFileText(): string {
     '// delete a line to use the default.',
   ].join('\n');
   return `${header}\n\n${blocks.join('\n\n')}\n`;
+}
+
+/**
+ * A `.reladraw-format`'s text with these values written in. A setting already
+ * there keeps its line, its place and any comment after it; one not there is
+ * added at the end; everything else stays as it was. The result is read
+ * back, so a value the file would refuse is refused here, by name.
+ */
+export function withSettings(text: string, values: Record<string, string>): string {
+  const left = new Map(Object.entries(values).filter(([name]) => SETTING_BY_NAME.has(name as keyof FormatSettings)));
+  const lines = text.split(/\r?\n/).map((raw) => {
+    const found = raw.match(/^(\s*)([a-z-]+)(\s*:\s*)(.*?)(\s*\/\/.*)?$/);
+    if (!found || !left.has(found[2]!)) return raw;
+    const value = left.get(found[2]!)!;
+    left.delete(found[2]!);
+    return `${found[1]}${found[2]}${found[3]}${value}${found[5] ?? ''}`;
+  });
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  for (const [name, value] of left) lines.push(`${name}: ${value}`);
+  const out = `${lines.join('\n')}\n`;
+  readFormatSettings(out);
+  return out;
 }
 
 function orList(words: string[]): string {

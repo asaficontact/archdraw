@@ -130,6 +130,11 @@ export interface LayoutNode {
   /** Style attributes merged in from a named style, then overridden by the node's own. */
   appearance: Attrs;
 
+  /** `shape: table`, written out into rows and cells; what is left is its title band (design.org 5.1). */
+  table?: { titleFill?: string };
+  /** A table's row or section with a rule drawn across the table above it. */
+  ruleAbove?: boolean;
+
   /** What the author said about where it goes, kept so diagnostics can quote the source back. */
   placements: Placement[];
   /** `guide node`: placed, holding and placed against as any node, drawn only when guides are shown. */
@@ -294,9 +299,10 @@ export interface Layout {
   roots: LayoutNode[];
   edges: LayoutEdge[];
   /**
-   * Every style the file's markup names, resolved to the color it lends. The
-   * renderer needs it because a marked run borrows its color from a style
-   * rather than stating one, and styles are otherwise merged away by here.
+   * Every style the file's markup names that lends a color, resolved to that
+   * color. The renderer needs it because a marked run borrows its color from a
+   * style rather than stating one, and styles are otherwise merged away by
+   * here. A size a style lends is carried on the run itself.
    */
   markup: Record<string, string>;
   /** The pictures links' badges name, by name, for the page that draws the badges. */

@@ -1,26 +1,34 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, dirname, resolve as resolvePath } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nearMatch, readChecks, type Checks, type Finding } from './checks.js';
 import { SourceError } from './errors.js';
 import { format } from './format.js';
 import { DEFAULT_FORMAT, readFormatSettings, SETTINGS_FILE, settingsFileText, type FormatSettings } from './format-settings.js';
 import { draw, type DrawOptions } from './index.js';
-import { drawPage } from './page.js';
+import { drawListPage, drawPage, ListedDiagramError, pageGrid, type ListedDiagram, type PageGrid } from './page.js';
+import { formatPageSpec, PAGE_EXTENSION, parsePageSpec, type PageSpec } from './page-spec.js';
+import { noteCommand, serve } from './serve.js';
 import { THEME_NAMES, THEMES } from './themes.js';
 
 const USAGE = `reladraw — draw a diagram from stated placement
 
   reladraw render <input.reladraw> [-o <output.svg>] [options]
   reladraw render <input.reladraw> --page [-o <output.html>] [options]
-  reladraw check <input.reladraw> [options]
-  reladraw format <input.reladraw>... [--check]
+  reladraw render <page.reladraw-page | folder | a.reladraw b.reladraw...>
+                  --page [-o <output.html>] [options]
+  reladraw check <input.reladraw | page.reladraw-page | folder | files...>
+                 [options]
+  reladraw format <input.reladraw | page.reladraw-page>... [--check]
   reladraw format - [--check]
   reladraw format --init
-  reladraw install-skill [skills options]
+  reladraw serve [<input.reladraw | page.reladraw-page | folder | files...>]
+                 [--no-open]
+  reladraw note <input.reladraw> "<what changed>"
+  reladraw install-skill [--claude] [--agents]
 
   render      draw the diagram to an SVG, and print any findings: places
               where the picture, drawn as written, may not read as meant.
@@ -36,11 +44,20 @@ const USAGE = `reladraw — draw a diagram from stated placement
               folder up.
               --init writes a .reladraw-format here, every setting at its
               default with what it does.
+  serve       open a page for the diagram, served on this machine, that
+              redraws whenever the file changes, and edits and saves it. One
+              server serves the folder it was started in, until Ctrl-C;
+              serving another file there opens a page on it. --no-open
+              prints the address. Given a page spec, a folder or several
+              files, the page shows them all and follows each.
+  note        describe the change just made to a served file; the page's
+              Versions menu shows it as the agent's, with the note.
   install-skill
               install the agent skill that came with this version of
-              reladraw, so it teaches what this tool accepts. It runs
-              npx skills add with --copy, and passes on what follows:
-              -g for every project, -a claude-code for one agent.
+              reladraw, so it teaches what this tool accepts, for every
+              project: --claude in ~/.claude/skills, --agents in
+              ~/.agents/skills (Codex and others), or both. With neither,
+              it asks.
 
   -o, --out   where render writes the SVG. Defaults to the input path with
               its extension replaced by .svg. Use - for standard output.
@@ -49,6 +66,9 @@ const USAGE = `reladraw — draw a diagram from stated placement
               pans, zooms, goes full screen, saves itself, its source, the SVG
               or a PNG, lists the findings and names what is under the
               pointer. Defaults to the input path with .html.
+              Of a page spec (.reladraw-page), a folder or several files,
+              one page of all the diagrams, opening on an overview of
+              them; several files need -o.
   --theme     render in this theme, whatever the file's \`diagram theme:\`
               says. One of ${THEME_NAMES.join(', ')}.
   --guides    draw the guides: everything written with \`guide\` in front,
@@ -61,22 +81,124 @@ const USAGE = `reladraw — draw a diagram from stated placement
   -h, --help  print this.
 `;
 
-const COMMANDS = ['render', 'check', 'format', 'install-skill'] as const;
+const COMMANDS = ['render', 'check', 'format', 'serve', 'note', 'install-skill'] as const;
 
 // The version of skills this was tried with, so a change there can't break it.
 const SKILLS_PACKAGE = 'skills@1.7.6';
 
+// The two places the skill is installed, each picked by its flag. skills
+// knows a folder by an agent that reads it: ~/.agents/skills is its "codex",
+// and other agents read it too. Left to itself, skills installs for every
+// agent it knows of, more than fifty, so the agents are always named.
+const SKILL_TARGETS = [
+  { flag: '--claude', agent: 'claude-code', label: 'Claude Code', dir: '~/.claude/skills' },
+  { flag: '--agents', agent: 'codex', label: 'Codex and others', dir: '~/.agents/skills' },
+] as const;
+
+function ownVersion(): string {
+  // package.json ships beside dist/, so the number is the installed one.
+  return (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+}
+
+// For any other agent, or a single project, skills is run by hand on this
+// install's skill, so it still matches this reladraw.
+function skillsCommand(skills: string, agent = '<agent>'): string {
+  const path = /\s/.test(skills) ? JSON.stringify(skills) : skills;
+  return `npx ${SKILLS_PACKAGE} add ${path} --copy -g -a ${agent}`;
+}
+
+const NAME_THE_TARGETS =
+  SKILL_TARGETS.map((t) => `${t.flag} (${t.dir}, for ${t.label})`).join(', ') + ', or both';
+
+// In a terminal, a bare install-skill asks; otherwise, as when an agent runs
+// it, the flags must say, because there is no one to ask.
+async function askTargets(skills: string): Promise<string[] | 'other' | undefined> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const closed = new Promise<undefined>((done) => rl.once('close', () => done(undefined)));
+  const both = SKILL_TARGETS.length + 1;
+  process.stdout.write(
+    `Install the reladraw ${ownVersion()} skill for which agents?\n` +
+      SKILL_TARGETS.map((t, i) => `  ${i + 1}  ${t.label.padEnd(17)} ${t.dir}\n`).join('') +
+      `  ${both}  both\n  ${both + 1}  another agent\n`,
+  );
+  try {
+    for (;;) {
+      const answer = await Promise.race([rl.question(`Choose [${both}]: `), closed]);
+      if (answer === undefined) {
+        process.stdout.write('\n');
+        return undefined;
+      }
+      const n = Number(answer.trim() || both);
+      if (n >= 1 && n <= SKILL_TARGETS.length) return [SKILL_TARGETS[n - 1]!.agent];
+      if (n === both) return SKILL_TARGETS.map((t) => t.agent);
+      if (n === both + 1) return 'other';
+      process.stdout.write(`Type a number from 1 to ${both + 1}.\n`);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 // The skill ships in the package beside dist/, as the one in the repository.
-// skills does the work of knowing where each agent keeps its skills; --copy
-// because an npx run leaves the package in a cache, where a link would break.
-function installSkill(args: string[]): number {
+// skills does the work of copying it in; --copy because an npx run leaves the
+// package in a cache, where a link would break.
+async function installSkill(args: string[]): Promise<number> {
   const skills = fileURLToPath(new URL('../.claude/skills/', import.meta.url));
   if (!existsSync(skills)) {
     process.stderr.write(`reladraw: the skill isn't in this install of reladraw (looked in ${skills})\n`);
     return 1;
   }
+  let agents: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const target = SKILL_TARGETS.find((t) => t.flag === arg);
+    if (target) {
+      if (!agents.includes(target.agent)) agents.push(target.agent);
+    } else if (arg === '-g' || arg === '--global') {
+      // Always global now; skills from before 0.24 tell the user to write -g.
+    } else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(
+        `reladraw install-skill [--claude] [--agents]\n\n` +
+          `Installs the skill that came with reladraw ${ownVersion()}, for every project:\n` +
+          SKILL_TARGETS.map((t) => `  ${t.flag.padEnd(9)} ${t.dir}, for ${t.label}\n`).join('') +
+          `With neither, it asks. For another agent, run:\n  ${skillsCommand(skills)}\n`,
+      );
+      return 0;
+    } else if (arg === '-a' || arg === '--agent') {
+      const agent = args[i + 1];
+      process.stderr.write(
+        `reladraw: install-skill takes ${NAME_THE_TARGETS}, not -a. ` +
+          `For ${agent ? `the agent ${agent}` : 'another agent'}, run:\n  ${skillsCommand(skills, agent)}\n`,
+      );
+      return 1;
+    } else {
+      process.stderr.write(
+        `reladraw: install-skill doesn't take ${arg}; it takes ${NAME_THE_TARGETS}. ` +
+          `For another agent, run:\n  ${skillsCommand(skills)}\n`,
+      );
+      return 1;
+    }
+  }
+  if (agents.length === 0) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      process.stderr.write(
+        `reladraw: say which agents to install the skill for: ${NAME_THE_TARGETS}. ` +
+          `For another agent, run:\n  ${skillsCommand(skills)}\n`,
+      );
+      return 1;
+    }
+    const picked = await askTargets(skills);
+    if (picked === undefined) return 1;
+    if (picked === 'other') {
+      process.stdout.write(`For another agent, run this, with its name from skills' list:\n  ${skillsCommand(skills)}\n`);
+      return 0;
+    }
+    agents = picked;
+  }
   const windows = process.platform === 'win32';
-  const command = [SKILLS_PACKAGE, 'add', skills, '--copy', ...args];
+  // -y because the choice is already made; skills would otherwise ask again.
+  const command = [SKILLS_PACKAGE, 'add', skills, '--copy', '-g', '-y', '-a', ...agents];
   // On Windows npx is a .cmd, which Node runs only through a shell.
   const result = spawnSync(windows ? 'npx.cmd' : 'npx', windows ? command.map((a) => `"${a}"`) : command, {
     stdio: 'inherit',
@@ -91,16 +213,16 @@ function installSkill(args: string[]): number {
 type Command = (typeof COMMANDS)[number];
 
 async function main(argv: string[]): Promise<number> {
-  // Everything after install-skill is for skills, -h and -v included.
+  // install-skill reads its own flags, -h included.
   if (argv[0] === 'install-skill') return installSkill(argv.slice(1));
+  if (argv[0] === 'serve') return serve(argv.slice(1));
+  if (argv[0] === 'note') return noteCommand(argv.slice(1));
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
     process.stdout.write(USAGE);
     return argv.length === 0 ? 1 : 0;
   }
   if (argv.includes('-v') || argv.includes('--version')) {
-    // package.json ships beside dist/, so the number is the installed one.
-    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
-    process.stdout.write(`${pkg.version}\n`);
+    process.stdout.write(`${ownVersion()}\n`);
     return 0;
   }
 
@@ -122,7 +244,7 @@ async function main(argv: string[]): Promise<number> {
   const command = verb as Command;
   if (command === 'format') return formatFiles(argv.slice(1));
 
-  let input: string | undefined;
+  const inputs: string[] = [];
   let out: string | undefined;
   let theme: string | undefined;
   let checks: string | undefined;
@@ -174,15 +296,12 @@ async function main(argv: string[]): Promise<number> {
     } else if (arg.startsWith('-') && arg !== '-') {
       process.stderr.write(`reladraw: unknown option ${arg}\n`);
       return 1;
-    } else if (input === undefined) {
-      input = arg;
     } else {
-      process.stderr.write(`reladraw: unexpected argument ${arg}\n`);
-      return 1;
+      inputs.push(arg);
     }
   }
 
-  if (input === undefined) {
+  if (inputs.length === 0) {
     process.stderr.write(`reladraw: no input file — reladraw ${command} <input.reladraw>\n`);
     return 1;
   }
@@ -208,16 +327,23 @@ async function main(argv: string[]): Promise<number> {
     overChecks = (fromFile) => readChecks(written, fromFile);
   }
 
-  const source = await readFile(input, 'utf8');
-
-  const options: DrawOptions = {
+  const optionsFor = (diagram: string): DrawOptions => ({
     ...(theme === undefined ? {} : { theme: THEMES[theme]! }),
     ...(guides ? { guides: true } : {}),
     // An icon's file is found from the diagram, not from wherever the tool
     // happens to be run.
-    readIconFile: (path) => readFileSync(resolvePath(dirname(input), path), 'utf8'),
+    readIconFile: (path) => readFileSync(resolvePath(dirname(diagram), path), 'utf8'),
     ...(noChecks ? { checks: false as const } : overChecks ? { checks: overChecks } : {}),
-  };
+  });
+
+  // A page spec, several diagrams or a folder make one page of them all.
+  const first = inputs[0]!;
+  if (inputs.length > 1 || first.endsWith(PAGE_EXTENSION) || isFolder(first)) {
+    return renderMany(command, inputs, out, page, optionsFor);
+  }
+  const input = first;
+  const source = await readFile(input, 'utf8');
+  const options = optionsFor(input);
   let drawn: { text: string; findings: Finding[] };
   try {
     if (page) {
@@ -246,6 +372,144 @@ async function main(argv: string[]): Promise<number> {
   const target = resolvePath(out ?? input.replace(/\.[^.]+$/, '') + (page ? '.html' : '.svg'));
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, drawn.text, 'utf8');
+  process.stderr.write(`${target}\n`);
+  return 0;
+}
+
+function isFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `render --page` or `check` of a page spec, of several diagrams, or of a
+ * folder: every diagram drawn, its findings printed under its own path, and
+ * for render one page of them all. A spec names its diagrams by their paths
+ * from its own folder, with the labels the page picks them by; a folder gives
+ * the `.reladraw` files directly in it, by name; several files go in the
+ * order given. The page is called what the spec or the folder is called, and
+ * several files need a name for it.
+ */
+async function renderMany(
+  command: Command,
+  inputs: string[],
+  out: string | undefined,
+  page: boolean,
+  optionsFor: (diagram: string) => DrawOptions,
+): Promise<number> {
+  const fail = (message: string): number => {
+    process.stderr.write(`${message}\n`);
+    return 1;
+  };
+  const first = inputs[0]!;
+  const what = first.endsWith(PAGE_EXTENSION) ? 'a page spec' : isFolder(first) ? 'a folder' : 'several diagrams';
+  if (command === 'render' && !page) {
+    return fail(`reladraw: ${what} ${inputs.length > 1 ? 'make' : 'makes'} a page, not an SVG — reladraw render --page ${inputs.join(' ')}`);
+  }
+  if (inputs.length > 1) {
+    const odd = inputs.find((one) => one.endsWith(PAGE_EXTENSION) || isFolder(one));
+    if (odd) return fail(`reladraw: ${odd} makes a page of its own, so it goes on its own — reladraw ${command}${page ? ' --page' : ''} ${odd}`);
+  }
+
+  let title: string;
+  let defaultOut: string | undefined;
+  let listed: { path: string; label?: string; group?: string; cell?: { row: string; column: string }; line?: number }[];
+  let spec: string | undefined;
+  let pageTheme: string | undefined;
+  let grid: PageGrid | undefined;
+  let groups: string[] = [];
+  if (first.endsWith(PAGE_EXTENSION)) {
+    spec = first;
+    let text: string;
+    try {
+      text = await readFile(spec, 'utf8');
+    } catch {
+      return fail(`reladraw: can't read ${spec}`);
+    }
+    let read: PageSpec;
+    try {
+      read = parsePageSpec(text);
+    } catch (error) {
+      if (error instanceof SourceError) return fail(error.format(spec));
+      throw error;
+    }
+    title = read.title ?? basename(spec).slice(0, -PAGE_EXTENSION.length);
+    pageTheme = read.theme;
+    defaultOut = spec.slice(0, -PAGE_EXTENSION.length) + '.html';
+    groups = read.groups.map((one) => one.name);
+    grid = read.grid && pageGrid(read.grid);
+    listed = read.entries.map((entry) => ({
+      path: join(dirname(spec!), entry.path),
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+      ...(entry.group !== undefined ? { group: entry.group } : {}),
+      ...(entry.cell !== undefined ? { cell: entry.cell } : {}),
+      line: entry.line,
+    }));
+  } else if (isFolder(first)) {
+    const folder = first.replace(/[/\\]+$/, '') || first;
+    const names = readdirSync(folder)
+      .filter((name) => name.endsWith('.reladraw') && statSync(join(folder, name)).isFile())
+      .sort((a, b) => a.localeCompare(b));
+    if (names.length === 0) return fail(`reladraw: there are no .reladraw files in ${first}`);
+    title = basename(resolvePath(folder));
+    defaultOut = `${folder}.html`;
+    listed = names.map((name) => ({ path: join(folder, name) }));
+  } else {
+    const notOne = inputs.find((one) => !one.endsWith('.reladraw'));
+    if (notOne) return fail(`reladraw: a page lists .reladraw diagrams, and ${notOne} isn't one`);
+    const twice = inputs.find((one, i) => inputs.findIndex((other) => resolvePath(other) === resolvePath(one)) !== i);
+    if (twice) return fail(`reladraw: ${twice} is given twice — once is enough`);
+    title = out && out !== '-' ? basename(out).replace(/\.html?$/i, '') : 'diagrams';
+    listed = inputs.map((path) => ({ path }));
+    if (command === 'render' && out === undefined) {
+      return fail(`reladraw: several diagrams make one page, so name it — reladraw render --page ${inputs.join(' ')} -o page.html`);
+    }
+  }
+
+  const diagrams: ListedDiagram[] = [];
+  for (const one of listed) {
+    let source: string;
+    try {
+      source = await readFile(one.path, 'utf8');
+    } catch {
+      return fail(
+        spec && one.line !== undefined
+          ? `${spec}:${one.line}: can't read ${one.path} — a diagram's path is from the spec's folder`
+          : `reladraw: can't read ${one.path}`,
+      );
+    }
+    diagrams.push({
+      source,
+      file: basename(one.path),
+      ...(one.label !== undefined ? { label: one.label } : {}),
+      ...(one.group !== undefined ? { group: one.group } : {}),
+      ...(one.cell !== undefined ? { cell: one.cell } : {}),
+      options: optionsFor(one.path),
+    });
+  }
+
+  let made: ReturnType<typeof drawListPage>;
+  try {
+    made = drawListPage(title, diagrams, new Date(), pageTheme, undefined, groups, grid);
+  } catch (error) {
+    if (error instanceof ListedDiagramError) return fail(error.cause.format(listed[error.index]!.path));
+    throw error;
+  }
+  made.findings.forEach((found, i) => {
+    for (const finding of found.findings) process.stderr.write(`${finding.format(listed[i]!.path)}\n`);
+  });
+  if (command === 'check') return 0;
+
+  if (out === '-') {
+    process.stdout.write(made.html);
+    return 0;
+  }
+  const target = resolvePath(out ?? defaultOut!);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, made.html, 'utf8');
   process.stderr.write(`${target}\n`);
   return 0;
 }
@@ -311,7 +575,7 @@ async function formatFiles(args: string[]): Promise<number> {
     }
     let laid: string;
     try {
-      laid = format(source, settings);
+      laid = file.endsWith(PAGE_EXTENSION) ? formatPageSpec(source) : format(source, settings);
     } catch (error) {
       process.stderr.write(error instanceof SourceError ? `${error.format(file)}\n` : `reladraw: ${file}: ${(error as Error).message}\n`);
       status = 1;
@@ -413,7 +677,7 @@ function nearestSettings(
 // The exit code is set, not exited with: process.exit ends the process at
 // once, and a write to a pipe that hasn't drained yet is lost, which cut
 // `format -` and `render -o -` off at 64 KB. Node exits on its own once the
-// output is written. `./dev.sh pipe` checks it.
+// output is written.
 main(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code;
