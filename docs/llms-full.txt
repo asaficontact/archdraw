@@ -22,7 +22,7 @@ That matters here specifically. You can't see the SVG you produced. With auto-la
 
 ## Check it is installed, and the same version as this skill
 
-This skill teaches reladraw 0.31.2. Once per session, before the first render, run:
+This skill teaches reladraw 0.32.0. Once per session, before the first render, run:
 
 ```
 reladraw --version
@@ -95,6 +95,20 @@ node drive "External HD"  badge: disk  below dump
 node aside "a remark that folds" (wrap: 20)  shape: none  right of drive
 ```
 
+**A database table, a UML class or a key/value box is `shape: table`**, never hand-built from a column layout. Its children are its rows, `|` splits a row into cells that line up down the table, and a child holding rows is a section under a rule. Name the use with a style, and join tables with the crow's-foot marks, from a row when the line leaves the table's side:
+
+```
+style type    text: (color: theme-muted)
+style entity  shape: table (column-styles: -, type)
+node users "users"  style: entity
+node users.id  "id | int"
+node orders "orders"  style: entity  right of users (gap: wide)
+node orders.user_id  "user_id | int"
+edge orders.user_id [erd-zero-or-many] -- [erd-one] users.id
+```
+
+The bracket also takes `headings: "name | type"` and `title: (fill: …)`.
+
 ### Placing
 
 ```
@@ -146,7 +160,7 @@ node note "a longer remark that folds" (size: small, wrap: 30)  shape: none  bel
 edge [<name>] <from> -> <to> ["<text>" [(<placement>)]] [attributes]
 ```
 
-`<-`, `<->` and `--` work too, and each end may carry a mark: `a <|-- b`, `a *--o b`, `a diamond--> b`. `from:` and `to:` name the side of the first and second name written: `from: right  to: left`.
+`<-`, `<->` and `--` work too, and each end may carry a mark: `a <|-- b`, `a *--o b`, `a diamond--> b`, and for a database's cardinality `a [erd-one] -- [erd-zero-or-many] b` (also `erd-zero-or-one`, `erd-one-or-many`). `from:` and `to:` name the side of the first and second name written: `from: right  to: left`.
 
 - **Straight by default**, between the two boxes and through anything in between, which is reported. `line: (path: square)` or `line: (path: curved)` for a route read off the line's own two boxes and sides.
 - **`via:` lists the places a line passes**: `via: cache top` runs just above `cache`; `via: between a and b` goes through the point between them; `via: proxy` goes through a box's center. This is how to take a line round something.
@@ -254,7 +268,7 @@ node aside "The worker shares the database / but takes no HTTP traffic." (wrap: 
 
 # Part 2 — the syntax reference
 
-# Syntax reference — 0.31.2
+# Syntax reference — 0.32.0
 
 What the language accepts. The changelog at the end lists what changed in each published version; 0.17.0's changes are large, and its entry has a table of every old spelling and what to write instead.
 
@@ -375,6 +389,7 @@ Every node has one body, the thing drawn where it is, named by one of two keys.
 | `trapezoid` | a box narrower at one end, a flowchart's manual operation | `taper:`, `narrow: bottom \| top` |
 | `triangle` | a triangle, a flowchart's merge (down) or extract (up) | `aim: down \| up \| left \| right` |
 | `cylinder` | a cylinder standing, or `lying` on its side, for stored data | `cap:`, `lying` |
+| `table` | a name over rows of cells: an ERD entity, a UML class, a key/value box ([A table](#a-table)) | `title:`, `headings:`, `column-styles:` |
 | `none` | no outline, fill or padding: bare text, or an invisible container | |
 
 ```
@@ -435,6 +450,57 @@ node spec "spec"  shape: document  corners: sharp  right of api
 ```
 
 **Bare text.** `shape: none` is how to write a note, a caption or a title over a diagram. Its text starts one step smaller than a box's, because an aside at full size reads as a statement; `(size: normal)` overrides that. Nothing bounds bare text the way a border bounds a box, so give a sentence-length one a `wrap:`.
+
+### A table
+
+`shape: table` draws its name centered in a band at the top, and its children under it as rows, left-aligned. A `|` in a row's text splits it into cells, and the cells line up in columns down the whole table. A child that holds rows of its own is a section, with a rule above it.
+
+```
+style type  text: (color: theme-muted)
+style key   text: (color: orange)
+
+node users "users"  shape: table (headings: "column | type | key", column-styles: -, type, key)
+node users.id          "id | int | PK"
+node users.email       "email | text"
+node users.created_at  "created_at | timestamp"
+
+node account "Account"  shape: table  right of users
+node account.fields
+node account.fields.owner      "- owner: String"
+node account.fields.balance    "- balance: Money"
+node account.methods
+node account.methods.deposit   "+ deposit(amount): void"
+node account.methods.balance   "+ balance(): Money"
+```
+
+Its bracket takes these settings, in any order:
+
+| setting | says |
+|---|---|
+| `title: (fill: …)` | the color of the band behind the name; otherwise the border's color, faint |
+| `headings: "a \| b"` | a first row naming the columns, split like any row, with a rule under it; muted unless `headings-style:` says otherwise |
+| `headings-style: head` | the style the headings row wears: its fill colors the row, and what it says about text reaches the headings |
+| `column-styles: -, type, key` | a style for each column's cells, in order, under the headings; `-` leaves a column as it is |
+| `column-gap: wide` | the room between columns, as any gap: `tight`, `normal`, `wide`, a number or pixels |
+| `column-widths: 9, -, -` | the least each column is, in order, in the file's unit or pixels; `-` is as wide as it holds |
+
+`fill:` colors the body, as on any box, and the rules are drawn in the border's color and thickness. A row wears its own `style:`: a fill colors the row across the table, and what the style says about text reaches its cells, under the column's. A column's style is about its cells' text, so one that says nothing about text is refused. `\|` is a bar in a cell rather than a split. A table with an empty text, `""`, has no band.
+
+**Rows are named, so a line can end at one**, meeting the table's side level with that row:
+
+```
+edge orders.user_id [erd-zero-or-many] -- [erd-one] users.id
+```
+
+**A style may carry the whole table**, its bracket included, which is how a file names what its tables are:
+
+```
+style erd_entity  shape: table (column-styles: -, type, key)
+node users "users"  style: erd_entity
+node users.id  "id | int | PK"
+```
+
+The table places and sizes its rows, so a placement, `layout:`, `width:` or `height:` on a row is refused, and so is `layout:`, `gather-children:` or `padding:` on the table. A section has no text of its own; one with a text is refused. `shape: erd`, `entity`, `record` and `class` are refused, naming `shape: table`.
 
 ### Your own icons
 
@@ -978,9 +1044,13 @@ The arrow is a mark, a shaft, a mark. The shaft is `-` or `--`, and either mark 
 | `diamond` | a filled diamond | |
 | `odiamond` | an outlined diamond | |
 | `bar` | a stroke across the line | `\|` |
+| `erd-one` | exactly one: two bars | |
+| `erd-zero-or-one` | zero or one: a circle and a bar | |
+| `erd-one-or-many` | one or many: a bar and a crow's foot | |
+| `erd-zero-or-many` | zero or many: a circle and a crow's foot | |
 | `none` | nothing | |
 
-The `o` prefix means outlined. `o-->`, `odot--arrow`, `(odot)--(arrow)` and `[odot] -- [arrow]` are one picture. A mark must touch the shaft or be bracketed, since `edge a -- dot b` reads like a line to a node named `dot`.
+The `o` prefix means outlined. The `erd-` marks are crow's-foot notation for a database diagram, each a pair of marks, the most it can be nearest the box and the least just inside it: `edge users [erd-one] -- [erd-zero-or-many] orders`. `o-->`, `odot--arrow`, `(odot)--(arrow)` and `[odot] -- [arrow]` are one picture. A mark must touch the shaft or be bracketed, since `edge a -- dot b` reads like a line to a node named `dot`.
 
 `from-mark:` and `to-mark:` say the same one end at a time, which is how a style carries marks. **An end with nothing written is open, not empty**: a style may fill it, and `none` says "nothing here, whatever the style says". **A mark written in the arrow is final**: the line's own `to-mark:` may repeat it but not contradict it.
 
@@ -1319,7 +1389,7 @@ node nas "NAS"  right of mirror
 edge mirror -> nas  style: backup
 ```
 
-A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, and a title's position inside `text: (…)`: `style zone  text: (outside top, align: left)`. It never says where a thing goes, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, and it can't carry a `url:`, a `description:` or a deck's `cards:`.
+A style is a named bundle of appearance, worn with `style:`. Color carries meaning through the style's name rather than being written per thing. A style takes `fill`, `border`, `line`, `text`, `badge`, `icon`, `shape`, `from-mark`, `to-mark`, `padding`, `corners` and a region's `opacity`, a title's position inside `text: (…)` (`style zone  text: (outside top, align: left)`), and how a box arranges what it holds and how big it is: `layout:`, `gather-children:`, `width:`, `height:` and their limits. It never places a thing against something else or adds one, so it can't carry a placement, a `gap:`, a `depth:`, or a line's `from:` or `to:`, nor `heading:` or `join-with:`, which name one node's own child; and it can't carry a `url:`, a `description:` or a deck's `cards:`.
 
 - **A style may span kinds.** It gives each thing only the keys that thing has, so the style above gives nodes their border and lines their color.
 - **A style must give a thing at least one key it has.** A style that dresses a thing in nothing is on the wrong thing.
@@ -1680,6 +1750,7 @@ clause-gap: 2
 |---|---|
 | `wrap-at` | `off`, or a number of characters: past it, a statement wraps onto as few lines as fit |
 | `clause-per-line-at` | `off`, a number of characters, or `always`: past it, every clause gets its own line |
+| `setting-per-line-at` | `off`, a number of characters (`60`), a number of settings (`3 settings`), or both (`60 or 3 settings`): a bracket of two or more settings on a line past the length, or holding that many, opens one setting to a line |
 | `first-line` | `text` (keyword, name and texts), `name`: where a broken statement's first line ends |
 | `clause-order` | `as-written`, or a list of kinds: `placement`, and keys by name, such as `style, placement, fill` |
 | `columns` | `aligned`, `off` |
@@ -1693,13 +1764,26 @@ clause-gap: 2
 
 An unknown setting, one written twice, or a value it doesn't take is an error naming it.
 
-**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured as it would be printed, lined up with its neighbors, so a short statement pushed past the width by a long neighbor's columns breaks too; its first line still lines up with theirs. A statement that can't break, such as a node's name and text with nothing after them, is left as it is, even when its columns carry it past the width. A break falls only between clauses, never inside one or inside a bracket, so a clause longer than the width stands alone on its line, past it. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
+**Breaking a long statement.** With both at a number, a statement up to `wrap-at` stays on one line, one up to `clause-per-line-at` wraps, and a longer one goes one clause to a line. Its length is measured as it would be printed, lined up with its neighbors, so a short statement pushed past the width by a long neighbor's columns breaks too; its first line still lines up with theirs. A statement that can't break, such as a node's name and text with nothing after them, is left as it is, even when its columns carry it past the width. A break falls only between clauses, never inside one, so a clause longer than the width stands alone on its line, past it, unless `setting-per-line-at` opens its bracket. A statement broken by hand is broken again by these rules, or joined when they leave it short enough; one kept on its lines for a comment among them is left as it is. A comment at the end of a broken statement follows its last line.
 
 ```
 // wrap-at: 60
 node  confirm  "Confirm"
     below accept (gap: tight)  left of accept (gap: wide)
     style: plain
+```
+
+**Opening a bracket.** `setting-per-line-at` puts each setting of a long or full bracket on its own line, further in, and its `)` on the line after them. It measures each line as laid out, so after `clause-per-line-at` it looks at each clause's line alone. A bracket on one line is written with a comma between its settings.
+
+```
+// clause-per-line-at: always
+// setting-per-line-at: 60 or 3 settings
+style  table
+    shape: table (
+        headings: "Field | Type"
+        column-styles: -, dim
+        column-gap: 3
+    )
 ```
 
 **Ordering clauses.** `clause-order` lists the kinds of clause in the order they are written: `placement` for every relation, and a key by its name (`style`, `fill`, `via`). Kinds it leaves out follow, in the order written, and clauses of one kind keep theirs. A node's or edge's texts never move, since the language takes them only straight after the name; `text` in the list means a style's `text:` key. A clause never moves where moving it would change what the statement says.
@@ -1770,6 +1854,13 @@ Designed and absent from the code.
 ## Changelog
 
 Pre-1.0, so the minor number is where a breaking change goes. Every removal is refused by name with the replacement quoted, rather than dropped in silence: an older file stops with an error saying what to write instead.
+
+**0.32.0**
+
+- **A table.** `shape: table` draws a name over rows, for an ERD entity, a UML class or a key/value box: its children are the rows, `|` splits a row into cells that line up down the table, and a child holding rows of its own is a section under a rule. Its bracket takes `title: (fill: …)`, `headings: "…"`, `headings-style:`, `column-styles:`, `column-gap:` and `column-widths:`, a style may carry all of it, and a line can end at a row. Drawing one used to take a column layout, a gather and a left alignment on the box and two settings on every row. See [A table](#a-table).
+- **Crow's-foot marks.** `erd-one`, `erd-zero-or-one`, `erd-one-or-many` and `erd-zero-or-many` draw a database diagram's cardinality at a line's end: `edge users [erd-one] -- [erd-zero-or-many] orders`.
+- **`reladraw format` can open a long bracket**, one setting to a line, with `setting-per-line-at:` set to a length, a number of settings, or both. A bracket on one line is now written with a comma between its settings, which the language leaves optional. See [Formatting](#formatting).
+- The reference now says a style may carry `layout:`, `gather-children:` and sizes, which it always could; it never places a thing against another.
 
 **0.31.2**
 
