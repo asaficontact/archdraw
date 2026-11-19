@@ -1038,7 +1038,12 @@ function readAttr(
       line,
     );
   }
-  if (valueToken.quoted && (COLOR_KEYS as readonly string[]).includes(key)) {
+  // `shape.title.fill:` is a table title's color written as a dotted setting
+  // instead of inside `shape: table (title: (fill: …))`, where it is checked.
+  // It is drawn into an SVG attribute, so it gets the same check here as every
+  // other color (archdraw: a quoted value would otherwise be written out raw).
+  const isColor = (COLOR_KEYS as readonly string[]).includes(key) || key === 'shape.title.fill';
+  if (valueToken.quoted && isColor) {
     // A quoted value is the author saying "this is text", and every one of
     // these keys takes a color. Without this the string is passed through as
     // a color, turns out not to be one, and nothing is drawn and nothing is
@@ -1056,7 +1061,7 @@ function readAttr(
       line,
     );
   }
-  if ((COLOR_KEYS as readonly string[]).includes(key)) checkColorWord(valueToken.text, subject, line);
+  if (isColor) checkColorWord(valueToken.text, subject, line);
   setOnce(attrs, key, valueToken.text, subject, line);
   return at + 2;
 }
